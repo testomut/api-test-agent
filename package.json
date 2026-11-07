@@ -1,0 +1,37 @@
+{
+  "name": "api-test-agent",
+  "version": "0.1.0",
+  "description": "CLI that audits an OpenAPI spec against a test API, runs contract checks and generates reviewable Playwright API tests",
+  "scripts": {
+    "agent": "tsx src/cli.ts",
+    "demo": "tsx demo-api/server.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:api": "playwright test"
+  },
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@apidevtools/swagger-parser": "^13.1.0",
+    "@redocly/openapi-core": "^2.76.0",
+    "ajv": "^8.20.0",
+    "ajv-formats": "^3.0.1",
+    "commander": "^15.1.0",
+    "yaml": "^2.9.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.65.0",
+    "@types/node": "^26.6.6",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.6",
+    "vitest": "^5.1.0"
+  },
+  "type": "module",
+  "bin": {
+    "api-test-agent": "bin/api-test-agent.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

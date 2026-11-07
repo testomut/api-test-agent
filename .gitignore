@@ -1,0 +1,9 @@
+node_modules/
+.venv/
+.api-agent/
+reports/
+test-results/
+playwright-report/
+.env
+*.log
+.schemathesis/

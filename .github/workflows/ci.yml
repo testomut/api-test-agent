@@ -1,0 +1,65 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: npm ci
+      - run: pip install schemathesis
+      - run: npm run typecheck
+      - run: npm test
+
+      - name: Start demo API
+        run: |
+          npm run demo &
+          npx --yes wait-on@8.0.3 http://localhost:3100/health
+
+      - name: Audit (probe + Schemathesis)
+        # The demo API has one deliberate defect, so a non-zero exit is expected here.
+        run: npx tsx src/cli.ts audit demo-api/openapi.yaml -u http://localhost:3100 --probe --schemathesis --max-time 60 -o reports/audit --schemathesis-bin schemathesis --fail-on never
+
+      - name: Self-check - the known defect must be reported, nothing else
+        run: |
+          node -e '
+            const r = require("./reports/audit/report.json");
+            const bad = r.operations.filter(o => [o.probe, o.schemathesis].some(f => f && f.status === "CONTRACT_MISMATCH")).map(o => o.key);
+            console.log("mismatches:", bad);
+            if (JSON.stringify(bad) !== JSON.stringify(["GET /stats"])) process.exit(1);
+          '
+
+      - name: Generate and run CRUD tests
+        run: npx tsx src/cli.ts generate demo-api/openapi.yaml -u http://localhost:3100 --allow-write --run -o reports/generate
+
+      - name: Run generated suite with Playwright
+        run: npm run test:api
+        env:
+          API_BASE_URL: http://localhost:3100
+
+      - name: Job summary
+        if: always()
+        run: cat reports/audit/report.md >> "$GITHUB_STEP_SUMMARY" || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: reports
+          path: |
+            reports/
+            playwright-report/
