@@ -58,7 +58,7 @@ npx tsx src/cli.ts audit demo-api/openapi.yaml
 # Read-only probe + bounded Schemathesis run against the test environment
 npx tsx src/cli.ts audit demo-api/openapi.yaml -u http://localhost:3100 --probe --schemathesis
 
-# Generate Playwright tests for confirmed CRUD chains and run them once
+# Generate tests/api/<resource>/<method>/{positive,negative}.spec.ts and run them once
 npx tsx src/cli.ts generate demo-api/openapi.yaml -u http://localhost:3100 --allow-write --run
 
 npm run test:api        # the generated suite is plain Playwright and runs without the agent
