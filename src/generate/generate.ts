@@ -29,7 +29,6 @@ export interface GenerateResult {
   scenarios: Scenario[];
 }
 
-const here = dirname(fileURLToPath(import.meta.url));
 
 function bodySchema(spec: LoadedSpec, op: Operation): any {
   const content = resolvePointer(spec.doc, `${operationPointer(op)}/requestBody`).node?.content ?? {};
@@ -96,7 +95,8 @@ export async function generate(spec: LoadedSpec, ops: Operation[], o: GenerateOp
 
   if (files.length) {
     // Self-contained support code: the generated suite runs without the agent installed.
-    const validatorSrc = await readFile(join(here, '../contract/validator.ts'), 'utf8');
+    // Shipped as TypeScript source in the package (see "files"), from both src/ and dist/.
+    const validatorSrc = await readFile(fileURLToPath(new URL('../../src/contract/validator.ts', import.meta.url)), 'utf8');
     await writeFile(join(support, 'contract.ts'), validatorSrc);
     await writeFile(join(support, 'contract-assert.ts'), CONTRACT_ASSERT);
     await writeFile(join(support, 'openapi.snapshot.ts'), `// Snapshot of ${spec.location} (hash ${spec.hash}). Regenerate when the spec changes.\nexport const spec: any = ${JSON.stringify(spec.doc, null, 2)};\n`);

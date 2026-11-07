@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { mkdir, readFile } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import type { Finding, Operation } from '../types.js';
 import type { OpenApiDoc } from '../spec/loader.js';
 import { redact } from './auth.js';
@@ -30,7 +31,9 @@ export interface SchemathesisRun {
 export function findSchemathesis(explicit?: string): string | undefined {
   if (explicit) return explicit;
   const local = process.platform === 'win32' ? '.venv/Scripts/schemathesis.exe' : '.venv/bin/schemathesis';
-  if (existsSync(local)) return resolve(local);
+  // The current folder's venv first, then the agent's own venv (when run from another repo).
+  const agentRoot = fileURLToPath(new URL('../../', import.meta.url));
+  for (const candidate of [resolve(local), join(agentRoot, local)]) if (existsSync(candidate)) return candidate;
   return 'schemathesis'; // on PATH; failure to spawn is reported as NOT_RUN
 }
 

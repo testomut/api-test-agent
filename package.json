@@ -1,5 +1,5 @@
 {
-  "name": "api-test-agent",
+  "name": "@testomut/api-test-agent",
   "version": "0.1.0",
   "description": "CLI that audits an OpenAPI spec against a test API, runs contract checks and generates reviewable Playwright API tests",
   "scripts": {
@@ -7,9 +7,11 @@
     "demo": "tsx demo-api/server.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:api": "playwright test"
+    "test:api": "playwright test",
+    "build": "tsc -p tsconfig.build.json",
+    "prepack": "npm run build"
   },
-  "author": "",
+  "author": "Stanislav Mokshyn",
   "license": "MIT",
   "dependencies": {
     "@apidevtools/swagger-parser": "^13.1.0",
@@ -29,9 +31,39 @@
   },
   "type": "module",
   "bin": {
-    "api-test-agent": "bin/api-test-agent.mjs"
+    "api-test-agent": "dist/cli.js"
   },
   "engines": {
     "node": ">=20"
+  },
+  "files": [
+    "dist",
+    "src/contract/validator.ts",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "openapi",
+    "api-testing",
+    "contract-testing",
+    "playwright",
+    "schemathesis",
+    "qa",
+    "test-generation"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/testomut/api-test-agent.git"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "peerDependencies": {
+    "@playwright/test": ">=1.40"
+  },
+  "peerDependenciesMeta": {
+    "@playwright/test": {
+      "optional": true
+    }
   }
 }

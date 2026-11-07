@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 import { Command, Option } from 'commander';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';

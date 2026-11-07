@@ -29,7 +29,22 @@ OpenAPI spec ──► lint + catalogue ──► safe probe ──► Schemathe
 | `BLOCKED` | Missing confirmed preconditions, credentials, data or requirements. The reason says which. |
 | `NOT_RUN` | Not executed because of mode, safety settings or budget. |
 
-## Quick start
+## Install into your own test project
+
+```sh
+cd my-api-tests                                   # your Playwright project
+npm i -D @testomut/api-test-agent @playwright/test ajv ajv-formats
+pip install schemathesis                          # optional: Python tool, not installed by npm
+                                                  # (or pass --schemathesis-bin <path>)
+
+npx api-test-agent audit openapi.yaml -u http://localhost:8000 --probe --schemathesis -o reports/api
+npx api-test-agent generate openapi.yaml -u http://localhost:8000 --allow-write --run --tests-dir tests/api-generated
+npx playwright test
+```
+
+Generated tests use your project's `playwright.config` (`baseURL`, headers), so make sure `testDir` includes `--tests-dir`. `--run` uses the `@playwright/test` installed in the current folder, and `--draft-pr` works in the current folder's git repository.
+
+## Quick start (this repository)
 
 ```sh
 npm install
