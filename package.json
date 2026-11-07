@@ -40,7 +40,8 @@
     "dist",
     "src/contract/validator.ts",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "skills"
   ],
   "keywords": [
     "openapi",
