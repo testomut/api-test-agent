@@ -3,21 +3,23 @@ import { existsSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { Finding, Operation, Status } from '../types.js';
+import { SAFE_METHODS, type Finding, type Operation, type Status } from '../types.js';
 import { resolvePointer, type LoadedSpec } from '../spec/loader.js';
 import { operationPointer } from '../spec/catalog.js';
 import { findChains, type CrudChain, type DepsFile } from './graph.js';
 import { sampleFromSchema } from './sample.js';
-import { CONTRACT_ASSERT, renderCrudTest, type ChainPlan } from './templates.js';
+import { bodyCases, documentedRejections, nonexistentIdExpr, queryCases } from './negative.js';
+import { CONTRACT_ASSERT, operationFolder, renderNegative, renderPositive, renderResourceHelpers, type ChainPlan, type Meta } from './templates.js';
 
 export interface GenerateOptions {
-  outDir: string; // where tests go, e.g. tests/generated
+  outDir: string; // e.g. tests/api
   deps?: DepsFile;
   version: string;
 }
 
 export interface Scenario {
-  name: string;
+  name: string; // e.g. "items/post/negative"
+  kind: 'positive' | 'negative' | 'chain';
   status: Status;
   reason: string;
   operations: string[];
@@ -29,27 +31,23 @@ export interface GenerateResult {
   scenarios: Scenario[];
 }
 
-
-function bodySchema(spec: LoadedSpec, op: Operation): any {
+function jsonBodySchema(spec: LoadedSpec, op: Operation): any {
   const content = resolvePointer(spec.doc, `${operationPointer(op)}/requestBody`).node?.content ?? {};
   const key = Object.keys(content).find((k) => k.includes('json'));
   return key ? content[key].schema : undefined;
 }
 
-function plan(spec: LoadedSpec, chain: CrudChain): { ok: true; plan: ChainPlan } | { ok: false; reason: string } {
-  const unresolvedParams = (op: Operation) => op.params.filter((p) => p.required && p.in !== 'header' && p.name !== chain.param && p.knownValue === undefined);
+function planChain(spec: LoadedSpec, chain: CrudChain): { ok: true; plan: ChainPlan } | { ok: false; reason: string } {
+  const unresolved = (op: Operation) => op.params.filter((p) => p.required && p.in !== 'header' && p.name !== chain.param && p.knownValue === undefined);
   for (const op of [chain.create, chain.read, chain.update, chain.delete].filter(Boolean) as Operation[]) {
-    const miss = unresolvedParams(op);
+    const miss = unresolved(op);
     if (miss.length) return { ok: false, reason: `${op.key} needs ${miss.map((p) => `${p.in} "${p.name}"`).join(', ')} with no value in the spec or the dependency.` };
   }
-  if (!chain.delete) {
-    return { ok: false, reason: `No delete operation is linked, so created data could not be cleaned up. Confirm that leaving test data is acceptable, or link a delete operation.` };
-  }
-  if (!chain.create.responses.some((r) => /^2\d\d$/.test(r.status))) {
-    return { ok: false, reason: `${chain.create.key} documents no concrete 2xx status to assert.` };
-  }
-  const createSchema = bodySchema(spec, chain.create);
-  if (chain.create.requestBodyRequired && !createSchema) return { ok: false, reason: `${chain.create.key} requires a body but the spec has no JSON schema for it.` };
+  if (!chain.delete) return { ok: false, reason: 'No delete operation is linked, so created test data could not be cleaned up. Link a delete operation or confirm that leaving data is acceptable.' };
+  if (!chain.create.responses.some((r) => /^2\d\d$/.test(r.status))) return { ok: false, reason: `${chain.create.key} documents no concrete 2xx status to assert.` };
+
+  const createSchema = jsonBodySchema(spec, chain.create);
+  if (chain.create.requestBodyRequired && !createSchema) return { ok: false, reason: `${chain.create.key} requires a body but has no JSON schema.` };
   const created = createSchema ? sampleFromSchema(spec.doc, createSchema) : { ok: true as const, value: undefined, sources: [] as string[] };
   if (!created.ok) return { ok: false, reason: `Cannot build a valid create payload: ${created.reason}` };
 
@@ -57,50 +55,136 @@ function plan(spec: LoadedSpec, chain: CrudChain): { ok: true; plan: ChainPlan }
   let updateSources: string[] = [];
   const assumptions: string[] = [];
   if (chain.update) {
-    const s = bodySchema(spec, chain.update);
+    const s = jsonBodySchema(spec, chain.update);
     const u = s ? sampleFromSchema(spec.doc, s) : undefined;
     if (u?.ok && u.value && typeof u.value === 'object' && Object.keys(u.value).length) {
       updatePayload = u.value;
       updateSources = u.sources;
       if (chain.read) assumptions.push(`after ${chain.update.operationId ?? chain.update.key}, ${chain.read.operationId ?? chain.read.key} returns the updated field values (${chain.update.method.toUpperCase()} semantics).`);
-    } else {
-      assumptions.push(`update step skipped: no example-backed payload for ${chain.update.key}${u && !u.ok ? ` (${u.reason})` : ''}.`);
     }
   }
   return { ok: true, plan: { chain, createPayload: created.value, createSources: created.sources, updatePayload, updateSources, assumptions } };
 }
 
+const posix = (p: string) => p.replace(/\\/g, '/');
+
 export async function generate(spec: LoadedSpec, ops: Operation[], o: GenerateOptions): Promise<GenerateResult> {
-  const { chains, candidates } = findChains(spec.doc, ops, o.deps);
+  const meta: Meta = { spec: spec.location, hash: spec.hash, version: o.version };
   const out = resolve(o.outDir);
   const support = join(out, '_support');
   const files: string[] = [];
   const scenarios: Scenario[] = [];
-
-  for (const chain of chains) {
-    const opsIn = [chain.create, chain.read, chain.update, chain.delete].filter(Boolean).map((x) => x!.key);
-    const p = plan(spec, chain);
-    if (!p.ok) {
-      scenarios.push({ name: chain.name, status: 'BLOCKED', reason: p.reason, operations: opsIn });
-      continue;
-    }
-    await mkdir(support, { recursive: true });
-    const file = join(out, `${(chain.create.operationId ?? 'create').replace(/[^\w-]/g, '_')}.crud.spec.ts`);
-    await writeFile(file, renderCrudTest(p.plan, { spec: spec.location, hash: spec.hash, version: o.version }));
+  const write = async (file: string, content: string) => {
+    await mkdir(dirname(file), { recursive: true });
+    await writeFile(file, content);
     files.push(file);
-    const note = p.plan.assumptions.length ? ` Assumptions for review: ${p.plan.assumptions.join(' ')}` : '';
-    scenarios.push({ name: chain.name, status: 'NOT_RUN', reason: `Generated from ${chain.source}; not executed yet.${note}`, operations: opsIn, file });
+  };
+
+  // 1. Confirmed resource chains → payloads + data helpers.
+  const { chains, candidates } = findChains(spec.doc, ops, o.deps);
+  const plans: ChainPlan[] = [];
+  const chainBlock = new Map<Operation, string>();
+  for (const chain of chains) {
+    const p = planChain(spec, chain);
+    const members = [chain.create, chain.read, chain.update, chain.delete].filter(Boolean) as Operation[];
+    if (p.ok) plans.push(p.plan);
+    else {
+      scenarios.push({ name: chain.name, kind: 'chain', status: 'BLOCKED', reason: p.reason, operations: members.map((m) => m.key) });
+      for (const m of members) chainBlock.set(m, `${chain.name}: ${p.reason}`);
+    }
   }
-  for (const c of candidates) scenarios.push({ name: c.name, status: 'BLOCKED', reason: c.question, operations: c.operations });
+  for (const c of candidates) {
+    for (const key of c.operations) {
+      const op = ops.find((x) => x.key === key);
+      if (op && !chainBlock.has(op)) chainBlock.set(op, c.question);
+    }
+  }
+  const planOf = (op: Operation) => plans.find((p) => [p.chain.create, p.chain.read, p.chain.update, p.chain.delete].includes(op));
+  const helperFile = (p: ChainPlan) => join(support, `${operationFolder(p.chain.create).resource}.resource.ts`);
+  for (const p of plans) await write(helperFile(p), renderResourceHelpers(p, meta));
+
+  // 2. Per operation: <resource>/<action>/positive.spec.ts and, when the spec allows, negative.spec.ts.
+  const used = new Set<string>();
+  for (const op of ops) {
+    let { resource, action } = operationFolder(op);
+    if (used.has(`${resource}/${action}`)) action = `${action}-${(op.operationId ?? 'op').replace(/[^\w-]/g, '_')}`;
+    used.add(`${resource}/${action}`);
+    const dir = join(out, resource, action);
+    const name = `${resource}/${action}`;
+    const plan = planOf(op);
+    const helpers = plan ? posix(relative(dir, helperFile(plan))).replace(/\.ts$/, '.js') : undefined;
+    const safe = SAFE_METHODS.includes(op.method);
+    const pathParams = op.params.filter((p) => p.in === 'path');
+    const unresolvedPath = pathParams.filter((p) => p.knownValue === undefined && p.name !== plan?.chain.param);
+    const unresolvedQuery = op.params.filter((p) => p.in === 'query' && p.required && p.knownValue === undefined);
+
+    // --- positive
+    let posReason: string | undefined;
+    if (op.deprecated) posReason = 'Operation is deprecated.';
+    else if (plan) {
+      if (plan.chain.update === op && plan.updatePayload === undefined) posReason = `No example-backed payload for ${op.key}: add examples to its request schema.`;
+    } else if (!safe) posReason = chainBlock.get(op) ?? `${op.key} changes data and has no confirmed precondition/cleanup (no OpenAPI links or deps file). Not generated to avoid side effects.`;
+    else if (unresolvedPath.length || unresolvedQuery.length) {
+      const miss = [...unresolvedPath, ...unresolvedQuery].map((p) => `${p.in} "${p.name}"`).join(', ');
+      posReason = chainBlock.get(op) ?? `No value for ${miss}: add an example to the spec, or link the operation that creates it.`;
+    } else if (!op.responses.some((r) => /^2\d\d$/.test(r.status))) posReason = 'No concrete 2xx response is documented.';
+
+    if (posReason) scenarios.push({ name: `${name}/positive`, kind: 'positive', status: 'BLOCKED', reason: posReason, operations: [op.key] });
+    else {
+      const file = join(dir, 'positive.spec.ts');
+      await write(file, renderPositive({ op, plan, helpers }, meta));
+      scenarios.push({ name: `${name}/positive`, kind: 'positive', status: 'NOT_RUN', reason: 'Generated; not executed yet.', operations: [op.key], file });
+    }
+
+    // --- negative (only documented rejections)
+    const rej = documentedRejections(op);
+    const reachable = safe || !!plan; // never fire write requests at operations without confirmed cleanup
+    const why: string[] = [];
+    let bCases: ReturnType<typeof bodyCases> = [];
+    let qCases: ReturnType<typeof queryCases> = [];
+    let notFound: { idExpr: string; param: string } | undefined;
+    let unauthorized = false;
+
+    if (!reachable) why.push('writes without confirmed cleanup are not sent');
+    else if (op.deprecated) why.push('operation is deprecated');
+    else {
+      if (rej.validation.length) {
+        const schema = jsonBodySchema(spec, op);
+        const base = plan?.chain.create === op ? plan.createPayload : plan?.chain.update === op ? plan.updatePayload : undefined;
+        const bodyTarget = schema && base && typeof base === 'object' && (plan?.chain.create === op || plan?.chain.update === op);
+        if (bodyTarget) bCases = bodyCases(spec.doc, schema, base as Record<string, unknown>, schema.$ref?.split('/').pop() ?? 'body');
+        if (!unresolvedPath.length) qCases = queryCases(op);
+        if (!bCases.length && !qCases.length) why.push(`${rej.validation.join('/')} is documented but there is no constraint the agent can break safely`);
+      } else why.push('no 400/422 documented');
+
+      const idParam = pathParams.find((p) => p.name === plan?.chain.param) ?? (pathParams.length === 1 ? pathParams[0] : undefined);
+      const bodyOk = !op.requestBodyRequired || (plan?.chain.update === op && plan.updatePayload !== undefined);
+      if (rej.notFound && idParam && pathParams.length === 1 && op.path.endsWith(`{${idParam.name}}`) && bodyOk) {
+        notFound = { idExpr: nonexistentIdExpr(idParam.schema), param: idParam.name };
+      } else if (!rej.notFound && pathParams.length) why.push('no 404 documented');
+
+      if (op.security.length && !op.security.some((a) => a.length === 0)) {
+        if (rej.unauthorized) unauthorized = true;
+        else why.push('auth required but 401 not documented');
+      }
+    }
+
+    if (bCases.length || qCases.length || notFound || unauthorized) {
+      const file = join(dir, 'negative.spec.ts');
+      await write(file, renderNegative({ op, plan, helpers, validation: rej.validation, bodyCases: bCases, queryCases: qCases, notFound, unauthorized }, meta));
+      const count = bCases.length + qCases.length + (notFound ? 1 : 0) + (unauthorized ? 1 : 0);
+      scenarios.push({ name: `${name}/negative`, kind: 'negative', status: 'NOT_RUN', reason: `Generated ${count} case(s); not executed yet.`, operations: [op.key], file });
+    } else {
+      scenarios.push({ name: `${name}/negative`, kind: 'negative', status: 'BLOCKED', reason: `No negative file: ${why.join('; ') || 'nothing documented to reject'}.`, operations: [op.key] });
+    }
+  }
 
   if (files.length) {
     // Self-contained support code: the generated suite runs without the agent installed.
-    // Shipped as TypeScript source in the package (see "files"), from both src/ and dist/.
     const validatorSrc = await readFile(fileURLToPath(new URL('../../src/contract/validator.ts', import.meta.url)), 'utf8');
-    await writeFile(join(support, 'contract.ts'), validatorSrc);
-    await writeFile(join(support, 'contract-assert.ts'), CONTRACT_ASSERT);
-    await writeFile(join(support, 'openapi.snapshot.ts'), `// Snapshot of ${spec.location} (hash ${spec.hash}). Regenerate when the spec changes.\nexport const spec: any = ${JSON.stringify(spec.doc, null, 2)};\n`);
-    files.push(join(support, 'contract.ts'), join(support, 'contract-assert.ts'), join(support, 'openapi.snapshot.ts'));
+    await write(join(support, 'contract.ts'), validatorSrc);
+    await write(join(support, 'contract-assert.ts'), CONTRACT_ASSERT);
+    await write(join(support, 'openapi.snapshot.ts'), `// Snapshot of ${spec.location} (hash ${spec.hash}). Regenerated with the tests.\nexport const spec: any = ${JSON.stringify(spec.doc, null, 2)};\n`);
   }
   return { files, scenarios };
 }
@@ -116,32 +200,26 @@ export async function runGenerated(result: GenerateResult, env: { baseUrl: strin
     for (const s of specs) s.reason = `${s.reason} Not run: @playwright/test is not installed in ${process.cwd()}.`;
     return;
   }
-  const args = [cli, 'test', ...specs.map((s) => relative(process.cwd(), s.file!).replace(/\\/g, '/')), '--reporter=json', '--workers=1'];
+  const args = [cli, 'test', ...specs.map((s) => posix(relative(process.cwd(), s.file!))), '--reporter=json', '--workers=1'];
   const stdout = await new Promise<string>((done) => {
-    const child = spawn(process.execPath, args, {
-      env: { ...process.env, API_BASE_URL: env.baseUrl, PLAYWRIGHT_JSON_OUTPUT_NAME: jsonPath },
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
+    const child = spawn(process.execPath, args, { env: { ...process.env, API_BASE_URL: env.baseUrl, PLAYWRIGHT_JSON_OUTPUT_NAME: jsonPath }, stdio: ['ignore', 'pipe', 'pipe'] });
     let buf = '';
     child.stdout.on('data', (d) => (buf += d));
     child.stderr.resume();
     child.on('close', () => done(buf));
   });
   if (!existsSync(jsonPath)) {
-    for (const s of specs) {
-      s.status = 'TEST_FAILURE';
-      s.reason = `Playwright produced no report. ${stdout.slice(-300)}`;
-    }
+    for (const s of specs) Object.assign(s, { status: 'TEST_FAILURE', reason: `Playwright produced no report. ${stdout.slice(-300)}` });
     return;
   }
   const report = JSON.parse(await readFile(jsonPath, 'utf8'));
-  const tests: { file: string; status: string; message: string }[] = [];
+  const tests: { file: string; title: string; status: string; message: string }[] = [];
   const walk = (suite: any, file?: string) => {
     const f = suite.file ?? file;
     for (const spec of suite.specs ?? []) {
       for (const t of spec.tests ?? []) {
         const last = t.results?.[t.results.length - 1];
-        tests.push({ file: f, status: last?.status ?? 'unknown', message: (last?.errors ?? []).map((e: any) => e.message ?? '').join('\n') });
+        tests.push({ file: posix(f ?? ''), title: spec.title, status: last?.status ?? 'unknown', message: (last?.errors ?? []).map((e: any) => e.message ?? '').join('\n') });
       }
     }
     for (const s of suite.suites ?? []) walk(s, f);
@@ -149,32 +227,34 @@ export async function runGenerated(result: GenerateResult, env: { baseUrl: strin
   for (const s of report.suites ?? []) walk(s);
 
   for (const s of specs) {
-    const base = relative(process.cwd(), s.file!).replace(/\\/g, '/');
-    const t = tests.find((x) => base.endsWith(x.file) || x.file?.endsWith(base.split('/').pop()!));
-    if (!t) {
-      s.status = 'TEST_FAILURE';
-      s.reason = 'Test did not run (not found in the Playwright report).';
-    } else if (t.status === 'passed') {
-      s.status = 'PASS';
-      s.reason = s.reason.replace('not executed yet.', 'executed and passed.');
-    } else {
-      const clean = t.message.replace(/\u001b\[[0-9;]*m/g, '');
-      s.status = /CONTRACT_MISMATCH/.test(clean) ? 'CONTRACT_MISMATCH' : 'TEST_FAILURE';
-      s.reason = `${s.status === 'CONTRACT_MISMATCH' ? 'API response broke the contract' : 'Test failed'}: ${clean.split('\n').find((l) => l.trim()) ?? t.status}`;
+    const rel = posix(relative(process.cwd(), s.file!));
+    const mine = tests.filter((t) => t.file && (rel.endsWith(t.file) || t.file.endsWith(rel)));
+    if (!mine.length) {
+      Object.assign(s, { status: 'TEST_FAILURE', reason: 'Tests did not run (not found in the Playwright report).' });
+      continue;
     }
+    const failed = mine.filter((t) => t.status !== 'passed' && t.status !== 'skipped');
+    if (!failed.length) {
+      Object.assign(s, { status: 'PASS', reason: `${mine.length} test(s) executed and passed.` });
+      continue;
+    }
+    const clean = (m: string) => m.replace(/\u001b\[[0-9;]*m/g, '').split('\n').find((l) => l.trim())?.replace(/^Error:\s*/, '') ?? '';
+    const mismatch = failed.some((t) => /CONTRACT_MISMATCH/.test(t.message));
+    Object.assign(s, {
+      status: mismatch ? 'CONTRACT_MISMATCH' : 'TEST_FAILURE',
+      reason: `${failed.length}/${mine.length} failed: ` + failed.slice(0, 5).map((t) => `"${t.title}" → ${clean(t.message)}`).join(' | '),
+    });
   }
 }
 
+const SEVERITY: Status[] = ['CONTRACT_MISMATCH', 'TEST_FAILURE', 'PASS', 'NOT_RUN', 'BLOCKED'];
+
+/** One functional finding per operation: the most important status across its positive/negative files. */
 export function scenarioFindings(result: GenerateResult): Finding[] {
-  const findings: Finding[] = [];
-  for (const s of result.scenarios) {
-    for (const op of s.operations) {
-      // An operation that is BLOCKED in one scenario but generated in another keeps the better record.
-      const existing = findings.find((f) => f.operation === op);
-      if (existing && existing.status !== 'BLOCKED') continue;
-      if (existing) findings.splice(findings.indexOf(existing), 1);
-      findings.push({ operation: op, source: 'generate', status: s.status, reason: `${s.name}: ${s.reason}` });
-    }
-  }
-  return findings;
+  const byOp = new Map<string, Scenario[]>();
+  for (const s of result.scenarios) for (const op of s.operations) byOp.set(op, [...(byOp.get(op) ?? []), s]);
+  return [...byOp.entries()].map(([operation, list]) => {
+    const top = [...list].sort((a, b) => SEVERITY.indexOf(a.status) - SEVERITY.indexOf(b.status))[0];
+    return { operation, source: 'generate', status: top.status, reason: list.map((s) => `${s.name}: ${s.status} - ${s.reason}`).join(' / ') };
+  });
 }

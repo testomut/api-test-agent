@@ -125,3 +125,37 @@ describe('safety helpers', () => {
     expect(m.get('GET /b')?.failure).toContain('"0"');
   });
 });
+
+import { operationFolder } from '../../src/generate/templates.js';
+import { bodyCases, documentedRejections, queryCases } from '../../src/generate/negative.js';
+
+describe('test layout', () => {
+  it('puts each operation in <resource>/<method>[-by-id]', () => {
+    expect(operationFolder(op('GET /items'))).toEqual({ resource: 'items', action: 'get' });
+    expect(operationFolder(op('POST /items'))).toEqual({ resource: 'items', action: 'post' });
+    expect(operationFolder(op('GET /items/{itemId}'))).toEqual({ resource: 'items', action: 'get-by-id' });
+    expect(operationFolder(op('POST /admin/reset'))).toEqual({ resource: 'admin-reset', action: 'post' });
+  });
+});
+
+describe('negative cases', () => {
+  it('derives one broken rule per case from the body schema', () => {
+    const base = { name: 'Mechanical keyboard', price: 89.9, tags: ['hardware'] };
+    const cases = bodyCases(demo.doc, { $ref: '#/components/schemas/ItemInput' }, base, 'ItemInput');
+    const titles = cases.map((c) => c.title);
+    expect(titles).toContain('missing required field "name"');
+    expect(titles).toContain('"price" below minimum 0');
+    expect(titles).toContain('unknown field is rejected (additionalProperties: false)');
+    expect(cases.find((c) => c.title.startsWith('missing required field "name"'))?.data).not.toHaveProperty('name');
+  });
+
+  it('derives query cases from parameter bounds', () => {
+    expect(queryCases(op('GET /items')).map((c) => c.query)).toEqual([{ limit: 'abc' }, { limit: 0 }, { limit: 101 }]);
+  });
+
+  it('only uses rejections the spec documents', () => {
+    expect(documentedRejections(op('GET /health'))).toEqual({ validation: [], notFound: false, unauthorized: false });
+    expect(documentedRejections(op('POST /items')).validation).toEqual(['400']);
+    expect(documentedRejections(op('POST /admin/reset')).unauthorized).toBe(true);
+  });
+});

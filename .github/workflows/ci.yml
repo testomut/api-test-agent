@@ -44,13 +44,18 @@ jobs:
             if (JSON.stringify(bad) !== JSON.stringify(["GET /stats"])) process.exit(1);
           '
 
-      - name: Generate and run CRUD tests
-        run: npx tsx src/cli.ts generate demo-api/openapi.yaml -u http://localhost:3100 --allow-write --run -o reports/generate
+      - name: Generate tests (resource/method/positive|negative) and run them once
+        run: npx tsx src/cli.ts generate demo-api/openapi.yaml -u http://localhost:3100 --allow-write --run -o reports/generate --fail-on never
 
-      - name: Run generated suite with Playwright
-        run: npm run test:api
-        env:
-          API_BASE_URL: http://localhost:3100
+      - name: Self-check - generated suite fails only on the known defect
+        run: |
+          node -e '
+            const r = require("./reports/generate/report.json");
+            const bad = r.generated.scenarios.filter(s => s.status === "CONTRACT_MISMATCH" || s.status === "TEST_FAILURE").map(s => s.name);
+            const passed = r.generated.scenarios.filter(s => s.status === "PASS").length;
+            console.log("failing:", bad, "passed:", passed);
+            if (JSON.stringify(bad) !== JSON.stringify(["stats/get/positive"]) || passed < 10) process.exit(1);
+          '
 
       - name: Job summary
         if: always()

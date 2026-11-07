@@ -38,7 +38,7 @@ pip install schemathesis                          # optional: Python tool, not i
                                                   # (or pass --schemathesis-bin <path>)
 
 npx api-test-agent audit openapi.yaml -u http://localhost:8000 --probe --schemathesis -o reports/api
-npx api-test-agent generate openapi.yaml -u http://localhost:8000 --allow-write --run --tests-dir tests/api-generated
+npx api-test-agent generate openapi.yaml -u http://localhost:8000 --allow-write --run --tests-dir tests/api
 npx playwright test
 ```
 
@@ -71,25 +71,42 @@ The demo API contains one deliberate defect (`GET /stats` returns `total` as a s
 | Operation | Probe | Schemathesis | Functional |
 |---|---|---|---|
 | `GET /health`, `GET /items` | PASS | PASS | - |
-| `GET /stats` | **CONTRACT_MISMATCH** | **CONTRACT_MISMATCH** (ST108) | - |
-| `GET /items/{itemId}` | BLOCKED: no value for `itemId` | BLOCKED: only 404s, core logic never reached | PASS (CRUD chain) |
-| `POST/PATCH/DELETE /items…` | NOT_RUN (read-only probe) | NOT_RUN without `--allow-write` | PASS (CRUD chain) |
-| `GET /reports/{reportId}` | BLOCKED | BLOCKED | - |
-| `POST /admin/reset` | NOT_RUN | NOT_RUN | - |
+| `GET /stats` | **CONTRACT_MISMATCH** | **CONTRACT_MISMATCH** (ST108) | **CONTRACT_MISMATCH** |
+| `GET /items/{itemId}` | BLOCKED: no value for `itemId` | BLOCKED: only 404s, core logic never reached | PASS (positive + negative) |
+| `POST/PATCH/DELETE /items…` | NOT_RUN (read-only probe) | NOT_RUN without `--allow-write` | PASS (positive + negative) |
+| `GET /reports/{reportId}` | BLOCKED | BLOCKED | negative only (unknown id → 404) |
+| `POST /admin/reset` | NOT_RUN | NOT_RUN | BLOCKED: destructive, no confirmed cleanup |
 
 Note the `GET /items/{itemId}` row: Schemathesis exits green for it, but every request returned 404, so the tool reports `BLOCKED` rather than a misleading `PASS`.
 
 ## How functional tests are generated
 
-1. A dependency is **confirmed** only when it is written down: OpenAPI [`links`](https://spec.openapis.org/oas/v3.1.0#link-object) on the create response, or a reviewed deps file (`--deps deps.json`):
+Tests are laid out per resource and operation, with positive and negative cases in separate files:
+
+```
+tests/api/
+  items/
+    get/            positive.spec.ts  negative.spec.ts   (GET /items: limit below/above bounds, wrong type)
+    post/           positive.spec.ts  negative.spec.ts   (10 invalid bodies, one broken rule each)
+    get-by-id/      positive.spec.ts  negative.spec.ts   (unknown id → documented 404)
+    patch-by-id/    positive.spec.ts  negative.spec.ts
+    delete-by-id/   positive.spec.ts  negative.spec.ts
+  health/get/       positive.spec.ts                      (no 4xx documented → no negative file)
+  _support/         contract assertions, spec snapshot, items.resource.ts (create / remove helpers)
+```
+
+1. **Positive cases** use only spec-provided values. Operations that need an existing resource get it from a **confirmed** dependency: OpenAPI [`links`](https://spec.openapis.org/oas/v3.1.0#link-object) on the create response, or a reviewed deps file (`--deps deps.json`):
    ```json
    { "scenarios": [{ "create": "createItem", "idFrom": "/id", "param": "itemId", "read": "getItem", "update": "updateItem", "delete": "deleteItem" }] }
    ```
-   `POST /x` + `GET /x/{id}` without either is reported as an unconfirmed candidate, with the question to answer.
-2. Payloads come from schema `example` / `default` / `enum`, then minimal values that satisfy simple constraints. Each value's source is written as a comment in the test. A constraint that cannot be met deterministically (for example a `pattern` with no example) blocks the scenario.
-3. A chain with no delete operation is blocked: created data must be cleaned up. Cleanup runs in `finally`, even when an assertion fails.
-4. Every response is validated against the spec (status, content type, JSON schema with `$ref`, `nullable`, formats).
-5. Anything asserted that the spec does not state (for example "after PATCH, GET returns the new values") is listed as an `ASSUMPTION` in the test header and in the report, for the reviewer.
+   `POST /x` + `GET /x/{id}` without either is reported as an unconfirmed candidate, with the question to answer. Write operations without a confirmed cleanup are not generated at all.
+2. **Negative cases** need two things from the spec: a rule to break (required, type, min/max, length, enum, maxItems, additionalProperties, minProperties, security) and a documented rejection (400/422/4XX, 404, 401). Each case breaks exactly one rule of a valid payload and names its source. No documented rejection → only `positive.spec.ts`, and the report says why.
+3. Payloads come from schema `example` / `default` / `enum`, then minimal values that satisfy simple constraints; each value's source is in the helper's header. A constraint that cannot be met deterministically blocks the scenario.
+4. Created data is removed in `finally`, including records a broken API wrongly accepted in negative tests.
+5. Every response is validated against the spec (status, content type, JSON schema with `$ref`, `nullable`, formats). Failures are tagged `CONTRACT_MISMATCH`.
+6. Anything asserted that the spec does not state is marked `ASSUMPTION` for the reviewer.
+
+Generated files are overwritten when the spec changes; put hand-written cases in separate files. The same layout and rules are available to Claude Code as a skill: [`skills/api-test-writer/SKILL.md`](skills/api-test-writer/SKILL.md) (copy it to `.claude/skills/` in your test repository).
 
 `generate --draft-pr` commits the tests and the report on a new branch and opens a GitHub Draft PR. It never pushes to the default branch or merges.
 

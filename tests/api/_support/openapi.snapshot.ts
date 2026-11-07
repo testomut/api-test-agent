@@ -1,4 +1,4 @@
-// Snapshot of demo-api/openapi.yaml (hash 62bb4857f9993c5d). Regenerate when the spec changes.
+// Snapshot of demo-api/openapi.yaml (hash 62bb4857f9993c5d). Regenerated with the tests.
 export const spec: any = {
   "openapi": "3.0.3",
   "info": {

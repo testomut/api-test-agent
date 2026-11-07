@@ -139,7 +139,7 @@ common(program.command('audit').description('analyse a spec (and, if allowed, a 
 });
 
 common(program.command('generate').description('audit, then generate Playwright API tests for confirmed CRUD dependencies'))
-  .option('--tests-dir <dir>', 'where generated tests are written', 'tests/generated')
+  .option('--tests-dir <dir>', 'where generated tests are written', 'tests/api')
   .option('--deps <file>', 'JSON file with human-confirmed dependencies')
   .option('--run', 'run the generated tests once against --base-url (needs --allow-write)', false)
   .option('--draft-pr', 'commit to a new branch and open a GitHub Draft PR for review', false)
