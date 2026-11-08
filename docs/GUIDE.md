@@ -17,13 +17,15 @@ Everything a user needs after `npm install`: setup, configuration, commands, eve
 
 ```sh
 npm i -D @testomut/api-test-agent @playwright/test ajv ajv-formats
-npx api-test-agent init        # 6 questions (incl. test language), shows the plan of changes, applies only after you confirm
+npx @testomut/api-test-agent init        # 6 questions (incl. test language), shows the plan of changes, applies only after you confirm
 # paste your TEST token into .env (API_TOKEN=...) if the API needs one
 npm run api-tests              # first analysis, read-only
 # read reports/api-agent/report.md
 npm run api-tests:generate     # generate missing tests and run them once
 npx playwright test
 ```
+
+**Always use the scoped name with npx:** `npx @testomut/api-test-agent …`. Inside a project where the package is installed, the npm scripts (`npm run api-tests`) and the scoped `npx` use the local copy. The bare `npx api-test-agent` downloads an **unrelated package** with that name when the tool is not installed locally.
 
 Optional: `pip install schemathesis` adds generative contract checks. Without it everything else works and the report says it was skipped.
 
@@ -50,7 +52,7 @@ You need at least one of: a spec, a Postman collection, or existing tests. With 
 
 ## 3. What `init` changes in your project
 
-You do not copy or paste anything by hand. Before changing anything, `init` prints the full plan (every file it will create or change, and why) and asks for confirmation; the default answer is no. `npx api-test-agent init --dry-run` shows the plan without changing anything. It is safe to run again: it only adds what is missing and never overwrites your values.
+You do not copy or paste anything by hand. Before changing anything, `init` prints the full plan (every file it will create or change, and why) and asks for confirmation; the default answer is no. `npx @testomut/api-test-agent init --dry-run` shows the plan without changing anything. It is safe to run again: it only adds what is missing and never overwrites your values.
 
 | File | What happens |
 |---|---|
@@ -73,7 +75,7 @@ The skill is a Markdown file with test-writing rules (layout, positive/negative 
 - if you edited your copy, `init` keeps it; `--force` replaces it with the packaged version;
 - to remove it, delete `.claude/skills/api-test-writer/`.
 
-Non-interactive (CI, scripts): `npx api-test-agent init --yes --base-url https://api.test.example.com [--spec <url|file>] [--postman <file|id>] [--tests-dir tests/api] [--token] [--with-skill]`. `--yes` applies the plan without asking; the skill is installed only with `--with-skill`.
+Non-interactive (CI, scripts): `npx @testomut/api-test-agent init --yes --base-url https://api.test.example.com [--spec <url|file>] [--postman <file|id>] [--tests-dir tests/api] [--token] [--with-skill]`. `--yes` applies the plan without asking; the skill is installed only with `--with-skill`.
 
 ## 4. Commands
 

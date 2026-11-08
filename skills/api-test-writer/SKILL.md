@@ -37,7 +37,7 @@ tests/api/
 
 1. Find the source of expectations: OpenAPI operation (request schema, documented responses, `links`), the user story, or the user's words. Quote it in a comment at the top of the file.
 2. Read the project's existing `_support/` helpers, fixtures and one neighbouring test. Reuse them; do not create a second helper that does the same thing. Match naming and style.
-3. If `api-test-agent` is installed, run `npx api-test-agent generate <spec> --tests-dir tests/api` first and extend its output, rather than writing the same cases by hand. Hand-written cases go into separate files (e.g. `positive.manual.spec.ts`), because generated files are overwritten when the spec changes.
+3. If `api-test-agent` is installed, run `npx @testomut/api-test-agent generate <spec> --tests-dir tests/api` first and extend its output, rather than writing the same cases by hand. Hand-written cases go into separate files (e.g. `positive.manual.spec.ts`), because generated files are overwritten when the spec changes.
 
 ## 3. When negative cases are allowed
 

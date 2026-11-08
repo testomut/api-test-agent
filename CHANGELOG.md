@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Docs and CLI hints use `npx @testomut/api-test-agent`: the bare `npx api-test-agent` resolves to an unrelated npm package when the tool is not installed locally.
+
 ## 0.1.1 - 2026-11-08
 
 Fixes found by auditing public APIs (Swagger Petstore, FakeRESTApi, Practice Software Testing / Toolshop):

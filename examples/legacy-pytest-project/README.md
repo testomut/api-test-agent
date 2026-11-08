@@ -11,6 +11,6 @@ A pytest + requests API test project in a typical "before" state, used to demons
 ```sh
 npm run demo                                       # terminal 1, from the repository root
 cd examples/legacy-pytest-project                  # terminal 2
-npx api-test-agent init --yes --base-url http://localhost:3100 --spec ../../demo-api/openapi.yaml --lang python
-npx api-test-agent run
+npx @testomut/api-test-agent init --yes --base-url http://localhost:3100 --spec ../../demo-api/openapi.yaml --lang python
+npx @testomut/api-test-agent run
 ```

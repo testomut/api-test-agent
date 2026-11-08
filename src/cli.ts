@@ -257,7 +257,7 @@ program
     const r = await initProject(process.cwd(), answers, { force: o.force, installSkill });
     log(`Done: ${r.created.length} created, ${r.updated.length} updated.`);
     log('\nNext steps:');
-    [...r.todo, 'Run the first analysis: npx api-test-agent run   (or: npm run api-tests)', 'Read reports/api-agent/report.md'].forEach((t, i) => log(`  ${i + 1}. ${t}`));
+    [...r.todo, 'Run the first analysis: npx @testomut/api-test-agent run   (or: npm run api-tests)', 'Read reports/api-agent/report.md'].forEach((t, i) => log(`  ${i + 1}. ${t}`));
   });
 
 program

@@ -48,7 +48,7 @@ export function renderRunReport(r: RunResult): string {
   L.push('## 2. Test inventory', '');
   const byKind = new Map<string, string[]>();
   for (const f of a.inventory) byKind.set(f.kind, [...(byKind.get(f.kind) ?? []), f.path]);
-  if (!byKind.size) L.push('No test files found. Start with `npx api-test-agent generate`.', '');
+  if (!byKind.size) L.push('No test files found. Start with `npx @testomut/api-test-agent generate`.', '');
   else {
     L.push('| Kind | Files | Handling |', '|---|---|---|');
     const handling: Record<string, string> = {
@@ -155,12 +155,12 @@ export function renderRunReport(r: RunResult): string {
   const ready = gen.filter((p) => !p.detail.includes('BLOCKED'));
   const blocked = gen.filter((p) => p.detail.includes('BLOCKED'));
   if (ready.length) {
-    L.push(`### C. Generate missing tests (${ready.length})`, '', ...ready.map((p) => `- \`${p.to}\`: ${p.detail}`), '', 'Run: `npx api-test-agent generate --allow-write --run` (writes only to the API tests folder; existing files are not touched).', '');
+    L.push(`### C. Generate missing tests (${ready.length})`, '', ...ready.map((p) => `- \`${p.to}\`: ${p.detail}`), '', 'Run: `npx @testomut/api-test-agent generate --allow-write --run` (writes only to the API tests folder; existing files are not touched).', '');
   }
   if (blocked.length) {
     L.push(`### D. Cannot be generated yet (${blocked.length})`, '', 'Each needs one fix in the spec or a confirmed dependency first:', '', ...blocked.map((p) => `- \`${p.to}\`: ${p.detail.replace(/^(positive|negative) cases: BLOCKED, /, '$1: ')}`), '');
   }
-  if (movable.length || conv.length) L.push('Apply A and B with `npx api-test-agent adapt` (shows the plan first; `--dry-run` to only look). It needs a clean git working tree, never rewrites test code, and rolls everything back if the result does not collect.', '');
+  if (movable.length || conv.length) L.push('Apply A and B with `npx @testomut/api-test-agent adapt` (shows the plan first; `--dry-run` to only look). It needs a clean git working tree, never rewrites test code, and rolls everything back if the result does not collect.', '');
 
   // Spec quality
   if (r.spec) {

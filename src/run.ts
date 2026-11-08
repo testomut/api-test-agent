@@ -63,7 +63,7 @@ export async function run(o: { root: string; out: string; probe: boolean; schema
   };
 
   log('Environment');
-  add('.env', cfg.envFileFound ? 'ok' : 'warn', cfg.envFileFound ? 'found' : 'not found: run `npx api-test-agent init`, or set variables in the environment');
+  add('.env', cfg.envFileFound ? 'ok' : 'warn', cfg.envFileFound ? 'found' : 'not found: run `npx @testomut/api-test-agent init`, or set variables in the environment');
   const gi = existsSync(join(o.root, '.gitignore')) ? readFileSync(join(o.root, '.gitignore'), 'utf8') : '';
   if (cfg.envFileFound) add('.env ignored by git', /^\/?\.env\s*$/m.test(gi) ? 'ok' : 'fail', /^\/?\.env\s*$/m.test(gi) ? 'yes' : '.env is NOT in .gitignore: secrets could be committed (init adds it)');
 

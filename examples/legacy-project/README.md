@@ -12,6 +12,6 @@ Try it against the demo API (from the repository root):
 ```sh
 npm run demo                                  # terminal 1
 cd examples/legacy-project                    # terminal 2
-npx api-test-agent init --yes --base-url http://localhost:3100 --spec ../../demo-api/openapi.yaml --postman postman/inventory.postman_collection.json
-npx api-test-agent run
+npx @testomut/api-test-agent init --yes --base-url http://localhost:3100 --spec ../../demo-api/openapi.yaml --postman postman/inventory.postman_collection.json
+npx @testomut/api-test-agent run
 ```
