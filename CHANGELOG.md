@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- **Optional AI (`--ai` on `generate` and `run`):** Claude proposes answers for unconfirmed dependencies from a minimal excerpt (names and types only), with schema-constrained output, a spec check of every answer, a call budget and a cost summary. Accepted answers are written to `ai-deps.proposed.json` for review; nothing is applied automatically.
+- **Optional AI (`--ai` on `generate` and `run`) through console tools, no API keys:** `claude -p` (Claude Code), `codex exec`, or any command following a stdin/stdout JSON contract (for orchestrators). Proposes answers for unconfirmed dependencies from a minimal excerpt (names and types only); every answer is schema-validated, checked against the spec and written to `ai-deps.proposed.json` for review; nothing is applied automatically.
 
 ## 0.1.2 - 2026-11-08
 

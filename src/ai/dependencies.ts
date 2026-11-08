@@ -1,9 +1,8 @@
-import { z } from 'zod';
 import type { Operation } from '../types.js';
 import { resolvePointer, type OpenApiDoc } from '../spec/loader.js';
 import { operationPointer } from '../spec/catalog.js';
 import { findChains, type DepsFile } from '../generate/graph.js';
-import { ClaudeAdvisor, describeAiError } from './claude.js';
+import { AiRunner, describeAiError } from './runner.js';
 
 /**
  * AI step for UNCONFIRMED dependencies only (POST /x + /x/{param} with no OpenAPI links and no
@@ -13,13 +12,25 @@ import { ClaudeAdvisor, describeAiError } from './claude.js';
  * until a human reviews it and passes it with --deps.
  */
 
-export const DependencyAnswer = z.object({
-  same_resource: z.boolean().describe('true only if the excerpt shows the item path addresses the resource the create operation returns'),
-  id_pointer: z.string().nullable().describe('JSON pointer into the create response body that holds the identifier, e.g. "/id"; null if not established'),
-  confidence: z.enum(['high', 'medium', 'low']),
-  reasoning: z.string().describe('one or two sentences, citing only names from the excerpt'),
-});
-export type DependencyAnswerT = z.infer<typeof DependencyAnswer>;
+export interface DependencyAnswerT {
+  same_resource: boolean;
+  id_pointer: string | null;
+  confidence: 'high' | 'medium' | 'low';
+  reasoning: string;
+}
+
+/** JSON Schema the console tool must answer with (validated again on our side). */
+export const DEPENDENCY_SCHEMA = {
+  type: 'object',
+  properties: {
+    same_resource: { type: 'boolean', description: 'true only if the excerpt shows the item path addresses the resource the create operation returns' },
+    id_pointer: { type: ['string', 'null'], description: 'JSON pointer into the create response body that holds the identifier, e.g. "/id"; null if not established' },
+    confidence: { type: 'string', enum: ['high', 'medium', 'low'] },
+    reasoning: { type: 'string', description: 'one or two sentences, citing only names from the excerpt' },
+  },
+  required: ['same_resource', 'id_pointer', 'confidence', 'reasoning'],
+  additionalProperties: false,
+};
 
 export const SYSTEM_PROMPT = `You review REST API specifications for an API test generator.
 You get an excerpt about one "create" operation and operations on an item path with a path parameter.
@@ -87,7 +98,7 @@ export function verifyAnswer(doc: OpenApiDoc, create: Operation, paramSchema: an
 export async function proposeDependencies(
   doc: OpenApiDoc,
   ops: Operation[],
-  advisor: ClaudeAdvisor,
+  advisor: AiRunner,
   log: (m: string) => void,
   deps?: DepsFile,
 ): Promise<{ proposals: DependencyProposal[]; depsFile: DepsFile }> {
@@ -114,7 +125,7 @@ export async function proposeDependencies(
     };
     let answer: DependencyAnswerT | null;
     try {
-      answer = await advisor.ask(SYSTEM_PROMPT, `Excerpt (JSON):\n${JSON.stringify(excerpt, null, 2)}`, DependencyAnswer);
+      answer = await advisor.ask<DependencyAnswerT>(SYSTEM_PROMPT, `Excerpt (JSON):\n${JSON.stringify(excerpt, null, 2)}\n\nAnswer with the JSON object only.`, DEPENDENCY_SCHEMA);
     } catch (e) {
       proposals.push({ ...base, status: 'not-asked', reason: describeAiError(e) });
       log(`  AI: ${describeAiError(e)}`);

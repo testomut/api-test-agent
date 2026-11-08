@@ -48,7 +48,7 @@ npx playwright test
 
 **Test language:** TypeScript (Playwright Test) or Python (pytest + requests), chosen in `init` or with `API_TESTS_LANG` / `generate --lang`. Same layout, cases and safety rules in both.
 
-**Optional AI (`--ai`):** Claude proposes answers for unconfirmed dependencies from a minimal spec excerpt; each answer is checked against the spec and written as a proposal you review, never applied automatically. Without `--ai` the tool is fully deterministic.
+**Optional AI (`--ai`):** runs through a console tool you are logged in to (Claude Code `claude -p`, Codex `codex exec`, or your own orchestrator command): no API keys. It proposes answers for unconfirmed dependencies from a minimal spec excerpt; every answer is schema-validated, checked against the spec and written as a proposal you review, never applied automatically. Without `--ai` the tool is fully deterministic.
 
 **Full guide: [docs/GUIDE.md](docs/GUIDE.md)** (configuration, every check, what each command changes). Legacy projects to try it on: [Playwright](examples/legacy-project), [pytest](examples/legacy-pytest-project).
 

@@ -145,24 +145,32 @@ Non-interactive (CI, scripts): `npx @testomut/api-test-agent init --yes --base-u
 - Assertions: the statuses from `pm.test`; if the request had none and the operation is in the spec, the documented success status (marked as such in the test). Other `pm.test` lines are copied as comments for review.
 - Output in the configured language: `<resource>/<method>/positive.postman.spec.ts` or `test_positive_postman.py`.
 
-## 5b. Optional AI (`--ai`)
+## 5b. Optional AI (`--ai`), through console tools
 
-Everything above is deterministic. `--ai` adds Claude in **one** place where rules cannot decide: **unconfirmed dependencies** (`POST /x` + `/x/{param}` with no OpenAPI `links` and no deps file, normally reported as BLOCKED with a question).
+Everything above is deterministic. `--ai` adds an AI step in **one** place where rules cannot decide: **unconfirmed dependencies** (`POST /x` + `/x/{param}` with no OpenAPI `links` and no deps file, normally BLOCKED with a question).
+
+The AI runs through a **console tool you are already logged in to**: no API keys, usage counts against your subscription.
+
+| `API_AI` / `--ai-runner` | Runs | Notes |
+|---|---|---|
+| `claude` (default) | `claude -p --output-format json --json-schema … --tools "" --no-session-persistence` | Claude Code subscription. No tools: the model only answers |
+| `codex` | `codex exec --output-schema … --sandbox read-only --ephemeral` | Codex CLI subscription |
+| `command` | `API_AI_COMMAND` | Your own executable, e.g. an orchestrator (contract below) |
 
 ```sh
-export ANTHROPIC_API_KEY=...            # or: ant auth login
-npx @testomut/api-test-agent generate --ai          # or: run --ai
+npx @testomut/api-test-agent generate --ai            # or: run --ai, --ai-runner codex
 # review reports/api-agent/generate/ai-deps.proposed.json, then:
 npx @testomut/api-test-agent generate --deps reports/api-agent/generate/ai-deps.proposed.json --allow-write --run
 ```
 
-- **Opt-in only.** Without `--ai` nothing is sent anywhere.
-- **Minimal context.** For each candidate the model gets the operation keys and ids, the create response's property names and types, and the path parameter's type. Never example values, request data, test results or `.env` contents.
-- **Schema-constrained answer:** linked or not, the JSON pointer of the identifier (e.g. `/id`), confidence, a short reason.
-- **Checked against the spec.** The pointer must exist in the create response schema and its type/format must match the path parameter; low confidence is rejected. Rejections are listed with the reason.
-- **Proposals, never applied.** Accepted answers go to `ai-deps.proposed.json` (the deps-file format) and `ai-proposals.json` (every answer with its reason). Tests use them only after you pass the file with `--deps`.
-- **Budget and cost:** `--ai-max-calls` (default 10); the run ends with calls, tokens and an estimated cost. Model: `--ai-model` or `API_AI_MODEL` (default `claude-opus-5-5`). If a request is declined by a safety classifier, the API retries it on a fallback model (`fallbacks: "default"`).
-- **No credentials:** the AI step is skipped with a message; the rest of the run is unaffected.
+**Contract for `command` (orchestrators):** the request is written to stdin as JSON `{"system": "...", "prompt": "...", "schema": {JSON Schema}}`; the tool prints the answer object (matching the schema) as JSON on stdout and exits 0. The tool runs in an empty temporary folder.
+
+- **Opt-in only.** Without `--ai` no tool is called.
+- **Minimal context.** For each candidate: operation keys and ids, the create response's property names and types, the path parameter's type. Never example values, request data, test results or `.env` contents.
+- **Validated twice.** The answer must match the JSON Schema (checked here, not only by the tool), then the spec: the identifier pointer must exist in the create response and its type/format must match the path parameter; low confidence is rejected.
+- **Proposals, never applied.** Accepted answers go to `ai-deps.proposed.json` (deps-file format); every answer with its reason to `ai-proposals.json`. Tests use them only after you pass the file with `--deps`, and running the tests then confirms the link against the real API.
+- **Budget:** `--ai-max-calls` (default 10). The run ends with answers, failures, time and, for `claude`, the cost Claude Code reports (only billed per call when you use an API key instead of a subscription).
+- **Tool missing or not logged in:** the AI step is skipped with a message; the rest of the run is unaffected.
 
 ## 6. Checks catalogue
 
@@ -283,7 +291,7 @@ Python folders use underscores and contain `__init__.py`, so `test_positive.py` 
 
 **Postman cloud or file?** Both. A path ending in `.json` is read from disk; anything else is treated as a cloud collection id and needs `POSTMAN_API_KEY`.
 
-**Does it use AI?** Only with `--ai`, and only to propose answers for unconfirmed dependencies, which you review (§5b). Everything else (spec analysis, cases, payloads, test analysis, generation) is rule-based and reproducible.
+**Does it use AI?** Only with `--ai`, through a console tool you are logged in to (Claude Code, Codex, or your own orchestrator), and only to propose answers for unconfirmed dependencies, which you review (§5b). No API keys. Everything else (spec analysis, cases, payloads, test analysis, generation) is rule-based and reproducible.
 
 **Which languages can tests be generated in?** TypeScript (Playwright Test) and Python (pytest + requests), chosen in `init` or with `API_TESTS_LANG` / `--lang`. The analysis, cases and safety rules are shared; only the output templates differ, so more languages can be added.
 
