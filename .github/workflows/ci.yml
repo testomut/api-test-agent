@@ -24,6 +24,7 @@ jobs:
       - run: npm ci
       - run: pip install schemathesis
       - run: npm run typecheck
+      - run: npm run build
       - run: npm test
 
       - name: Start demo API
@@ -57,6 +58,19 @@ jobs:
             if (JSON.stringify(bad) !== JSON.stringify(["stats/get/positive"]) || passed < 10) process.exit(1);
           '
 
+      - name: Analyse the legacy example project (init + run)
+        working-directory: examples/legacy-project
+        run: |
+          node ../../dist/cli.js init --yes --base-url http://localhost:3100 --spec ../../demo-api/openapi.yaml --postman postman/inventory.postman_collection.json
+          node ../../dist/cli.js run --no-schemathesis
+          node -e '
+            const r = require("./reports/api-agent/report.json");
+            const a = r.analysis;
+            const ok = a.tests.length === 7 && a.notInSpec.includes("GET /version") && a.edges.some(e => e.source === "existing-tests") && a.edges.some(e => e.source === "postman");
+            console.log("tests:", a.tests.length, "edges:", a.edges.length, "notInSpec:", a.notInSpec);
+            if (!ok) process.exit(1);
+          '
+
       - name: Job summary
         if: always()
         run: cat reports/audit/report.md >> "$GITHUB_STEP_SUMMARY" || true
@@ -68,3 +82,4 @@ jobs:
           path: |
             reports/
             playwright-report/
+            examples/legacy-project/reports/
