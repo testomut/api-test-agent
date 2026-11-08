@@ -46,6 +46,32 @@ export async function askAnswers(defaults: InitAnswers): Promise<InitAnswers> {
   }
 }
 
+export async function askYesNo(question: string, defaultYes = false): Promise<boolean> {
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    const a = (await rl.question(`${question} ${defaultYes ? '(Y/n)' : '(y/N)'}: `)).trim();
+    return a ? /^y/i.test(a) : defaultYes;
+  } finally {
+    rl.close();
+  }
+}
+
+export function skillNotice(): string {
+  return [
+    '',
+    'Optional: Claude Code skill "api-test-writer"',
+    '  What:    .claude/skills/api-test-writer/SKILL.md, a Markdown file with test-writing rules',
+    '           (folder layout, positive/negative cases, cleanup, never invent expected results).',
+    '  Effect:  Claude Code loads it automatically in THIS project when you ask it to write API tests,',
+    '           so it changes how Claude behaves here. It contains no code, runs nothing and grants',
+    '           no permissions or tool access.',
+    '  Caution: files in .claude/ steer the AI agent. Read the skill before installing it, and review',
+    '           changes to .claude/ in pull requests like code.',
+    `  Read it: ${SKILL_SOURCE}`,
+    '',
+  ].join('\n');
+}
+
 function envBody(values: Partial<Record<EnvKey, string>>, withComments: boolean): string {
   const lines: string[] = [];
   for (const k of Object.keys(ENV_KEYS) as EnvKey[]) {
@@ -80,8 +106,23 @@ export default defineConfig({
 });
 `;
 
-export async function initProject(root: string, a: InitAnswers, opts: { force?: boolean } = {}): Promise<InitResult> {
+export interface InitOptions {
+  force?: boolean;
+  /** Compute the plan only: nothing is written. */
+  dryRun?: boolean;
+  /** Install the Claude Code skill. Off unless the user explicitly agreed. */
+  installSkill?: boolean;
+}
+
+/** The skill shipped with the package, so the user can read it before agreeing. */
+export const SKILL_SOURCE = join(PKG_ROOT, 'skills', 'api-test-writer', 'SKILL.md');
+
+export async function initProject(root: string, a: InitAnswers, opts: InitOptions = {}): Promise<InitResult> {
   const r: InitResult = { created: [], updated: [], kept: [], todo: [] };
+  const dry = !!opts.dryRun;
+  const write = async (path: string, content: string) => {
+    if (!dry) await writeFile(path, content);
+  };
   const testsDir = (a.testsDir ?? 'tests/api').replace(/\\/g, '/').replace(/\/$/, '');
   const cloudPostman = !!a.postman && !/\.json$/i.test(a.postman);
   const values: Partial<Record<EnvKey, string>> = {
@@ -94,26 +135,26 @@ export async function initProject(root: string, a: InitAnswers, opts: { force?: 
   // .env: create, or add only missing keys. Existing values are never overwritten.
   const envPath = join(root, '.env');
   if (!existsSync(envPath)) {
-    await writeFile(envPath, envBody(values, false));
-    r.created.push('.env');
+    await write(envPath, envBody(values, false));
+    r.created.push('.env: your settings and secrets (ignored by git)');
   } else {
     const current = readEnvFile(root);
     const missing = (Object.keys(ENV_KEYS) as EnvKey[]).filter((k) => !(k in current));
     if (missing.length) {
       const text = readFileSync(envPath, 'utf8');
-      await writeFile(envPath, text + (text.endsWith('\n') ? '' : '\n') + missing.map((k) => `${k}=${values[k] ?? ''}`).join('\n') + '\n');
-      r.updated.push(`.env (+${missing.join(', ')})`);
+      await write(envPath, text + (text.endsWith('\n') ? '' : '\n') + missing.map((k) => `${k}=${values[k] ?? ''}`).join('\n') + '\n');
+      r.updated.push(`.env: appends missing ${missing.join(', ')} (existing values kept)`);
     } else r.kept.push('.env');
   }
-  const env = readEnvFile(root);
+  const env: Record<string, string> = readEnvFile(root);
   if (a.needsToken && !env.API_TOKEN) r.todo.push('Paste your TEST token into .env: API_TOKEN=...');
   if (cloudPostman && !env.POSTMAN_API_KEY) r.todo.push('Postman cloud collection: paste your Postman API key into .env: POSTMAN_API_KEY=... (postman.com → Settings → API keys)');
 
   // .env.example: safe to commit, documents every variable.
   const examplePath = join(root, '.env.example');
   if (!existsSync(examplePath) || opts.force) {
-    await writeFile(examplePath, envBody({ API_TESTS_DIR: testsDir }, true));
-    r.created.push('.env.example');
+    await write(examplePath, envBody({ API_TESTS_DIR: testsDir }, true));
+    r.created.push('.env.example: list of variables without values (safe to commit)');
   } else r.kept.push('.env.example');
 
   // .gitignore: append missing lines, never remove anything.
@@ -122,15 +163,15 @@ export async function initProject(root: string, a: InitAnswers, opts: { force?: 
   const have = new Set(gi.split(/\r?\n/).map((l) => l.trim()));
   const add = GITIGNORE_BLOCK.filter((l) => !have.has(l) && !(l === '.env' && have.has('/.env')));
   if (add.length && !(add.length === 1 && add[0] === '# api-test-agent')) {
-    await writeFile(giPath, gi + (gi && !gi.endsWith('\n') ? '\n' : '') + (gi ? '\n' : '') + add.join('\n') + '\n');
-    (gi ? r.updated : r.created).push(`.gitignore (+${add.filter((l) => !l.startsWith('#')).join(', ')})`);
+    await write(giPath, gi + (gi && !gi.endsWith('\n') ? '\n' : '') + (gi ? '\n' : '') + add.join('\n') + '\n');
+    (gi ? r.updated : r.created).push(`.gitignore: appends ${add.filter((l) => !l.startsWith('#')).join(', ')} (nothing removed)`);
   } else r.kept.push('.gitignore');
 
   // playwright.config: create only when the project has none.
   const existing = ['ts', 'js', 'mjs', 'cjs'].map((e) => `playwright.config.${e}`).find((f) => existsSync(join(root, f)));
   if (!existing) {
-    await writeFile(join(root, 'playwright.config.ts'), PLAYWRIGHT_CONFIG(testsDir));
-    r.created.push('playwright.config.ts');
+    await write(join(root, 'playwright.config.ts'), PLAYWRIGHT_CONFIG(testsDir));
+    r.created.push('playwright.config.ts: baseURL and auth header from .env (created because the project has no Playwright config)');
   } else {
     r.kept.push(existing);
     const cfg = readFileSync(join(root, existing), 'utf8');
@@ -139,23 +180,27 @@ export async function initProject(root: string, a: InitAnswers, opts: { force?: 
 
   // API tests folder
   if (!existsSync(join(root, testsDir))) {
-    await mkdir(join(root, testsDir), { recursive: true });
-    r.created.push(`${testsDir}/`);
+    if (!dry) await mkdir(join(root, testsDir), { recursive: true });
+    r.created.push(`${testsDir}/: empty folder for API tests`);
   }
 
-  // Claude Code skill
+  // Claude Code skill: only with explicit consent.
   const skillSrc = join(PKG_ROOT, 'skills', 'api-test-writer');
   const skillDst = join(root, '.claude', 'skills', 'api-test-writer');
-  if (existsSync(skillSrc)) {
-    const dstFile = join(skillDst, 'SKILL.md');
+  const dstFile = join(skillDst, 'SKILL.md');
+  if (!opts.installSkill) {
+    r.kept.push(existsSync(dstFile) ? '.claude/skills/api-test-writer (already present, not changed)' : 'Claude Code skill: not installed (not requested)');
+  } else if (existsSync(skillSrc)) {
     const same = existsSync(dstFile) && readFileSync(dstFile, 'utf8') === readFileSync(join(skillSrc, 'SKILL.md'), 'utf8');
-    if (same) r.kept.push('.claude/skills/api-test-writer');
+    if (same) r.kept.push('.claude/skills/api-test-writer (identical)');
     else if (existsSync(dstFile) && !opts.force) {
       r.kept.push('.claude/skills/api-test-writer (local changes kept; --force to replace)');
     } else {
-      await mkdir(skillDst, { recursive: true });
-      await cp(skillSrc, skillDst, { recursive: true });
-      r.created.push('.claude/skills/api-test-writer');
+      if (!dry) {
+        await mkdir(skillDst, { recursive: true });
+        await cp(skillSrc, skillDst, { recursive: true });
+      }
+      r.created.push('.claude/skills/api-test-writer/SKILL.md: instructions for Claude Code (Markdown, no code)');
     }
   }
 
@@ -173,8 +218,8 @@ export async function initProject(root: string, a: InitAnswers, opts: { force?: 
     const added = Object.entries(scripts).filter(([k]) => !pkg.scripts[k]);
     for (const [k, v] of added) pkg.scripts[k] = v;
     if (added.length) {
-      await writeFile(pkgPath, JSON.stringify(pkg, null, 2) + '\n');
-      r.updated.push(`package.json scripts (+${added.map(([k]) => k).join(', ')})`);
+      await write(pkgPath, JSON.stringify(pkg, null, 2) + '\n');
+      r.updated.push(`package.json: adds scripts ${added.map(([k, v]) => `"${k}": "${v}"`).join(', ')}`);
     }
     const deps = { ...pkg.dependencies, ...pkg.devDependencies };
     const missing = ['@playwright/test', 'ajv', 'ajv-formats'].filter((d) => !deps[d]);

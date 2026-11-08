@@ -17,7 +17,7 @@ Everything a user needs after `npm install`: setup, configuration, commands, eve
 
 ```sh
 npm i -D @testomut/api-test-agent @playwright/test ajv ajv-formats
-npx api-test-agent init        # answers 5 questions, prepares the project
+npx api-test-agent init        # 5 questions, shows the plan of changes, applies only after you confirm
 # paste your TEST token into .env (API_TOKEN=...) if the API needs one
 npm run api-tests              # first analysis, read-only
 # read reports/api-agent/report.md
@@ -46,7 +46,7 @@ You need at least one of: a spec, a Postman collection, or existing tests. With 
 
 ## 3. What `init` changes in your project
 
-You do not copy or paste anything by hand. `init` is safe to run again: it only adds what is missing and never overwrites your values.
+You do not copy or paste anything by hand. Before changing anything, `init` prints the full plan (every file it will create or change, and why) and asks for confirmation; the default answer is no. `npx api-test-agent init --dry-run` shows the plan without changing anything. It is safe to run again: it only adds what is missing and never overwrites your values.
 
 | File | What happens |
 |---|---|
@@ -55,18 +55,27 @@ You do not copy or paste anything by hand. `init` is safe to run again: it only 
 | `.gitignore` | Missing lines are appended: `.env`, `reports/`, `test-results/`, `playwright-report/`. Nothing is removed. |
 | `playwright.config.ts` | Created **only if the project has no Playwright config**. It reads `.env`, sets `baseURL` from `API_BASE_URL` and the auth header from `API_TOKEN`. An existing config is never changed; `init` tells you what to check in it. |
 | `API_TESTS_DIR` | Created if missing. |
-| `.claude/skills/api-test-writer/` | The Claude Code skill with the same test-writing rules. Claude Code picks it up automatically in this project. If you edited it, your version is kept (`--force` replaces it). |
+| `.claude/skills/api-test-writer/` | **Only if you agree to it** (separate question, default no; `--with-skill` in non-interactive mode). See below. |
 | `package.json` | Scripts added if missing: `api-tests`, `api-tests:generate`, `test:api`. Missing dependencies are reported, not installed. |
 
 Nothing is installed or changed when you run `npm install`: the package has no install scripts.
 
-Non-interactive (CI, scripts): `npx api-test-agent init --yes --base-url https://api.test.example.com [--spec <url|file>] [--postman <file|id>] [--tests-dir tests/api] [--token]`.
+### About the Claude Code skill
+
+The skill is a Markdown file with test-writing rules (layout, positive/negative cases, cleanup, never invent expected results). Claude Code loads skills from `.claude/skills/` automatically, so installing it **changes how the AI agent behaves in this project**. It contains no code, runs nothing and grants no permissions or tool access, but treat it like any instruction given to an agent:
+
+- read it before installing: `node_modules/@testomut/api-test-agent/skills/api-test-writer/SKILL.md` (`init` prints the exact path);
+- review changes to `.claude/` in pull requests like code: anyone who can edit those files can change what the agent is told;
+- if you edited your copy, `init` keeps it; `--force` replaces it with the packaged version;
+- to remove it, delete `.claude/skills/api-test-writer/`.
+
+Non-interactive (CI, scripts): `npx api-test-agent init --yes --base-url https://api.test.example.com [--spec <url|file>] [--postman <file|id>] [--tests-dir tests/api] [--token] [--with-skill]`. `--yes` applies the plan without asking; the skill is installed only with `--with-skill`.
 
 ## 4. Commands
 
 | Command | Changes files? | Sends requests? | Purpose |
 |---|---|---|---|
-| `init` | yes (see §3) | no | One-time project setup. |
+| `init` | yes, after showing the plan and your confirmation (see §3) | no | One-time project setup. `--dry-run` shows the plan only. |
 | `run` | only `reports/api-agent/` | read-only GETs (`--no-probe` to disable) | Analysis: environment, spec, existing tests, Postman, dependency and coverage maps, proposals. |
 | `audit [spec]` | only the report folder | read-only with `--probe` / `--schemathesis` | Spec and contract checks only. |
 | `generate [spec]` | only `API_TESTS_DIR` | with `--run`: creates and deletes test data (needs `--allow-write`) | Generates `positive` / `negative` tests for each operation. |
@@ -179,7 +188,7 @@ tests/api/
 
 ## 10. FAQ
 
-**Do I need to copy the skill or edit `.gitignore` myself?** No. `init` does both and can be run again safely.
+**Do I need to copy the skill or edit `.gitignore` myself?** No. `init` updates `.gitignore` and, if you agree, installs the skill. It shows the plan first and can be run again safely.
 
 **My tests are not in `tests/api`.** Set `API_TESTS_DIR`, or follow proposal A in the report. `run` lists API tests it found outside that folder.
 

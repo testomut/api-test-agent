@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { cp, mkdtemp, readFile, writeFile } from 'node:fs/promises';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { classifyTarget, loadConfig } from '../../src/config.js';
@@ -118,8 +118,12 @@ describe('init', () => {
     const dir = await mkdtemp(join(tmpdir(), 'ata-init-'));
     await cp(EX, dir, { recursive: true });
     await writeFile(join(dir, '.gitignore'), 'node_modules/\n');
-    const first = await initProject(dir, { baseUrl: 'http://localhost:3100', testsDir: 'tests/api', needsToken: true });
-    expect(first.created).toEqual(expect.arrayContaining(['.env', '.env.example', 'playwright.config.ts', '.claude/skills/api-test-writer']));
+    const answers = { baseUrl: 'http://localhost:3100', testsDir: 'tests/api', needsToken: true };
+    const plan = await initProject(dir, answers, { dryRun: true, installSkill: true });
+    expect(plan.created.length).toBeGreaterThan(3);
+    expect(existsSync(join(dir, '.env'))).toBe(false); // dry run writes nothing
+    const first = await initProject(dir, answers, { installSkill: true });
+    expect(first.created.map((c) => c.split(':')[0])).toEqual(expect.arrayContaining(['.env', '.env.example', 'playwright.config.ts', '.claude/skills/api-test-writer/SKILL.md']));
     await writeFile(join(dir, '.env'), (await readFile(join(dir, '.env'), 'utf8')).replace('API_TOKEN=', 'API_TOKEN=secret-value'));
     const second = await initProject(dir, { baseUrl: 'http://other', testsDir: 'tests/api' });
     expect(second.created).toEqual([]);
@@ -128,5 +132,12 @@ describe('init', () => {
     const gi = await readFile(join(dir, '.gitignore'), 'utf8');
     expect(gi.match(/^\.env$/gm)).toHaveLength(1);
     expect(gi).toContain('node_modules/');
+  });
+
+  it('never installs the skill without explicit consent', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'ata-skill-'));
+    const r = await initProject(dir, { baseUrl: 'http://localhost:3100' });
+    expect(existsSync(join(dir, '.claude'))).toBe(false);
+    expect(r.kept.join()).toContain('not installed');
   });
 });

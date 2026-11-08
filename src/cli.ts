@@ -14,7 +14,7 @@ import { generate, runGenerated, scenarioFindings } from './generate/generate.js
 import { openDraftPr } from './pr.js';
 import type { Finding, Operation } from './types.js';
 import { classifyTarget, loadConfig } from './config.js';
-import { askAnswers, initProject } from './init.js';
+import { askAnswers, askYesNo, initProject, skillNotice } from './init.js';
 import { findSpec, run } from './run.js';
 
 const VERSION = '0.1.0';
@@ -202,8 +202,10 @@ common(program.command('generate').description('audit, then generate Playwright 
 
 program
   .command('init')
-  .description('set up this project: .env, .env.example, .gitignore, playwright.config, Claude skill, npm scripts')
-  .option('--yes', 'non-interactive: use flags and defaults', false)
+  .description('set up this project: shows a plan of every file it will create or change and asks before applying')
+  .option('--yes', 'non-interactive: apply without asking (the skill still needs --with-skill)', false)
+  .option('--dry-run', 'only show what would change', false)
+  .option('--with-skill', 'also install the Claude Code skill into .claude/skills/', false)
   .option('--base-url <url>', 'API_BASE_URL')
   .option('--spec <urlOrFile>', 'API_SPEC_URL')
   .option('--postman <fileOrId>', 'POSTMAN_COLLECTION')
@@ -212,17 +214,42 @@ program
   .option('--force', 'replace .env.example and the skill even if they were changed', false)
   .action(async (o) => {
     const defaults = { baseUrl: o.baseUrl ?? cfg.baseUrl, specUrl: o.spec ?? cfg.specUrl, postman: o.postman ?? cfg.postmanCollection, testsDir: o.testsDir, needsToken: o.token };
-    if (!o.yes && !process.stdin.isTTY) throw new Error('No interactive terminal: use --yes with --base-url (and optional --spec, --postman, --tests-dir, --token).');
-    const answers = o.yes ? defaults : await askAnswers(defaults);
+    const canAsk = !o.yes && !!process.stdin.isTTY;
+    if (!canAsk && !o.yes && !o.dryRun) throw new Error('No interactive terminal: use --yes (or --dry-run) with --base-url and optional --spec, --postman, --tests-dir, --token, --with-skill.');
+    const answers = canAsk ? await askAnswers(defaults) : defaults;
     if (!answers.baseUrl) throw new Error('--base-url is required with --yes.');
-    const r = await initProject(process.cwd(), answers, { force: o.force });
+    const interactive = canAsk;
+
+    // The skill steers the AI agent in this project: explain it and ask separately (default: no).
+    let installSkill = !!o.withSkill;
+    if (interactive && !installSkill) {
+      process.stdout.write(skillNotice());
+      installSkill = await askYesNo('Install the skill?', false);
+    }
+
     const list = (title: string, items: string[]) => {
-      if (items.length) log(`${title}\n${items.map((i) => `  ${i}`).join('\n')}`);
+      if (items.length) process.stdout.write(`${title}\n${items.map((i) => `  - ${i}`).join('\n')}\n`);
     };
-    log('');
-    list('Created:', r.created);
-    list('Updated:', r.updated);
-    list('Kept as is:', r.kept);
+    const plan = await initProject(process.cwd(), answers, { force: o.force, installSkill, dryRun: true });
+    process.stdout.write(`\ninit will change ${process.cwd()}:\n\n`);
+    list('Create:', plan.created);
+    list('Update:', plan.updated);
+    list('Leave as is:', plan.kept);
+    process.stdout.write('\nNothing else is touched: no installs, no network calls, existing tests and configs are not modified.\n\n');
+    if (!plan.created.length && !plan.updated.length) {
+      log('Nothing to do: the project is already set up.');
+      return;
+    }
+    if (o.dryRun) {
+      log('Dry run: nothing was changed.');
+      return;
+    }
+    if (interactive && !(await askYesNo('Apply these changes?', false))) {
+      log('Cancelled: nothing was changed.');
+      return;
+    }
+    const r = await initProject(process.cwd(), answers, { force: o.force, installSkill });
+    log(`Done: ${r.created.length} created, ${r.updated.length} updated.`);
     log('\nNext steps:');
     [...r.todo, 'Run the first analysis: npm run api-tests   (or: npx api-test-agent run)', 'Read reports/api-agent/report.md'].forEach((t, i) => log(`  ${i + 1}. ${t}`));
   });

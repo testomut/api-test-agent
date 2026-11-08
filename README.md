@@ -33,13 +33,13 @@ OpenAPI spec ──► lint + catalogue ──► safe probe ──► Schemathe
 
 ```sh
 npm i -D @testomut/api-test-agent @playwright/test ajv ajv-formats
-npx api-test-agent init        # 5 questions: base URL, spec, Postman, tests folder, token
+npx api-test-agent init        # 5 questions, then shows the plan of changes and asks before applying
 npm run api-tests              # read-only analysis → reports/api-agent/report.md
 npm run api-tests:generate     # generate missing positive/negative tests and run them once
 npx playwright test
 ```
 
-`init` writes `.env` / `.env.example`, appends to `.gitignore`, creates `playwright.config.ts` only if you have none, installs the Claude Code skill into `.claude/skills/` and adds npm scripts. Nothing to copy by hand, safe to re-run.
+`init` first prints every file it will create or change and asks for confirmation (`--dry-run` only shows the plan). It writes `.env` / `.env.example`, appends to `.gitignore`, creates `playwright.config.ts` only if you have none and adds npm scripts. The Claude Code skill is offered separately, with an explanation of what it does, and is installed only if you say yes: files in `.claude/` steer the AI agent, so read it first and review `.claude/` changes like code.
 
 `run` analyses what the project already has: existing Playwright API tests (calls, preconditions from hooks, fixtures and helpers, ids passed between requests), Postman collections (file or cloud), and the spec. It builds a **dependency map** and a **coverage map**, lists issues in existing tests, checks the live API against the spec, and proposes how to move existing tests into the layout, which Postman requests to convert and which tests to generate.
 
