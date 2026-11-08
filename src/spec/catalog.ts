@@ -5,15 +5,20 @@ const deref = (doc: OpenApiDoc, node: any) =>
   node?.$ref ? resolvePointer(doc, node.$ref.slice(1)).node : node;
 
 export function knownValue(param: any, schema: any): unknown {
-  if (param?.example !== undefined) return param.example;
+  return knownValueWithSource(param, schema).value;
+}
+
+/** A spec-provided value and its origin. Examples are illustrations, not guaranteed real records. */
+export function knownValueWithSource(param: any, schema: any): { value?: unknown; source?: 'example' | 'default' | 'enum' | 'const' } {
+  if (param?.example !== undefined) return { value: param.example, source: 'example' };
   const ex = param?.examples && Object.values(param.examples)[0];
-  if (ex && typeof ex === 'object' && 'value' in (ex as any)) return (ex as any).value;
-  if (schema?.example !== undefined) return schema.example;
-  if (Array.isArray(schema?.examples) && schema.examples.length) return schema.examples[0];
-  if (schema?.default !== undefined) return schema.default;
-  if (Array.isArray(schema?.enum) && schema.enum.length) return schema.enum[0];
-  if (schema?.const !== undefined) return schema.const;
-  return undefined;
+  if (ex && typeof ex === 'object' && 'value' in (ex as any)) return { value: (ex as any).value, source: 'example' };
+  if (schema?.example !== undefined) return { value: schema.example, source: 'example' };
+  if (Array.isArray(schema?.examples) && schema.examples.length) return { value: schema.examples[0], source: 'example' };
+  if (schema?.default !== undefined) return { value: schema.default, source: 'default' };
+  if (Array.isArray(schema?.enum) && schema.enum.length) return { value: schema.enum[0], source: 'enum' };
+  if (schema?.const !== undefined) return { value: schema.const, source: 'const' };
+  return {};
 }
 
 export function buildCatalog(doc: OpenApiDoc): Operation[] {
@@ -39,7 +44,8 @@ export function buildCatalog(doc: OpenApiDoc): Operation[] {
           name: p.name,
           in: p.in,
           required: p.in === 'path' ? true : Boolean(p.required),
-          knownValue: knownValue(p, schema),
+          knownValue: knownValueWithSource(p, schema).value,
+          knownSource: knownValueWithSource(p, schema).source,
           schema,
         };
       });

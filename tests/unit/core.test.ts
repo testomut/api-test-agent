@@ -227,3 +227,23 @@ describe('login auth', () => {
     expect(redactAll('login with s3cret-value', { SHOP_USER_PASSWORD: 's3cret-value' })).toBe('login with ***');
   });
 });
+
+describe('positive tests need real data', () => {
+  const docFor = (paths: any) => ({ openapi: '3.0.3', info: { title: 't', version: '1' }, paths });
+  const ok = { '200': { description: 'ok', content: { 'application/json': { schema: { type: 'object' } } } } };
+
+  it('does not build a positive test on an example id (an illustration, not a real record)', async () => {
+    const d = docFor({ '/brands/{brandId}': { get: { operationId: 'getBrand', parameters: [{ name: 'brandId', in: 'path', required: true, example: '1', schema: { type: 'string' } }], responses: ok } } });
+    const dir = await mkdtemp(joinP(tmpdir(), 'ata-ex-'));
+    const r = await generate({ ...demo, doc: d } as any, buildCatalog(d), { outDir: dir, version: 'test' });
+    expect(r.scenarios.find((s) => s.name === 'brands/get-by-id/positive')).toMatchObject({ status: 'BLOCKED' });
+    expect(r.scenarios.find((s) => s.name === 'brands/get-by-id/positive')!.reason).toMatch(/spec example, not from a real record/);
+  });
+
+  it('keeps logout out of the shared-session suite', async () => {
+    const d = docFor({ '/users/logout': { get: { operationId: 'logout', responses: ok } } });
+    const dir = await mkdtemp(joinP(tmpdir(), 'ata-lo-'));
+    const r = await generate({ ...demo, doc: d } as any, buildCatalog(d), { outDir: dir, version: 'test' });
+    expect(r.scenarios.find((s) => s.name === 'users-logout/get/positive')!.reason).toMatch(/ends the session/);
+  });
+});

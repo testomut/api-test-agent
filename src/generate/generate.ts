@@ -152,6 +152,15 @@ export async function generate(spec: LoadedSpec, ops: Operation[], o: GenerateOp
       const miss = [...unresolvedPath, ...unresolvedQuery].map((p) => `${p.in} "${p.name}"`).join(', ');
       posReason = chainBlock.get(op) ?? `No value for ${miss}: add an example to the spec, or link the operation that creates it.`;
     } else if (!op.responses.some((r) => /^2\d\d$/.test(r.status))) posReason = 'No concrete 2xx response is documented.';
+    else if (pathParams.some((p) => p.knownSource === 'example')) {
+      // An example id ("1") is an illustration, not a record that exists on the test environment.
+      const ex = pathParams.filter((p) => p.knownSource === 'example').map((p) => `"${p.name}"`).join(', ');
+      posReason = chainBlock.get(op) ?? `Path ${ex} would come from a spec example, not from a real record: link the operation that creates it (OpenAPI links / --deps), or provide test data.`;
+    }
+    // Ending the session would log out every later test that shares the login token.
+    if (!posReason && /(^|[^a-z])(log-?out|sign-?out|revoke)/i.test(`${op.path} ${op.operationId ?? ''}`)) {
+      posReason = `${op.key} ends the session shared by the other tests (logout/revoke): test it with its own login, not in the generated suite.`;
+    }
 
     if (posReason) scenarios.push({ name: `${name}/positive`, kind: 'positive', status: 'BLOCKED', reason: posReason, operations: [op.key] });
     else {

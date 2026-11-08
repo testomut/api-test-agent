@@ -12,6 +12,8 @@ export interface ParamInfo {
   required: boolean;
   /** A concrete value the spec itself provides (example / default / first enum). */
   knownValue?: unknown;
+  /** Where knownValue came from: an illustrative example, or a value the schema defines (default/enum/const). */
+  knownSource?: 'example' | 'default' | 'enum' | 'const';
   schema?: Record<string, unknown>;
 }
 

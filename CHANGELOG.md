@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Positive tests are no longer built on example path ids (an example like `"1"` is an illustration, not a real record): BLOCKED until a dependency or test data exists. Found on the Toolshop API, where example ids returned 404.
+- Logout/revoke operations are kept out of the generated suite: they ended the login session shared by the other tests.
+
 ## 0.1.3 - 2026-11-08
 
 Includes 0.1.2, which was tagged but not published to npm.
