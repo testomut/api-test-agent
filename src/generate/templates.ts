@@ -279,7 +279,7 @@ export function renderNegative(n: NegativeInput, meta: Meta): string {
     const body = plan?.updatePayload !== undefined && chain?.update === op ? `, { data: resource.updatePayload }` : '';
     L.push(`  test('returns documented 404 for an id that does not exist', async ({ request }) => {`);
     L.push(`    const missingId = String(${n.notFound.idExpr});`);
-    L.push(send('    ', body, 'missingId'));
+    L.push(`    const res = await request.${op.method}(${pathExpr(op, chain?.param ?? n.notFound.param, 'missingId')}${body});`);
     L.push(`    await expectRejected(res, ['404'], '${op.method}', ${q(op.path)});`, `  });`, '');
   }
 

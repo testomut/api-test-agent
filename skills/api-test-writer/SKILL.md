@@ -31,6 +31,7 @@ tests/api/
 - If no negative case is possible, create **only** `positive.spec.ts` and tell the user why in one line.
 - If a positive case is impossible (missing test data, unknown dependency), create only what is possible and state the blocker as a concrete question.
 - Two operations that would land in the same folder: suffix the folder with the operationId.
+- **Language** follows `API_TESTS_LANG` in `.env` (default TypeScript). For Python (pytest + requests) the same layout uses underscores and pytest names: `orders/get_by_id/test_positive.py` and `test_negative.py`, an `__init__.py` in each folder, shared fixtures in `tests/api/conftest.py` (`api`, `anonymous_api`, `contract`, `<resource>`, `created_<resource>`), negative cases with `pytest.mark.parametrize`, cleanup in fixture teardown. Hand-written files: `test_positive_manual.py`.
 
 ## 2. Before writing: read, do not assume
 

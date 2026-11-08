@@ -45,7 +45,8 @@
     "README.md",
     "LICENSE",
     "skills",
-    "docs"
+    "docs",
+    "src/contract/contract.py"
   ],
   "keywords": [
     "openapi",
@@ -54,7 +55,9 @@
     "playwright",
     "schemathesis",
     "qa",
-    "test-generation"
+    "test-generation",
+    "pytest",
+    "python"
   ],
   "repository": {
     "type": "git",

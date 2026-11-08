@@ -162,20 +162,23 @@ common(program.command('audit').description('analyse a spec (and, if allowed, a 
 common(program.command('generate').description('audit, then generate Playwright API tests for confirmed CRUD dependencies'))
   .option('--tests-dir <dir>', 'where generated tests are written (default: API_TESTS_DIR or tests/api)')
   .option('--deps <file>', 'JSON file with human-confirmed dependencies')
+  .addOption(new Option('--lang <lang>', 'language of generated tests (default: API_TESTS_LANG or typescript)').choices(['typescript', 'python']))
   .option('--run', 'run the generated tests once against --base-url (needs --allow-write)', false)
   .option('--draft-pr', 'commit to a new branch and open a GitHub Draft PR for review', false)
-  .action(async (specArg: string | undefined, o: CommonOpts & { testsDir?: string; deps?: string; run: boolean; draftPr: boolean }) => {
+  .action(async (specArg: string | undefined, o: CommonOpts & { testsDir?: string; deps?: string; run: boolean; draftPr: boolean; lang?: 'typescript' | 'python' }) => {
     const location = await resolveInputs(specArg, o);
     o.testsDir ??= cfg.testsDir;
+    o.lang ??= cfg.testsLang;
+    log(`Test language: ${o.lang}`);
     if (o.run && (!o.baseUrl || !o.allowWrite)) throw new Error('--run creates and deletes data: it needs --base-url and --allow-write.');
     const r = await runAudit(location, o);
     const deps = o.deps ? JSON.parse(await readFile(o.deps, 'utf8')) : undefined;
     log('Generating functional scenarios…');
-    const gen = await generate(r.spec, r.ops, { outDir: o.testsDir!, deps, version: VERSION });
+    const gen = await generate(r.spec, r.ops, { outDir: o.testsDir!, deps, version: VERSION, lang: o.lang });
     for (const s of gen.scenarios) log(`  ${s.status.padEnd(9)} ${s.name}`);
     if (o.run) {
       log('Running generated tests once (assertions are never changed to pass)…');
-      await runGenerated(gen, { baseUrl: o.baseUrl! }, o.out);
+      await runGenerated(gen, { baseUrl: o.baseUrl! }, o.out, o.lang);
       for (const s of gen.scenarios.filter((x) => x.file)) log(`  ${s.status.padEnd(9)} ${s.name}`);
     }
     const report = buildReport({
@@ -210,10 +213,11 @@ program
   .option('--spec <urlOrFile>', 'API_SPEC_URL')
   .option('--postman <fileOrId>', 'POSTMAN_COLLECTION')
   .option('--tests-dir <dir>', 'API_TESTS_DIR', 'tests/api')
+  .addOption(new Option('--lang <lang>', 'API_TESTS_LANG: language of generated tests').choices(['typescript', 'python']))
   .option('--token', 'the API needs a token (you paste it into .env)', false)
   .option('--force', 'replace .env.example and the skill even if they were changed', false)
   .action(async (o) => {
-    const defaults = { baseUrl: o.baseUrl ?? cfg.baseUrl, specUrl: o.spec ?? cfg.specUrl, postman: o.postman ?? cfg.postmanCollection, testsDir: o.testsDir, needsToken: o.token };
+    const defaults = { baseUrl: o.baseUrl ?? cfg.baseUrl, specUrl: o.spec ?? cfg.specUrl, postman: o.postman ?? cfg.postmanCollection, testsDir: o.testsDir, needsToken: o.token, lang: o.lang ?? cfg.testsLang };
     const canAsk = !o.yes && !!process.stdin.isTTY;
     if (!canAsk && !o.yes && !o.dryRun) throw new Error('No interactive terminal: use --yes (or --dry-run) with --base-url and optional --spec, --postman, --tests-dir, --token, --with-skill.');
     const answers = canAsk ? await askAnswers(defaults) : defaults;
@@ -251,7 +255,7 @@ program
     const r = await initProject(process.cwd(), answers, { force: o.force, installSkill });
     log(`Done: ${r.created.length} created, ${r.updated.length} updated.`);
     log('\nNext steps:');
-    [...r.todo, 'Run the first analysis: npm run api-tests   (or: npx api-test-agent run)', 'Read reports/api-agent/report.md'].forEach((t, i) => log(`  ${i + 1}. ${t}`));
+    [...r.todo, 'Run the first analysis: npx api-test-agent run   (or: npm run api-tests)', 'Read reports/api-agent/report.md'].forEach((t, i) => log(`  ${i + 1}. ${t}`));
   });
 
 program

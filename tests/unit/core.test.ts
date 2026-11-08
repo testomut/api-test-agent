@@ -159,3 +159,31 @@ describe('negative cases', () => {
     expect(documentedRejections(op('POST /admin/reset')).unauthorized).toBe(true);
   });
 });
+
+import { mkdtemp, readFile as readFileP } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join as joinP } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { generate, findPython } from '../../src/generate/generate.js';
+import { pyLit } from '../../src/generate/python.js';
+
+describe('python output', () => {
+  it('converts JSON values to Python literals', () => {
+    expect(pyLit({ a: true, b: null, c: [1, 'x'] })).toBe('{\n    "a": True,\n    "b": None,\n    "c": [1, "x"],\n}');
+  });
+
+  it('generates a pytest suite in the same layout, with packages and shared fixtures', async () => {
+    const dir = await mkdtemp(joinP(tmpdir(), 'ata-py-'));
+    const r = await generate(demo, ops, { outDir: dir, version: 'test', lang: 'python' });
+    for (const f of ['conftest.py', '__init__.py', '_support/contract.py', '_support/items_resource.py', 'items/post/test_positive.py', 'items/post/test_negative.py', 'items/get_by_id/test_positive.py', 'health/get/test_positive.py', 'items/get_by_id/__init__.py']) {
+      expect(existsSync(joinP(dir, f)), f).toBe(true);
+    }
+    expect(existsSync(joinP(dir, 'health/get/test_negative.py'))).toBe(false); // no 4xx documented → one file
+    expect(await readFileP(joinP(dir, 'conftest.py'), 'utf8')).toContain('def created_items(items):');
+    const py = r.files.filter((f) => f.endsWith('.py'));
+    const compiled = spawnSync(findPython(), ['-m', 'py_compile', ...py], { encoding: 'utf8' });
+    if (compiled.error) return; // no python on this machine: syntax check skipped
+    expect(compiled.status, compiled.stderr).toBe(0);
+  });
+});

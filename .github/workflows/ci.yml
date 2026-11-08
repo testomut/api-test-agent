@@ -58,6 +58,18 @@ jobs:
             if (JSON.stringify(bad) !== JSON.stringify(["stats/get/positive"]) || passed < 10) process.exit(1);
           '
 
+      - name: Generate Python tests (pytest + requests) and run them once
+        run: |
+          pip install pytest requests jsonschema
+          npx tsx src/cli.ts generate demo-api/openapi.yaml -u http://localhost:3100 --allow-write --run --lang python --tests-dir tests/api-python -o reports/generate-python --fail-on never
+          node -e '
+            const r = require("./reports/generate-python/report.json");
+            const bad = r.generated.scenarios.filter(s => s.status === "CONTRACT_MISMATCH" || s.status === "TEST_FAILURE").map(s => s.name);
+            const passed = r.generated.scenarios.filter(s => s.status === "PASS").length;
+            console.log("failing:", bad, "passed:", passed);
+            if (JSON.stringify(bad) !== JSON.stringify(["stats/get/positive"]) || passed < 10) process.exit(1);
+          '
+
       - name: Analyse the legacy example project (init + run)
         working-directory: examples/legacy-project
         run: |

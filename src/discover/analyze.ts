@@ -70,6 +70,11 @@ export function matchOperation(method: string, path: string, ops: Operation[]): 
 }
 
 const posix = (p: string) => p.replace(/\\/g, '/');
+/** Python layout uses underscores in the resource and action folder names. */
+const pyDir = (dir: string) => {
+  const parts = dir.split(/[\\/]/);
+  return [...parts.slice(0, -2), ...parts.slice(-2).map((p) => p.replace(/[^A-Za-z0-9_]/g, '_'))].join('/');
+};
 
 export async function analyzeProject(o: {
   root: string;
@@ -177,8 +182,8 @@ export async function analyzeProject(o: {
         negativeTests: [],
         usedAsPrecondition: 0,
         postman: [],
-        generatedPositive: !!dir && existsSync(join(dir, 'positive.spec.ts')),
-        generatedNegative: !!dir && existsSync(join(dir, 'negative.spec.ts')),
+        generatedPositive: !!dir && (existsSync(join(dir, 'positive.spec.ts')) || existsSync(join(pyDir(dir), 'test_positive.py'))),
+        generatedNegative: !!dir && (existsSync(join(dir, 'negative.spec.ts')) || existsSync(join(pyDir(dir), 'test_negative.py'))),
         negativePossible: !!rej && (rej.validation.length > 0 || rej.notFound || rej.unauthorized),
       });
     }

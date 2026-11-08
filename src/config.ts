@@ -13,6 +13,7 @@ export const ENV_KEYS = {
   POSTMAN_COLLECTION: 'Optional. Postman collection: path to an exported .json file, or a collection id/uid in the Postman cloud.',
   POSTMAN_API_KEY: 'Only for a cloud collection id. Secret.',
   API_TESTS_DIR: 'Optional. Folder with API tests (default tests/api). Other test folders (UI, unit) are never modified.',
+  API_TESTS_LANG: 'Optional. Language of generated tests: typescript (Playwright Test, default) or python (pytest + requests).',
 } as const;
 
 export type EnvKey = keyof typeof ENV_KEYS;
@@ -25,6 +26,7 @@ export interface AgentConfig {
   postmanCollection?: string;
   postmanApiKey?: string;
   testsDir: string;
+  testsLang: 'typescript' | 'python';
   envFileFound: boolean;
 }
 
@@ -50,6 +52,7 @@ export function loadConfig(root = process.cwd(), env: NodeJS.ProcessEnv = proces
     postmanCollection: get('POSTMAN_COLLECTION'),
     postmanApiKey: get('POSTMAN_API_KEY'),
     testsDir: get('API_TESTS_DIR') ?? 'tests/api',
+    testsLang: /^py/i.test(get('API_TESTS_LANG') ?? '') ? 'python' : 'typescript',
     envFileFound: existsSync(resolve(root, '.env')),
   };
 }

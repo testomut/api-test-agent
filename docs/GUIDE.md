@@ -17,7 +17,7 @@ Everything a user needs after `npm install`: setup, configuration, commands, eve
 
 ```sh
 npm i -D @testomut/api-test-agent @playwright/test ajv ajv-formats
-npx api-test-agent init        # 5 questions, shows the plan of changes, applies only after you confirm
+npx api-test-agent init        # 6 questions (incl. test language), shows the plan of changes, applies only after you confirm
 # paste your TEST token into .env (API_TOKEN=...) if the API needs one
 npm run api-tests              # first analysis, read-only
 # read reports/api-agent/report.md
@@ -26,6 +26,8 @@ npx playwright test
 ```
 
 Optional: `pip install schemathesis` adds generative contract checks. Without it everything else works and the report says it was skipped.
+
+**Python tests instead of TypeScript:** answer `python` to the language question (or set `API_TESTS_LANG=python`). Generated tests then use pytest + requests and need `pip install pytest requests jsonschema`; Playwright and `ajv` are not needed. Run them with `python -m pytest tests/api`.
 
 ## 2. Configuration
 
@@ -39,6 +41,8 @@ All settings are environment variables. `init` writes them to `.env` (ignored by
 | `POSTMAN_COLLECTION` | no | Postman collection: path to an exported `.json` file, **or** a collection id/uid from the Postman cloud. Collections committed to the repository are found automatically. |
 | `POSTMAN_API_KEY` | only for a cloud id | Postman API key (postman.com → Settings → API keys). Secret. |
 | `API_TESTS_DIR` | no | Folder with API tests. Default `tests/api`. Other folders (UI, unit, e2e) are never modified. |
+| `API_TESTS_LANG` | no | Language of generated tests: `typescript` (Playwright Test, default) or `python` (pytest + requests). `generate --lang` overrides it. |
+| `API_TESTS_PYTHON` | no | Python interpreter that runs generated pytest suites with `generate --run`. Default: `./.venv`, then `python` on PATH. |
 
 Other credentials: `API_USER` + `API_PASSWORD` (HTTP basic), `API_KEY` (apiKey in a header or query).
 
@@ -156,6 +160,10 @@ A negative case is generated only when the spec documents the rejection (400 / 4
 
 ## 7. Test layout
 
+Same cases and rules in both languages; only the file conventions differ.
+
+**TypeScript (Playwright Test)**
+
 ```
 tests/api/
   orders/
@@ -164,6 +172,20 @@ tests/api/
     post/           positive.spec.ts  negative.spec.ts
   _support/         contract checks, spec snapshot, <resource>.resource.ts (create/remove helpers)
 ```
+
+**Python (pytest + requests)**
+
+```
+tests/api/
+  conftest.py       fixtures: api, anonymous_api, contract, <resource>, created_<resource>
+  orders/
+    get/            test_positive.py  test_negative.py
+    get_by_id/      test_positive.py  test_negative.py
+    post/           test_positive.py  test_negative.py
+  _support/         contract.py (jsonschema), openapi_snapshot.json, <resource>_resource.py
+```
+
+Python folders use underscores and contain `__init__.py`, so `test_positive.py` can repeat across folders. Negative cases use `pytest.mark.parametrize`; preconditions and cleanup are fixtures (`created_orders` creates before the test and deletes after it).
 
 - Folder = static path segments (`/orders` → `orders`, `/admin/reset` → `admin-reset`), then the method, with `-by-id` when the path ends with a parameter.
 - Generated files are overwritten when the spec changes. Hand-written cases go next to them in `*.manual.spec.ts`; converted Postman requests in `*.postman.spec.ts`.
@@ -197,5 +219,7 @@ tests/api/
 **Only Postman, no spec?** `run` still builds the dependency and coverage map from Postman. Contract checks and test generation need a spec.
 
 **Postman cloud or file?** Both. A path ending in `.json` is read from disk; anything else is treated as a cloud collection id and needs `POSTMAN_API_KEY`.
+
+**Which languages can tests be generated in?** TypeScript (Playwright Test) and Python (pytest + requests), chosen in `init` or with `API_TESTS_LANG` / `--lang`. The analysis, cases and safety rules are shared; only the output templates differ, so more languages can be added.
 
 **Which test frameworks are analysed?** Playwright (TS/JS) and Postman v2.x in depth. Cypress, pytest and Jest/Vitest API tests are found and listed; deeper analysis is planned.

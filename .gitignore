@@ -9,3 +9,5 @@ playwright-report/
 .schemathesis/
 dist/
 *.tgz
+__pycache__/
+.pytest_cache/

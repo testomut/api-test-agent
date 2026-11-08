@@ -37,7 +37,7 @@ export function classify(path: string, src: string): TestKind | undefined {
     return /"_postman_id"|"schema"\s*:\s*"https:\/\/schema\.getpostman\.com/.test(src) ? 'postman-collection' : undefined;
   }
   if (!TEST_FILE.test(name)) return undefined;
-  if (name.endsWith('.py')) return /\b(requests|httpx)\.|\bclient\.(get|post|put|patch|delete)\(/.test(src) ? 'pytest-api' : 'other-test';
+  if (name.endsWith('.py')) return /\b(requests|httpx)\.|\b(client|api|session|anonymous_api)\.(get|post|put|patch|delete)\(/.test(src) ? 'pytest-api' : 'other-test';
   if (/\.cy\.[jt]sx?$/.test(name) || /\bcy\.(request|visit|get)\(/.test(src)) return 'cypress';
   if (/from\s+['"]@playwright\/test['"]|require\(['"]@playwright\/test['"]\)/.test(src)) {
     const api = /\brequest\s*[,}]|APIRequestContext|request\.newContext|\brequest\.(get|post|put|patch|delete|head|fetch)\(/.test(src);

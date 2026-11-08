@@ -11,6 +11,7 @@ export interface InitAnswers {
   postman?: string;
   testsDir?: string;
   needsToken?: boolean;
+  lang?: 'typescript' | 'python';
 }
 
 export interface InitResult {
@@ -21,7 +22,7 @@ export interface InitResult {
 }
 
 const PKG_ROOT = fileURLToPath(new URL('../', import.meta.url)); // src/ or dist/ → package root
-const GITIGNORE_BLOCK = ['# api-test-agent', '.env', 'reports/', 'test-results/', 'playwright-report/'];
+const GITIGNORE_BLOCK = ['# api-test-agent', '.env', 'reports/', 'test-results/', 'playwright-report/', '__pycache__/', '.pytest_cache/'];
 
 export async function askAnswers(defaults: InitAnswers): Promise<InitAnswers> {
   const rl = createInterface({ input: process.stdin, output: process.stdout });
@@ -30,17 +31,27 @@ export async function askAnswers(defaults: InitAnswers): Promise<InitAnswers> {
     console.log('\napi-test-agent setup. Secrets are never asked here: you will paste them into .env yourself.\n');
     let baseUrl: string | undefined;
     while (!baseUrl) {
-      baseUrl = await ask('1/5 Base URL of the TEST environment (e.g. https://api.test.example.com)', defaults.baseUrl);
+      baseUrl = await ask('1/6 Base URL of the TEST environment (e.g. https://api.test.example.com)', defaults.baseUrl);
       if (baseUrl && !/^https?:\/\//.test(baseUrl)) {
         console.log('   Must start with http:// or https://');
         baseUrl = undefined;
       }
     }
-    const specUrl = await ask('2/5 OpenAPI/Swagger URL or file (Enter = auto-detect)', defaults.specUrl);
-    const postman = await ask('3/5 Postman collection: exported .json path or cloud collection id (Enter = none)', defaults.postman);
-    const testsDir = await ask('4/5 Folder for API tests', defaults.testsDir ?? 'tests/api');
-    const token = await ask('5/5 Does the API need a token? (y/N)', defaults.needsToken ? 'y' : 'n');
-    return { baseUrl, specUrl, postman, testsDir, needsToken: /^y/i.test(token ?? '') };
+    const specUrl = await ask('2/6 OpenAPI/Swagger URL or file (Enter = auto-detect)', defaults.specUrl);
+    const postman = await ask('3/6 Postman collection: exported .json path or cloud collection id (Enter = none)', defaults.postman);
+    const testsDir = await ask('4/6 Folder for API tests', defaults.testsDir ?? 'tests/api');
+    const token = await ask('5/6 Does the API need a token? (y/N)', defaults.needsToken ? 'y' : 'n');
+    let lang: string | undefined;
+    while (!lang) {
+      lang = (await ask('6/6 Language of generated tests: typescript (Playwright) or python (pytest + requests)', defaults.lang ?? 'typescript'))?.toLowerCase();
+      if (lang?.startsWith('ts')) lang = 'typescript';
+      if (lang?.startsWith('py')) lang = 'python';
+      if (lang !== 'typescript' && lang !== 'python') {
+        console.log('   Type typescript or python');
+        lang = undefined;
+      }
+    }
+    return { baseUrl, specUrl, postman, testsDir, needsToken: /^y/i.test(token ?? ''), lang: lang as 'typescript' | 'python' };
   } finally {
     rl.close();
   }
@@ -130,6 +141,7 @@ export async function initProject(root: string, a: InitAnswers, opts: InitOption
     API_SPEC_URL: a.specUrl,
     POSTMAN_COLLECTION: a.postman,
     API_TESTS_DIR: testsDir,
+    API_TESTS_LANG: a.lang ?? 'typescript',
   };
 
   // .env: create, or add only missing keys. Existing values are never overwritten.
@@ -167,9 +179,12 @@ export async function initProject(root: string, a: InitAnswers, opts: InitOption
     (gi ? r.updated : r.created).push(`.gitignore: appends ${add.filter((l) => !l.startsWith('#')).join(', ')} (nothing removed)`);
   } else r.kept.push('.gitignore');
 
-  // playwright.config: create only when the project has none.
+  const py = a.lang === 'python';
+  // playwright.config (TypeScript only): create only when the project has none.
   const existing = ['ts', 'js', 'mjs', 'cjs'].map((e) => `playwright.config.${e}`).find((f) => existsSync(join(root, f)));
-  if (!existing) {
+  if (py) {
+    r.todo.push('Python tests need: pip install pytest requests jsonschema (in the environment that runs them; or set API_TESTS_PYTHON to that python).');
+  } else if (!existing) {
     await write(join(root, 'playwright.config.ts'), PLAYWRIGHT_CONFIG(testsDir));
     r.created.push('playwright.config.ts: baseURL and auth header from .env (created because the project has no Playwright config)');
   } else {
@@ -206,14 +221,15 @@ export async function initProject(root: string, a: InitAnswers, opts: InitOption
 
   // package.json scripts + dependency check
   const pkgPath = join(root, 'package.json');
-  if (!existsSync(pkgPath)) r.todo.push('No package.json: run `npm init -y` and `npm i -D @playwright/test @testomut/api-test-agent ajv ajv-formats`.');
-  else {
+  if (!existsSync(pkgPath)) {
+    if (!py) r.todo.push('No package.json: run `npm init -y` and `npm i -D @playwright/test @testomut/api-test-agent ajv ajv-formats`.');
+  } else {
     const pkg = JSON.parse(await readFile(pkgPath, 'utf8'));
     pkg.scripts ??= {};
     const scripts: Record<string, string> = {
       'api-tests': 'api-test-agent run',
       'api-tests:generate': 'api-test-agent generate --allow-write --run',
-      'test:api': 'playwright test',
+      'test:api': py ? `python -m pytest ${testsDir}` : 'playwright test',
     };
     const added = Object.entries(scripts).filter(([k]) => !pkg.scripts[k]);
     for (const [k, v] of added) pkg.scripts[k] = v;
@@ -222,7 +238,7 @@ export async function initProject(root: string, a: InitAnswers, opts: InitOption
       r.updated.push(`package.json: adds scripts ${added.map(([k, v]) => `"${k}": "${v}"`).join(', ')}`);
     }
     const deps = { ...pkg.dependencies, ...pkg.devDependencies };
-    const missing = ['@playwright/test', 'ajv', 'ajv-formats'].filter((d) => !deps[d]);
+    const missing = py ? [] : ['@playwright/test', 'ajv', 'ajv-formats'].filter((d) => !deps[d]);
     if (missing.length) r.todo.push(`Install: npm i -D ${missing.join(' ')}`);
   }
   return r;
