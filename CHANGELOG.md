@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **API objects in generated TypeScript suites (breaking for hand edits of generated specs):** every request goes through `_support/api/<Name>Api.ts` (`api.brands.getBrands()`), one class per first path segment. `generated/<Name>ApiBase.ts` is rewritten on every generate; `<Name>Api.ts` extends it, is created once and never overwritten, for hand-written reusable requests. Resource helpers take the `api` fixture instead of `request`.
+- **`publicApi` fixture:** operations without `security` and 401 checks run without any credentials, so they no longer log in (a broken login used to fail every test, public ones included).
+- **Test account question before a run (API_LOGIN):** `generate` and `audit` ask whether a test account exists. Yes: credentials from `.env`, checked with one login up front. No: new accounts through `API_REGISTER` / `API_REGISTER_BODY` on every run, stated explicitly (they stay on the server): the generated suite registers one per Playwright worker (`testAccount` worker fixture), the agent one more only for `--probe/--schemathesis`. Generated credentials stay in memory. Preset with `API_TEST_ACCOUNT=existing|new` (read by the suite too) or `--test-account`. TypeScript only for now.
+- Demo API: `POST /auth/register` (not in the spec) to exercise the new-account mode.
+
 - Positive tests are no longer built on example path ids (an example like `"1"` is an illustration, not a real record): BLOCKED until a dependency or test data exists. Found on the Toolshop API, where example ids returned 404.
 - Logout/revoke operations are kept out of the generated suite: they ended the login session shared by the other tests.
 

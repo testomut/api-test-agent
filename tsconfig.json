@@ -9,5 +9,6 @@
     "resolveJsonModule": true,
     "types": ["node"]
   },
-  "include": ["src", "demo-api", "tests", "playwright.config.ts"]
+  "include": ["src", "demo-api", "tests", "playwright.config.ts"],
+  "exclude": ["src/contract/fixtures.ts"]
 }

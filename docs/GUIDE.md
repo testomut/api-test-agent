@@ -66,6 +66,20 @@ API_PASSWORD=...
 - Credentials are never written to reports, logs or generated files; any variable whose name contains TOKEN, PASSWORD, SECRET or API_KEY is redacted from output.
 - `init` asks for it (`l = login request`), or non-interactively: `init --login "POST /users/login" --login-body '{...}' --token-pointer /access_token`.
 
+#### No test account? Register one on every run
+
+Before `generate` and `audit` log in, they ask: **Do you have a test account?**
+
+- **Yes** (`existing`): the credentials above are read from `.env`.
+- **No** (`new`): **new accounts are registered on every run** and left on the server (nothing deletes them): the generated suite registers **one per Playwright worker** (the `testAccount` worker fixture in `_support/fixtures.ts`), so parallel workers never share user data; the agent registers one more only for its own `--probe/--schemathesis`. Emails (`api-test-<unique>@example.com`) and passwords are generated and kept in memory only. Needs `--allow-write`. Playwright starts a fresh worker after a failed test, and that worker registers its own account too.
+
+```
+API_REGISTER=POST /users/register
+API_REGISTER_BODY={"first_name":"Api","last_name":"Test","email":"${API_USER}","password":"${API_PASSWORD}"}
+```
+
+`API_REGISTER_BODY` must use the same `${VAR}`s as `API_LOGIN_BODY`; `${UNIQUE}` is a per-run suffix for other unique fields. To skip the question (CI): `API_TEST_ACCOUNT=existing|new` or `--test-account existing|new`. Without a terminal and without the setting, an account in `.env` means `existing`; otherwise the run stops with an explanation.
+
 You need at least one of: a spec, a Postman collection, or existing tests. With none of them there is nothing to analyse.
 
 ## 3. What `init` changes in your project
@@ -241,8 +255,25 @@ tests/api/
     get/            positive.spec.ts  negative.spec.ts
     get-by-id/      positive.spec.ts  negative.spec.ts
     post/           positive.spec.ts  negative.spec.ts
-  _support/         contract checks, spec snapshot, <resource>.resource.ts (create/remove helpers)
+  _support/
+    api/
+      generated/    ApiBase.ts, <Name>ApiBase.ts (one method per operation), apis.ts: rewritten on every generate
+      <Name>Api.ts  extends the generated base; created once, never overwritten: your reusable requests
+    fixtures.ts     api, publicApi, request, testAccount (one per worker)
+                    contract checks, spec snapshot, <resource>.resource.ts (create/remove helpers)
 ```
+
+Every request goes through an **API object** (the API counterpart of a page object), grouped by the first path segment: `/orders`, `/orders/{id}`, `/orders/search` → `OrdersApi`. Methods return the raw `APIResponse`; assertions stay in the tests.
+
+```ts
+test('...', async ({ api, publicApi }) => {
+  const res = await api.orders.getOrder(id, { params: { expand: 'items' } });
+  const anon = await publicApi.orders.getOrders(); // no credentials at all
+});
+```
+
+- `api`: with the test account's token (logs in lazily, refreshes before expiry). `publicApi`: no credentials; used for operations without `security` and for 401 checks, so they never depend on the login.
+- Your own requests and flows go into `_support/api/OrdersApi.ts` (it extends `OrdersApiBase`); other API objects are available there as `new ProductsApi(this.request)`. Regeneration rewrites only `generated/`, so new endpoints arrive and your code stays.
 
 **Python (pytest + requests)**
 
