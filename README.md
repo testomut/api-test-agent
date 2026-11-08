@@ -1,5 +1,7 @@
 # api-test-agent
 
+[![npm](https://img.shields.io/npm/v/@testomut/api-test-agent)](https://www.npmjs.com/package/@testomut/api-test-agent) [![ci](https://github.com/testomut/api-test-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/testomut/api-test-agent/actions/workflows/ci.yml) [![license](https://img.shields.io/npm/l/@testomut/api-test-agent)](LICENSE)
+
 A CLI that takes an OpenAPI 3.x spec, checks how testable it is, runs bounded contract checks against a **test** environment, and generates **reviewable** Playwright + TypeScript API tests where the spec gives enough information.
 
 It does not promise to "cover everything". It produces the part of an API test suite that can be derived cheaply and deterministically, states exactly where coverage stops, and hands the open questions to a human.
