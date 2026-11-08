@@ -20,7 +20,7 @@ import { applyPlan, buildPlan, gitState } from './adapt.js';
 import { applyLogin } from './audit/login.js';
 import { analyzeProject } from './discover/analyze.js';
 
-const VERSION = '0.1.1';
+const VERSION = '0.1.2';
 const log = (m: string) => process.stderr.write(m + '\n');
 // .env in the current folder is loaded first; real environment variables win.
 const cfg = loadConfig(process.cwd());
