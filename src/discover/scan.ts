@@ -52,6 +52,8 @@ export interface ScanResult {
   tests: FoundFile[];
   /** Non-test TS/JS files that test files may import (helpers, fixtures). */
   supportFiles: string[];
+  /** Non-test Python files (conftest.py, helpers, API clients). */
+  pythonSupport: string[];
 }
 
 export async function scanProject(root: string): Promise<ScanResult> {
@@ -59,18 +61,20 @@ export async function scanProject(root: string): Promise<ScanResult> {
   await walk(root, root, all);
   const tests: FoundFile[] = [];
   const supportFiles: string[] = [];
+  const pythonSupport: string[] = [];
   for (const path of all) {
     const name = path.split('/').pop()!;
     const isTest = TEST_FILE.test(name);
     const maybePostman = POSTMAN_FILE.test(name);
     if (!isTest && !maybePostman) {
       if (SUPPORT_FILE.test(name) && !name.endsWith('.d.ts') && !/config\.[cm]?[jt]s$/.test(name)) supportFiles.push(path);
+      if (name.endsWith('.py') && name !== '__init__.py' && name !== 'setup.py' && !path.includes('site-packages/')) pythonSupport.push(path);
       continue;
     }
     const full = join(root, path);
     if ((await stat(full)).size > 5_000_000) continue;
     const kind = classify(path, await readFile(full, 'utf8'));
-    if (kind) tests.push({ path, kind, analysable: kind === 'playwright-api' || kind === 'postman-collection' });
+    if (kind) tests.push({ path, kind, analysable: kind === 'playwright-api' || kind === 'pytest-api' || kind === 'postman-collection' });
   }
-  return { tests, supportFiles };
+  return { tests, supportFiles, pythonSupport };
 }

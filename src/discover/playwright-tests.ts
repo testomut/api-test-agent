@@ -371,7 +371,9 @@ export class PlaywrightAnalyzer {
       }
     });
     const all = [...hookCalls, ...tests.flatMap((t) => t.calls)];
-    const creates = all.filter((c) => c.method === 'POST' && !c.cleanup);
+    // A create that the test expects to be REJECTED (4xx) creates nothing.
+    const rejected = new Set(tests.flatMap((t) => t.asserted.filter((x) => x.statuses.length && x.statuses.every((s) => s >= 400)).map((x) => x.call)));
+    const creates = all.filter((c) => c.method === 'POST' && !c.cleanup && !rejected.has(c));
     if (creates.length && !all.some((c) => c.method === 'DELETE')) {
       issues.push({ file, line: creates[0].line, code: 'no-cleanup', message: `Creates data (${creates[0].method} ${creates[0].path}) but never deletes it: leftovers accumulate and tests interfere.` });
     }

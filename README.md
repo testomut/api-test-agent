@@ -41,11 +41,11 @@ npx playwright test
 
 `init` first prints every file it will create or change and asks for confirmation (`--dry-run` only shows the plan). It writes `.env` / `.env.example`, appends to `.gitignore`, creates `playwright.config.ts` only if you have none and adds npm scripts. The Claude Code skill is offered separately, with an explanation of what it does, and is installed only if you say yes: files in `.claude/` steer the AI agent, so read it first and review `.claude/` changes like code.
 
-`run` analyses what the project already has: existing Playwright API tests (calls, preconditions from hooks, fixtures and helpers, ids passed between requests), Postman collections (file or cloud), and the spec. It builds a **dependency map** and a **coverage map**, lists issues in existing tests, checks the live API against the spec, and proposes how to move existing tests into the layout, which Postman requests to convert and which tests to generate.
+`run` analyses what the project already has: existing Playwright and pytest API tests (calls, preconditions from hooks, fixtures, setup methods and helpers, ids passed between requests), Postman collections (file or cloud), and the spec. It builds a **dependency map** and a **coverage map**, lists issues in existing tests, checks the live API against the spec, and proposes how to move existing tests into the layout, which Postman requests to convert and which tests to generate.
 
 **Test language:** TypeScript (Playwright Test) or Python (pytest + requests), chosen in `init` or with `API_TESTS_LANG` / `generate --lang`. Same layout, cases and safety rules in both.
 
-**Full guide: [docs/GUIDE.md](docs/GUIDE.md)** (configuration, every check, what each command changes). A legacy project to try it on: [examples/legacy-project](examples/legacy-project).
+**Full guide: [docs/GUIDE.md](docs/GUIDE.md)** (configuration, every check, what each command changes). Legacy projects to try it on: [Playwright](examples/legacy-project), [pytest](examples/legacy-pytest-project).
 
 ## Quick start (this repository)
 

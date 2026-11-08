@@ -9,6 +9,8 @@ import { operationFolder } from '../generate/templates.js';
 import { scanProject, type FoundFile } from './scan.js';
 import { PlaywrightAnalyzer, type FileIssue, type TestCase } from './playwright-tests.js';
 import { loadPostman, type PostmanCollection } from './postman.js';
+import { analyzePytest } from './pytest-tests.js';
+import { pyName } from '../generate/python.js';
 
 export type EdgeSource = 'openapi-links' | 'existing-tests' | 'postman' | 'candidate';
 
@@ -103,10 +105,7 @@ export async function analyzeProject(o: {
     if (same) same.evidence = [...new Set([...same.evidence, ...e.evidence])];
     else edges.push(e);
   };
-  for (const f of apiFiles) {
-    const r = analyzer.analyzeTestFile(f.path, sources.get(f.path)!);
-    tests.push(...r.tests);
-    testIssues.push(...r.issues);
+  const addTestEdges = (r: { edges: { from: { method: string; path: string }; to: { method: string; path: string; line: number; cleanup: boolean }; variable: string }[] }, fileOf: (line: number) => string) => {
     for (const e of r.edges) {
       addEdge({
         from: matchOperation(e.from.method, e.from.path, ops),
@@ -114,9 +113,27 @@ export async function analyzeProject(o: {
         source: 'existing-tests',
         variable: e.variable,
         cleanup: e.to.cleanup,
-        evidence: [`${f.path}:${e.to.line}`],
+        evidence: [`${fileOf(e.to.line)}:${e.to.line}`],
       });
     }
+  };
+  for (const f of apiFiles) {
+    const r = analyzer.analyzeTestFile(f.path, sources.get(f.path)!);
+    tests.push(...r.tests);
+    testIssues.push(...r.issues);
+    addTestEdges(r, () => f.path);
+  }
+
+  // --- pytest API tests (Python ast via a stdlib-only helper script)
+  const pyFiles = scan.tests.filter((t) => t.kind === 'pytest-api');
+  if (pyFiles.length) {
+    const r = await analyzePytest(root, pyFiles.map((f) => f.path), scan.pythonSupport);
+    tests.push(...r.tests);
+    testIssues.push(...r.issues);
+    // Edge evidence: the test file whose call is the target (fall back to the first pytest file).
+    const fileOfCall = new Map<number, string>();
+    for (const t of r.tests) for (const c of [...t.calls, ...t.preconditions]) fileOfCall.set(c.id, t.file);
+    for (const e of r.edges) addTestEdges({ edges: [e] }, () => fileOfCall.get(e.to.id) ?? pyFiles[0].path);
   }
 
   // --- Postman: configured collection + collections found in the repository
@@ -208,9 +225,12 @@ export async function analyzeProject(o: {
 
   // --- Proposals
   const proposals: Proposal[] = [];
-  const layout = new RegExp(`^${testsDir.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/[^/]+/[^/]+/(positive|negative)(\\.[\\w-]+)?\\.spec\\.[cm]?[jt]s$`);
-  for (const f of apiFiles) {
-    if (layout.test(f.path)) continue;
+  const dirRe = testsDir.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const tsLayout = new RegExp(`^${dirRe}/[^/]+/[^/]+/(positive|negative)(\\.[\\w-]+)?\\.spec\\.[cm]?[jt]s$`);
+  const pyLayout = new RegExp(`^${dirRe}/[^/]+/[^/]+/test_(positive|negative)(_\\w+)?\\.py$`);
+  for (const f of [...apiFiles, ...scan.tests.filter((t) => t.kind === 'pytest-api')]) {
+    const python = f.path.endsWith('.py');
+    if ((python ? pyLayout : tsLayout).test(f.path)) continue;
     for (const t of tests.filter((x) => x.file === f.path)) {
       const main = t.asserted[0]?.call ?? t.calls.filter((c) => !c.cleanup).pop();
       if (!main) continue;
@@ -218,7 +238,8 @@ export async function analyzeProject(o: {
       const op = ops.find((x) => x.key === key) ?? ({ method: main.method.toLowerCase(), path: key.split(' ')[1] } as Operation);
       const { resource, action } = operationFolder(op);
       const kind = t.polarity === 'negative' ? 'negative' : 'positive';
-      proposals.push({ kind: 'move-test', from: `${t.file}:${t.line}`, to: `${testsDir}/${resource}/${action}/${kind}.manual.spec.ts`, detail: `"${t.title}"` });
+      const to = python ? `${testsDir}/${pyName(resource)}/${pyName(action)}/test_${kind}_manual.py` : `${testsDir}/${resource}/${action}/${kind}.manual.spec.ts`;
+      proposals.push({ kind: 'move-test', from: `${t.file}:${t.line}`, to, detail: `"${t.title}"` });
     }
   }
   const testedKeys = new Set(coverage.filter((r) => r.positiveTests.length || r.negativeTests.length).map((r) => r.operation));
@@ -253,6 +274,6 @@ export async function analyzeProject(o: {
     }
   }
 
-  const apiTestsOutsideDir = apiFiles.map((f) => f.path).filter((p) => !p.startsWith(testsDir + '/'));
+  const apiTestsOutsideDir = [...apiFiles, ...scan.tests.filter((t) => t.kind === 'pytest-api')].map((f) => f.path).filter((p) => !p.startsWith(testsDir + '/'));
   return { inventory: scan.tests, apiTestsOutsideDir, tests, testIssues, postman, postmanErrors, postmanIssues, edges, coverage, notInSpec, proposals };
 }

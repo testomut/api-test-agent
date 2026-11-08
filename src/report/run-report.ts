@@ -56,7 +56,7 @@ export function renderRunReport(r: RunResult): string {
       'postman-collection': 'analysed: requests, assertions, variable chains',
       'playwright-ui': 'listed only, never modified',
       cypress: 'listed only (analysis planned)',
-      'pytest-api': 'listed only (analysis planned)',
+      'pytest-api': 'analysed: calls, fixtures, setup methods, helpers, dependencies, issues',
       'jest-or-vitest-api': 'listed only (analysis planned)',
       'other-test': 'listed only, never modified',
     };

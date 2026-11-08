@@ -141,3 +141,39 @@ describe('init', () => {
     expect(r.kept.join()).toContain('not installed');
   });
 });
+
+import { spawnSync as spawnSyncPy } from 'node:child_process';
+import { analyzePytest } from '../../src/discover/pytest-tests.js';
+import { findPython } from '../../src/generate/generate.js';
+
+const PYEX = 'examples/legacy-pytest-project';
+const hasPython = !spawnSyncPy(findPython(), ['--version']).error;
+
+describe.skipIf(!hasPython)('pytest analyzer', async () => {
+  const files = ['tests/test_items.py', 'tests/test_item_lifecycle.py', 'tests/test_validation.py'];
+  const r = await analyzePytest(PYEX, files, ['conftest.py', 'helpers/inventory_client.py']);
+  const test = (title: string) => r.tests.find((t) => t.title === title)!;
+
+  it('resolves yield fixtures: create before, delete after (as cleanup)', () => {
+    const t = test('test_deleted_item_is_gone');
+    expect(t.preconditions.filter((c) => !c.cleanup).map((c) => `${c.method} ${c.path}`)).toEqual(['POST /items']);
+    expect(t.preconditions.some((c) => c.method === 'DELETE' && c.cleanup)).toBe(true);
+    expect(t.polarity).toBe('positive');
+  });
+
+  it('resolves setup_method + a client wrapper as a precondition', () => {
+    const t = test('TestItemLifecycle::test_update_price');
+    expect(t.preconditions.map((c) => `${c.method} ${c.path} ${c.via}`)).toEqual(['POST /items create_item']);
+    expect(r.edges.some((e) => e.from.method === 'POST' && e.to.method === 'PATCH')).toBe(true);
+  });
+
+  it('classifies a 4xx check as negative and does not demand cleanup for it', () => {
+    expect(test('test_item_without_name_is_rejected').polarity).toBe('negative');
+    expect(r.issues.filter((i) => i.file === 'tests/test_validation.py').map((i) => i.code)).not.toContain('no-cleanup');
+  });
+
+  it('reports the usual issues', () => {
+    const codes = r.issues.filter((i) => i.file === 'tests/test_items.py').map((i) => i.code);
+    for (const c of ['hardcoded-secret', 'hardcoded-url', 'wait-for-timeout', 'no-cleanup', 'order-dependent', 'status-only']) expect(codes).toContain(c);
+  });
+});

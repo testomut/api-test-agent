@@ -94,7 +94,9 @@ Non-interactive (CI, scripts): `npx api-test-agent init --yes --base-url https:/
 2. **Spec**: found or configured, valid OpenAPI 3.x, Redocly lint.
 3. **Live contract** (read-only): one GET per safe operation with spec-provided values, and a bounded Schemathesis run if installed.
 4. **Test inventory**: finds every test file and classifies it: Playwright API, Playwright UI, Cypress, pytest, Jest/Vitest, Postman. UI and other tests are listed and never modified.
-5. **Existing Playwright API tests** (static analysis, no AI): HTTP calls per test, the asserted call and status (positive or negative), preconditions from `beforeAll` / `beforeEach`, fixtures (`test.extend`) and helper functions, and ids passed from one response into a later URL.
+5. **Existing API tests** (static analysis, no AI): HTTP calls per test, the asserted call and status (positive or negative), preconditions, and ids passed from one response into a later URL.
+   - **Playwright (TS/JS):** `beforeAll` / `beforeEach`, fixtures (`test.extend`), helper functions.
+   - **pytest (requests / httpx / sessions):** fixtures including `yield` teardown and `autouse`, `conftest.py`, `setup_method` / `teardown_method` in test classes, API client wrappers, module-level state shared through `global`. Uses Python's own `ast` module through a small stdlib-only script, so it needs Python 3.9+ (`API_TESTS_PYTHON` or `./.venv` or `python` on PATH); without Python the files are listed but not analysed.
 6. **Postman**: requests (folders flattened), `pm.test` assertions and statuses, saved example responses, and variable chains (`pm.collectionVariables.set("orderId")` → `{{orderId}}`).
 7. **Dependency map**: edges between operations from three sources, each labelled: OpenAPI `links` (confirmed by the spec), existing tests and Postman (confirmed in practice), path similarity only (candidate, needs your confirmation). Rendered as a Mermaid diagram and a table with evidence (`file:line`, request names).
 8. **Coverage map**: per operation: in spec or not, positive tests, negative tests, use as a precondition, Postman requests, generated files, live contract result.
@@ -127,7 +129,7 @@ Non-interactive (CI, scripts): `npx api-test-agent init --yes --base-url https:/
 |---|---|
 | `hardcoded-secret` | a token or key in the source |
 | `hardcoded-url` | an absolute URL instead of `baseURL` |
-| `wait-for-timeout` | fixed sleep |
+| `wait-for-timeout` | fixed sleep (`waitForTimeout`, `time.sleep`) |
 | `no-cleanup` | the file creates data and never deletes it |
 | `status-only` | a positive test checks only the status code |
 | `no-assertion` | a test calls the API and asserts nothing |
@@ -222,4 +224,4 @@ Python folders use underscores and contain `__init__.py`, so `test_positive.py` 
 
 **Which languages can tests be generated in?** TypeScript (Playwright Test) and Python (pytest + requests), chosen in `init` or with `API_TESTS_LANG` / `--lang`. The analysis, cases and safety rules are shared; only the output templates differ, so more languages can be added.
 
-**Which test frameworks are analysed?** Playwright (TS/JS) and Postman v2.x in depth. Cypress, pytest and Jest/Vitest API tests are found and listed; deeper analysis is planned.
+**Which test frameworks are analysed?** Playwright (TS/JS), pytest (requests / httpx) and Postman v2.x in depth. Cypress and Jest/Vitest API tests are found and listed; deeper analysis is planned.

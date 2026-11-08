@@ -46,7 +46,8 @@
     "LICENSE",
     "skills",
     "docs",
-    "src/contract/contract.py"
+    "src/contract/contract.py",
+    "src/discover/pytest_analyzer.py"
   ],
   "keywords": [
     "openapi",

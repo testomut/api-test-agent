@@ -83,6 +83,19 @@ jobs:
             if (!ok) process.exit(1);
           '
 
+      - name: Analyse the legacy pytest project (init + run)
+        working-directory: examples/legacy-pytest-project
+        run: |
+          node ../../dist/cli.js init --yes --base-url http://localhost:3100 --spec ../../demo-api/openapi.yaml --lang python
+          node ../../dist/cli.js run --no-schemathesis
+          node -e '
+            const r = require("./reports/api-agent/report.json");
+            const a = r.analysis;
+            const ok = a.tests.length === 6 && a.edges.some(e => e.source === "existing-tests" && e.to === "PATCH /items/{itemId}") && a.testIssues.some(i => i.code === "order-dependent");
+            console.log("tests:", a.tests.length, "edges:", a.edges.length, "issues:", a.testIssues.length);
+            if (!ok) process.exit(1);
+          '
+
       - name: Job summary
         if: always()
         run: cat reports/audit/report.md >> "$GITHUB_STEP_SUMMARY" || true
@@ -95,3 +108,4 @@ jobs:
             reports/
             playwright-report/
             examples/legacy-project/reports/
+            examples/legacy-pytest-project/reports/
