@@ -12,6 +12,13 @@ import { bodyCases, documentedRejections, nonexistentIdExpr, queryCases } from '
 import { CONTRACT_ASSERT, operationFolder, renderNegative, renderPositive, renderResourceHelpers, type ChainPlan, type Meta } from './templates.js';
 import { PY_FILES, pyName, renderConftest, renderPyNegative, renderPyPositive, renderPyResource, resourceModule } from './python.js';
 
+const PY_RESERVED = new Set([
+  'py', 'pytest', '_pytest', 'requests', 'jsonschema', 'contract', 'conftest',
+  'json', 'typing', 'types', 'email', 'http', 'logging', 'string', 'random', 'queue', 'site', 'test',
+  'unittest', 'os', 'sys', 're', 'io', 'collections', 'abc', 'ast', 'code', 'copy', 'select', 'signal',
+  'socket', 'ssl', 'time', 'uuid', 'urllib', 'pathlib', 'enum', 'platform', 'inspect', 'operator',
+]);
+
 export type TestLang = 'typescript' | 'python';
 export const TEST_LANGS: TestLang[] = ['typescript', 'python'];
 
@@ -77,6 +84,11 @@ export async function generate(spec: LoadedSpec, ops: Operation[], o: GenerateOp
   const meta: Meta = { spec: spec.location, hash: spec.hash, version: o.version };
   const py = o.lang === 'python';
   const out = resolve(o.outDir);
+  if (py) {
+    // The tests folder becomes a Python package; a name that shadows a module breaks every import.
+    const top = pyName(out.split(/[\\/]/).pop() ?? '');
+    if (PY_RESERVED.has(top)) throw new Error(`Python tests folder "${o.outDir}" would become a package named "${top}", which shadows the "${top}" module. Choose another name, e.g. tests/api.`);
+  }
   const support = join(out, '_support');
   const files: string[] = [];
   const scenarios: Scenario[] = [];

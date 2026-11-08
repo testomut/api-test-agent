@@ -187,3 +187,10 @@ describe('python output', () => {
     expect(compiled.status, compiled.stderr).toBe(0);
   });
 });
+
+describe('python folder guard', () => {
+  it('refuses a tests folder that would shadow a Python module', async () => {
+    const dir = await mkdtemp(joinP(tmpdir(), 'ata-guard-'));
+    await expect(generate(demo, ops, { outDir: joinP(dir, 'py'), version: 'test', lang: 'python' })).rejects.toThrow(/shadows the "py" module/);
+  });
+});
