@@ -1,6 +1,6 @@
 {
   "name": "@testomut/api-test-agent",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "CLI that audits an OpenAPI spec against a test API, runs contract checks and generates reviewable Playwright API tests",
   "scripts": {
     "agent": "tsx src/cli.ts",
