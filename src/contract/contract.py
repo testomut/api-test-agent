@@ -84,7 +84,7 @@ def _body(res: Any) -> tuple[str | None, Any]:
 
 class ContractValidator:
     def __init__(self, doc: dict) -> None:
-        self.is31 = str(doc.get("openapi", "")).startswith("3.1")
+        self.is31 = str(doc.get("openapi", "")).startswith(("3.1", "3.2"))  # both use JSON Schema 2020-12
         self.doc = copy.deepcopy(doc) if self.is31 else _nullable(doc)
         self._cache: dict[str, Any] = {}
 
@@ -105,10 +105,12 @@ class ContractValidator:
         if not content:
             return True, None, []
         actual = (content_type or "").split(";")[0].strip().lower()
-        media = next((k for k in content if k.lower() == actual), None)
+        # Compare without parameters: "application/json; v=1.0" documents "application/json".
+        base = lambda m: m.split(";")[0].strip().lower()  # noqa: E731
+        media = next((k for k in content if base(k) == actual), None)
         if media is None:
             kind = actual.split("/")[0]
-            media = next((k for k in content if k == f"{kind}/*"), None) or next((k for k in content if k == "*/*"), None)
+            media = next((k for k in content if base(k) == f"{kind}/*"), None) or next((k for k in content if base(k) == "*/*"), None)
         if media is None:
             return False, "content-type", [f'Content-Type "{actual or "none"}" is not documented for {matched} (documented: {", ".join(content)})']
         if "json" not in media or not (content.get(media) or {}).get("schema"):

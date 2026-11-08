@@ -38,19 +38,24 @@ export async function loadSpec(location: string): Promise<LoadedSpec> {
     );
   }
   const v = String(parsed?.openapi ?? '');
-  if (!/^3\.(0|1)\./.test(v)) throw new UnsupportedSpecError(`Unknown OpenAPI version "${v || 'missing'}".`);
+  if (!/^3\.(0|1|2)\./.test(v)) throw new UnsupportedSpecError(`Unknown OpenAPI version "${v || 'missing'}".`);
 
-  const doc = (await SwaggerParser.bundle(structuredClone(parsed) as any)) as OpenApiDoc;
+  // OpenAPI 3.2 keeps 3.1's schema dialect (JSON Schema 2020-12): structure is processed as 3.1.
+  const is32 = v.startsWith('3.2');
+  const asParsed = is32 ? { ...parsed, openapi: '3.1.1' } : parsed;
+  const bundled = (await SwaggerParser.bundle(structuredClone(asParsed) as any)) as OpenApiDoc;
 
   const validationErrors: string[] = [];
+  if (is32) validationErrors.push(`OpenAPI ${v}: validated with the 3.1 rules; features new in 3.2 (e.g. QUERY method, additionalOperations) are not checked.`);
   try {
-    await SwaggerParser.validate(structuredClone(doc) as any);
+    await SwaggerParser.validate(structuredClone(bundled) as any);
   } catch (err: any) {
     const details = Array.isArray(err?.details) ? err.details.map((d: any) => `${d.instancePath ?? ''} ${d.message}`) : [];
     validationErrors.push(...(details.length ? details : [String(err?.message ?? err)]));
   }
+  const doc = is32 ? { ...bundled, openapi: v } : bundled;
 
-  return { location, doc, version: v.startsWith('3.1') ? '3.1' : '3.0', hash, validationErrors };
+  return { location, doc, version: v.startsWith('3.0') ? '3.0' : '3.1', hash, validationErrors };
 }
 
 /** Resolve a JSON pointer inside the document, following whole-object $refs. Returns the final pointer too. */

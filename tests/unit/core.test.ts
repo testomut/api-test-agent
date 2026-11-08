@@ -194,3 +194,21 @@ describe('python folder guard', () => {
     await expect(generate(demo, ops, { outDir: joinP(dir, 'py'), version: 'test', lang: 'python' })).rejects.toThrow(/shadows the "py" module/);
   });
 });
+
+describe('real-world spec quirks', () => {
+  it('matches documented media types that carry parameters (application/json; v=1.0)', () => {
+    const doc = { openapi: '3.0.1', paths: { '/a': { get: { responses: { '200': { description: '', content: { 'application/json; v=1.0': { schema: { type: 'array' } } } } } } } } };
+    expect(new ContractValidator(doc).validateResponse({ method: 'get', path: '/a', status: 200, contentType: 'application/json; charset=utf-8', body: [] }).ok).toBe(true);
+  });
+
+  it('reads OpenAPI 3.2 with the 3.1 rules and says so', async () => {
+    const { writeFile } = await import('node:fs/promises');
+    const dir = await mkdtemp(joinP(tmpdir(), 'ata-32-'));
+    const file = joinP(dir, 'openapi.json');
+    await writeFile(file, JSON.stringify({ openapi: '3.2.0', info: { title: 't', version: '1' }, paths: { '/a': { get: { responses: { '200': { description: 'ok', content: { 'application/json': { schema: { type: ['string', 'null'] } } } } } } } } }));
+    const s = await loadSpec(file);
+    expect(s.doc.openapi).toBe('3.2.0');
+    expect(s.validationErrors[0]).toMatch(/3\.1 rules/);
+    expect(new ContractValidator(s.doc).validateResponse({ method: 'get', path: '/a', status: 200, contentType: 'application/json', body: null }).ok).toBe(true);
+  });
+});
