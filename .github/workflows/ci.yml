@@ -29,8 +29,8 @@ jobs:
 
       - name: Start demo API
         run: |
-          npm run demo &
-          npx --yes wait-on@8.0.3 http://localhost:3100/health
+          nohup npm run demo > demo-api.log 2>&1 &
+          npx --yes wait-on@8.0.3 --timeout 60000 http://localhost:3100/health || (cat demo-api.log; exit 1)
 
       - name: Audit (probe + Schemathesis)
         # The demo API has one deliberate defect, so a non-zero exit is expected here.
