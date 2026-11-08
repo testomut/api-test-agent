@@ -142,9 +142,14 @@ export function renderRunReport(r: RunResult): string {
   const conv = a.proposals.filter((p) => p.kind === 'convert-postman');
   const gen = a.proposals.filter((p) => p.kind === 'generate');
   if (!a.proposals.length) L.push('Nothing to propose: layout and coverage match.', '');
-  if (moves.length) {
-    L.push(`### A. Move existing tests into the layout (${moves.length})`, '', '`<resource>/<method>[-by-id]/positive|negative`. Moved tests keep their code; `.manual` keeps them apart from generated files.', '');
-    L.push('| Test | Proposed location |', '|---|---|', ...moves.map((p) => `| \`${p.from}\` ${esc(p.detail)} | \`${p.to}\` |`), '');
+  const movable = moves.filter((p) => !p.detail.includes('BLOCKED'));
+  const stuck = moves.filter((p) => p.detail.includes('BLOCKED'));
+  if (movable.length) {
+    L.push(`### A. Move existing tests into the layout (${movable.length})`, '', '`<resource>/<method>[-by-id]/positive|negative`. Moved tests keep their code; the source file name stays in the new name, so they never overwrite generated files.', '');
+    L.push('| Test | Proposed location |', '|---|---|', ...movable.map((p) => `| \`${p.from}\` ${esc(p.detail)} | \`${p.to}\` |`), '');
+  }
+  if (stuck.length) {
+    L.push(`### A2. Cannot be moved yet (${stuck.length})`, '', ...stuck.map((p) => `- \`${p.from}\` ${esc(p.detail.replace(': BLOCKED,', ':'))}`), '');
   }
   if (conv.length) L.push(`### B. Convert Postman requests not covered by tests (${conv.length})`, '', '| Request | Proposed file | Assertions |', '|---|---|---|', ...conv.map((p) => `| ${esc(p.from!)} | \`${p.to}\` | ${p.detail} |`), '');
   const ready = gen.filter((p) => !p.detail.includes('BLOCKED'));
@@ -155,7 +160,7 @@ export function renderRunReport(r: RunResult): string {
   if (blocked.length) {
     L.push(`### D. Cannot be generated yet (${blocked.length})`, '', 'Each needs one fix in the spec or a confirmed dependency first:', '', ...blocked.map((p) => `- \`${p.to}\`: ${p.detail.replace(/^(positive|negative) cases: BLOCKED, /, '$1: ')}`), '');
   }
-  if (moves.length || conv.length) L.push('A and B are applied by `npx api-test-agent adapt` (next release), or file by file with Claude Code and the `api-test-writer` skill.', '');
+  if (movable.length || conv.length) L.push('Apply A and B with `npx api-test-agent adapt` (shows the plan first; `--dry-run` to only look). It needs a clean git working tree, never rewrites test code, and rolls everything back if the result does not collect.', '');
 
   // Spec quality
   if (r.spec) {

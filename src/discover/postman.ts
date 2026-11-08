@@ -19,6 +19,14 @@ export interface PostmanRequest {
   examples: number[]; // status codes of saved example responses
   tests: number; // pm.test(...) count
   hardcodedAuth: boolean;
+  /** Raw request body (mode "raw"), if any. */
+  body?: string;
+  /** Headers except Authorization (credentials come from the environment). */
+  headers: { key: string; value: string }[];
+  /** Enabled query parameters. */
+  query: { key: string; value: string }[];
+  /** Test-script lines, kept for review when they cannot be converted. */
+  testScript: string[];
 }
 
 export interface PostmanEdge {
@@ -95,7 +103,12 @@ export function parsePostman(collection: any, source: string): PostmanCollection
         statuses.push(...nums);
       }
       const auth = headers.find((h) => /^authorization$/i.test(h?.key ?? ''));
+      const testScript: string[] = (it.event ?? []).filter((e: any) => e?.listen === 'test').flatMap((e: any) => [].concat(e?.script?.exec ?? []));
       requests.push({
+        body: r.body?.mode === 'raw' && typeof r.body.raw === 'string' && r.body.raw.trim() ? r.body.raw : undefined,
+        headers: headers.filter((h) => h && !h.disabled && h.key && !/^authorization$/i.test(h.key)).map((h) => ({ key: String(h.key), value: String(h.value ?? '') })),
+        query: (typeof r.url === 'object' ? r.url?.query ?? [] : []).filter((q: any) => q && !q.disabled && q.key).map((q: any) => ({ key: String(q.key), value: String(q.value ?? '') })),
+        testScript,
         index: requests.length,
         name: it.name ?? `${r.method} ${path}`,
         folder,

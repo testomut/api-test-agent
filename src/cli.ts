@@ -16,6 +16,8 @@ import type { Finding, Operation } from './types.js';
 import { classifyTarget, loadConfig } from './config.js';
 import { askAnswers, askYesNo, initProject, skillNotice } from './init.js';
 import { findSpec, run } from './run.js';
+import { applyPlan, buildPlan, gitState } from './adapt.js';
+import { analyzeProject } from './discover/analyze.js';
 
 const VERSION = '0.1.0';
 const log = (m: string) => process.stderr.write(m + '\n');
@@ -274,6 +276,65 @@ program
     log(`\nSummary: ${a.tests.length} existing API tests · ${postmanRequests} Postman requests · ${a.edges.filter((e) => e.source !== 'candidate').length} dependencies · ${a.testIssues.length + a.postmanIssues.length} issues · ${gaps} operations without a positive test · ${a.proposals.length} proposals`);
     log(`Report: ${resolve(o.out, 'report.md')}`);
     if (r.checks.some((c) => c.status === 'fail')) process.exitCode = 1;
+  });
+
+program
+  .command('adapt')
+  .description('move existing API tests into the layout and convert uncovered Postman requests; shows the plan and asks first')
+  .option('--dry-run', 'only show the plan', false)
+  .option('--yes', 'apply without asking', false)
+  .addOption(new Option('--only <what>', 'limit to one kind of change').choices(['moves', 'postman']))
+  .option('--allow-dirty', 'run even with uncommitted git changes (harder to review and revert)', false)
+  .action(async (o) => {
+    const root = process.cwd();
+    const git = gitState(root);
+    if (!o.dryRun && !o.allowDirty) {
+      if (!git.repo) throw new Error('adapt moves and deletes files: run it inside a git repository so every change can be reviewed and reverted (or pass --allow-dirty).');
+      if (!git.clean) throw new Error(`Uncommitted changes (${git.dirty.length}): commit or stash them first, so adapt's changes can be reviewed and reverted on their own (or pass --allow-dirty).`);
+    }
+    const specRef = await findSpec(cfg, () => undefined);
+    const spec = specRef ? await loadSpec(/^https?:/i.test(specRef) ? specRef : resolve(root, specRef)) : undefined;
+    const ops = spec ? buildCatalog(spec.doc) : [];
+    log(`adapt: ${spec ? `spec ${specRef}, ${ops.length} operations` : 'no spec (operations matched by path)'} · tests dir ${cfg.testsDir} · language ${cfg.testsLang}\n`);
+    const analysis = await analyzeProject({ root, testsDir: cfg.testsDir, doc: spec?.doc, ops, postmanRef: cfg.postmanCollection, postmanApiKey: cfg.postmanApiKey });
+    const plan = buildPlan({ root, analysis, ops, testsDir: cfg.testsDir, lang: cfg.testsLang, only: o.only });
+
+    const show = (action: string, title: string) => {
+      const list = plan.changes.filter((c) => c.action === action && !c.path.endsWith('__init__.py'));
+      if (list.length) process.stdout.write(`${title}\n${list.map((c) => `  - ${c.path}: ${c.reason}`).join('\n')}\n`);
+    };
+    process.stdout.write(`adapt will change ${root}:\n\n`);
+    show('create', 'Create:');
+    show('rewrite', 'Rewrite (moved tests removed, the rest unchanged):');
+    show('delete', 'Delete (every test in it was moved):');
+    const inits = plan.changes.filter((c) => c.path.endsWith('__init__.py')).length;
+    if (inits) process.stdout.write(`Create: ${inits} empty __init__.py (Python package markers)\n`);
+    if (plan.skipped.length) process.stdout.write(`\nNot changed, with the reason:\n${plan.skipped.map((s) => `  - ${s.what}: ${s.reason}`).join('\n')}\n`);
+    process.stdout.write('\nTest code is not rewritten. After applying, the result must collect, or everything is rolled back.\n\n');
+    if (!plan.changes.length) {
+      log('Nothing to change.');
+      return;
+    }
+    if (o.dryRun) {
+      log('Dry run: nothing was changed.');
+      return;
+    }
+    if (!o.yes) {
+      if (!process.stdin.isTTY) throw new Error('No interactive terminal: use --yes or --dry-run.');
+      if (!(await askYesNo('Apply these changes?', false))) {
+        log('Cancelled: nothing was changed.');
+        return;
+      }
+    }
+    const r = await applyPlan(root, plan);
+    if (r.rolledBack) {
+      log(`Rolled back: the result did not collect, nothing was changed.\n${r.output.trim().split('\n').slice(-15).join('\n')}`);
+      process.exitCode = 1;
+      return;
+    }
+    log(r.verified === true ? 'Applied and verified: every changed file collects.' : 'Applied. Not verified: install @playwright/test (TS) or pytest (Python) to check that the tests collect.');
+    const created = plan.changes.filter((c) => c.action === 'create').map((c) => c.path);
+    log(`\nReview: git status && git diff\nRevert: git restore . && git clean -f -- ${created.join(' ')}`);
   });
 
 program.parseAsync().catch((err) => {

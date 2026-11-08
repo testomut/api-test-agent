@@ -84,7 +84,7 @@ Non-interactive (CI, scripts): `npx api-test-agent init --yes --base-url https:/
 | `audit [spec]` | only the report folder | read-only with `--probe` / `--schemathesis` | Spec and contract checks only. |
 | `generate [spec]` | only `API_TESTS_DIR` | with `--run`: creates and deletes test data (needs `--allow-write`) | Generates `positive` / `negative` tests for each operation. |
 | `generate --draft-pr` | new git branch | pushes the branch | Opens a GitHub Draft PR for review. Never touches the default branch. |
-| `adapt` | (next release) | | Applies the "move" and "convert Postman" proposals. |
+| `adapt` | yes, after showing the plan and your confirmation | no | Moves existing API tests into the layout and converts uncovered Postman requests (see §5a). `--dry-run`, `--yes`, `--only moves|postman`. |
 
 `[spec]` defaults to `API_SPEC_URL`, `--base-url` to `API_BASE_URL`, `--tests-dir` to `API_TESTS_DIR`.
 
@@ -100,8 +100,30 @@ Non-interactive (CI, scripts): `npx api-test-agent init --yes --base-url https:/
 6. **Postman**: requests (folders flattened), `pm.test` assertions and statuses, saved example responses, and variable chains (`pm.collectionVariables.set("orderId")` → `{{orderId}}`).
 7. **Dependency map**: edges between operations from three sources, each labelled: OpenAPI `links` (confirmed by the spec), existing tests and Postman (confirmed in practice), path similarity only (candidate, needs your confirmation). Rendered as a Mermaid diagram and a table with evidence (`file:line`, request names).
 8. **Coverage map**: per operation: in spec or not, positive tests, negative tests, use as a precondition, Postman requests, generated files, live contract result.
-9. **Proposals**: (A) move existing tests into the layout, (B) convert Postman requests that no test covers, (C) generate missing tests, (D) what cannot be generated yet and the one fix each needs.
+9. **Proposals**: (A) move existing tests into the layout (A2: tests that cannot be moved yet, with the reason), (B) convert Postman requests that no test covers, (C) generate missing tests, (D) what cannot be generated yet and the one fix each needs. A and B are applied by `adapt` (§5a).
 10. **Report**: `reports/api-agent/report.md` and `report.json`, plus a one-line summary in the terminal. Exit code 1 only when an environment check fails.
+
+## 5a. What `adapt` does
+
+`adapt` applies proposals A and B from the `run` report.
+
+**Safety first**
+- Runs only in a git repository with a clean working tree, so its changes can be reviewed with `git diff` and reverted on their own (`--allow-dirty` to override). `--dry-run` works anywhere.
+- Prints the plan (every file created, rewritten or deleted, and every test it will not touch, with the reason) and asks before applying; the default answer is no.
+- After writing, every changed file must collect (`playwright test --list` or `pytest --collect-only`). If not, **everything is rolled back**. If the runner is not installed, the result is applied and reported as not verified.
+- Prints the exact commands to review and to revert.
+
+**Moving tests**
+- Test code is never rewritten. A moved test keeps everything around it in its file: imports, `beforeAll` / fixtures / `setup_method`, shared variables. Only the other tests are left out of the copy, and relative imports (TS/JS) are re-pointed.
+- Destination: the folder of the operation the test asserts, positive or negative, with the source file name kept: `tests/items.test.ts` → `tests/api/items/post/negative.items.spec.ts`; `tests/test_items.py` → `tests/api/items/post/test_negative_items.py`. Python folders get `__init__.py`.
+- The source file is rewritten without the moved tests, or deleted when all of them moved.
+- **Not moved:** tests that share state with another test (one sets a variable, another reads it), tests whose destination file already exists, tests with no API call to classify. The plan lists them with the reason.
+- Moved tests keep their original problems (hard-coded tokens, sleeps...): `run` keeps reporting them so they can be fixed deliberately.
+
+**Converting Postman requests**
+- Only requests that no existing test covers, and only when nothing has to be guessed: no variables set by other requests, no `{{variables}}` in body, headers or query, JSON body.
+- Assertions: the statuses from `pm.test`; if the request had none and the operation is in the spec, the documented success status (marked as such in the test). Other `pm.test` lines are copied as comments for review.
+- Output in the configured language: `<resource>/<method>/positive.postman.spec.ts` or `test_positive_postman.py`.
 
 ## 6. Checks catalogue
 

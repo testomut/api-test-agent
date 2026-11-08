@@ -307,9 +307,11 @@ class Analyzer:
             r = self.analyze_function(fn, file, None, taint, edges)
             for v in r["assigned"]:
                 writers.setdefault(v, title)
+            depends_on = None
             for v in r["read"]:
                 w = writers.get(v)
                 if w and w != title:
+                    depends_on = w
                     issues.append({"file": file, "line": fn.lineno, "code": "order-dependent", "message": f'"{title}" uses "{v}" set by another test ("{w}"): it fails when run alone or in parallel.'})
             first = r["asserted"][0]["statuses"] if r["asserted"] else []
             polarity = "negative" if any(400 <= s < 500 for s in first) else "positive" if any(200 <= s < 300 for s in first) else "unknown"
@@ -317,7 +319,8 @@ class Analyzer:
                 issues.append({"file": file, "line": fn.lineno, "code": "no-assertion", "message": f'"{title}" calls the API but asserts nothing.'})
             elif r["calls"] and r["asserted"] and not r["body"] and polarity != "negative":
                 issues.append({"file": file, "line": fn.lineno, "code": "status-only", "message": f'"{title}" checks only the status code, not the response body.'})
-            tests.append({"file": file, "title": title, "line": fn.lineno, "calls": r["calls"], "preconditions": pre, "asserted": r["asserted"], "polarity": polarity, "bodyAssertions": r["body"]})
+            start = min([fn.lineno, *[d.lineno for d in fn.decorator_list]])
+            tests.append({"file": file, "title": title, "line": fn.lineno, "range": {"start": start, "end": fn.end_lineno}, "dependsOnTest": depends_on, "calls": r["calls"], "preconditions": pre, "asserted": r["asserted"], "polarity": polarity, "bodyAssertions": r["body"]})
 
         hook_seen: list[dict] = []  # setup/teardown calls, for the cleanup check
         module_taint: dict = {}

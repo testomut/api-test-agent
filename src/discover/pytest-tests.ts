@@ -55,6 +55,8 @@ export async function analyzePytest(root: string, tests: string[], support: stri
       asserted: (t.asserted as { call: number; statuses: number[] }[]).filter((a) => byId.has(a.call)).map((a) => ({ call: byId.get(a.call)!, statuses: a.statuses })),
       polarity: t.polarity,
       bodyAssertions: t.bodyAssertions,
+      range: t.range,
+      dependsOnTest: t.dependsOnTest ?? undefined,
     };
   });
   // Edges reference calls by id; calls inside helpers/fixtures used only for indexing are not in any test.

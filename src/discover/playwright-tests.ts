@@ -35,6 +35,10 @@ export interface TestCase {
   asserted: { call: ApiCall; statuses: number[] }[];
   polarity: 'positive' | 'negative' | 'unknown';
   bodyAssertions: number;
+  /** First and last source line of the whole test (decorators included), for moving it. */
+  range?: { start: number; end: number };
+  /** The test reads a value another test writes: it cannot be moved on its own. */
+  dependsOnTest?: string;
 }
 
 export interface FileIssue {
@@ -333,9 +337,13 @@ export class PlaywrightAnalyzer {
           const r = this.analyzeFunction(fn, src, file, undefined, local, edges);
           const title = [...prefix, titleOf(n)].join(' > ');
           for (const v of r.assignedOuter) writersByVar.set(v, title);
+          let dependsOnTest: string | undefined;
           for (const v of r.readVars) {
             const w = writersByVar.get(v);
-            if (w && w !== title) issues.push({ file, line: n.loc?.start.line, code: 'order-dependent', message: `"${title}" uses "${v}" set by another test ("${w}"): it fails when run alone or in parallel.` });
+            if (w && w !== title) {
+              dependsOnTest = w;
+              issues.push({ file, line: n.loc?.start.line, code: 'order-dependent', message: `"${title}" uses "${v}" set by another test ("${w}"): it fails when run alone or in parallel.` });
+            }
           }
           // Polarity follows the FIRST asserted call (the action under test). A later 404 check
           // ("gone after delete") verifies a positive action, it does not make the test negative.
@@ -346,11 +354,13 @@ export class PlaywrightAnalyzer {
             file,
             title,
             line: n.loc?.start.line ?? 0,
+            range: { start: n.loc?.start.line ?? 0, end: n.loc?.end.line ?? 0 },
             calls: r.calls,
             preconditions: pre,
             asserted: r.asserted,
             polarity: negative ? 'negative' : positive ? 'positive' : 'unknown',
             bodyAssertions: r.bodyAssertions,
+            dependsOnTest,
           };
           if (r.calls.length && !r.asserted.length && !r.bodyAssertions) issues.push({ file, line: tc.line, code: 'no-assertion', message: `"${title}" calls the API but asserts nothing.` });
           else if (r.calls.length && r.asserted.length && !r.bodyAssertions && !negative) issues.push({ file, line: tc.line, code: 'status-only', message: `"${title}" checks only the status code, not the response body.` });

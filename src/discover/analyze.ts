@@ -72,6 +72,52 @@ export function matchOperation(method: string, path: string, ops: Operation[]): 
 }
 
 const posix = (p: string) => p.replace(/\\/g, '/');
+
+const escRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/** Is the file already in <testsDir>/<resource>/<action>/positive|negative…? */
+export function inLayout(path: string, testsDir: string): boolean {
+  const d = escRe(testsDir.replace(/\/$/, ''));
+  return path.endsWith('.py')
+    ? new RegExp(`^${d}/[^/]+/[^/]+/test_(positive|negative)(_\\w+)?\\.py$`).test(path)
+    : new RegExp(`^${d}/[^/]+/[^/]+/(positive|negative)(\\.[\\w-]+)?\\.spec\\.[cm]?[jt]sx?$`).test(path);
+}
+
+/**
+ * Where an existing test belongs: the folder of the operation it asserts, positive or negative,
+ * and the source file's name, so moved tests stay recognisable and never overwrite generated files.
+ *   tests/items.test.ts      → tests/api/items/post/negative.items.spec.ts
+ *   tests/test_items.py      → tests/api/items/post/test_negative_items.py
+ */
+export function moveTarget(t: TestCase, ops: Operation[], testsDir: string): string | undefined {
+  const main = t.asserted[0]?.call ?? t.calls.filter((c) => !c.cleanup).pop();
+  if (!main) return undefined;
+  const key = matchOperation(main.method, main.path, ops);
+  const op = ops.find((x) => x.key === key) ?? ({ method: main.method.toLowerCase(), path: key.split(' ')[1] } as Operation);
+  const { resource, action } = operationFolder(op);
+  const kind = t.polarity === 'negative' ? 'negative' : 'positive';
+  const base = t.file.split('/').pop()!;
+  const dir = testsDir.replace(/\/$/, '');
+  if (base.endsWith('.py')) {
+    const stem = pyName(base.replace(/\.py$/, '').replace(/^test_|_test$/g, '')) || 'moved';
+    return `${dir}/${pyName(resource)}/${pyName(action)}/test_${kind}_${stem}.py`;
+  }
+  const stem = base.replace(/\.(spec|test)\.[cm]?[jt]sx?$/, '').replace(/[^\w-]/g, '-') || 'moved';
+  const ext = /\.[cm]?jsx?$/.test(base) ? base.match(/\.[cm]?jsx?$/)![0] : '.ts';
+  return `${dir}/${resource}/${action}/${kind}.${stem}.spec${ext}`;
+}
+
+/** Tests that share state with another test (one writes, the other reads): they cannot be moved apart. */
+export function coupledTests(tests: TestCase[]): Map<TestCase, string> {
+  const out = new Map<TestCase, string>();
+  for (const t of tests) {
+    if (!t.dependsOnTest) continue;
+    out.set(t, `depends on test "${t.dependsOnTest}" (shared state): remove the dependency first`);
+    const writer = tests.find((x) => x.file === t.file && x.title === t.dependsOnTest);
+    if (writer && !out.has(writer)) out.set(writer, `test "${t.title}" depends on it (shared state): remove the dependency first`);
+  }
+  return out;
+}
 /** Python layout uses underscores in the resource and action folder names. */
 const pyDir = (dir: string) => {
   const parts = dir.split(/[\\/]/);
@@ -225,21 +271,14 @@ export async function analyzeProject(o: {
 
   // --- Proposals
   const proposals: Proposal[] = [];
-  const dirRe = testsDir.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const tsLayout = new RegExp(`^${dirRe}/[^/]+/[^/]+/(positive|negative)(\\.[\\w-]+)?\\.spec\\.[cm]?[jt]s$`);
-  const pyLayout = new RegExp(`^${dirRe}/[^/]+/[^/]+/test_(positive|negative)(_\\w+)?\\.py$`);
+  const coupled = coupledTests(tests);
   for (const f of [...apiFiles, ...scan.tests.filter((t) => t.kind === 'pytest-api')]) {
-    const python = f.path.endsWith('.py');
-    if ((python ? pyLayout : tsLayout).test(f.path)) continue;
+    if (inLayout(f.path, testsDir)) continue;
     for (const t of tests.filter((x) => x.file === f.path)) {
-      const main = t.asserted[0]?.call ?? t.calls.filter((c) => !c.cleanup).pop();
-      if (!main) continue;
-      const key = matchOperation(main.method, main.path, ops);
-      const op = ops.find((x) => x.key === key) ?? ({ method: main.method.toLowerCase(), path: key.split(' ')[1] } as Operation);
-      const { resource, action } = operationFolder(op);
-      const kind = t.polarity === 'negative' ? 'negative' : 'positive';
-      const to = python ? `${testsDir}/${pyName(resource)}/${pyName(action)}/test_${kind}_manual.py` : `${testsDir}/${resource}/${action}/${kind}.manual.spec.ts`;
-      proposals.push({ kind: 'move-test', from: `${t.file}:${t.line}`, to, detail: `"${t.title}"` });
+      const to = moveTarget(t, ops, testsDir);
+      if (!to) continue;
+      const why = coupled.get(t);
+      proposals.push({ kind: 'move-test', from: `${t.file}:${t.line}`, to, detail: why ? `"${t.title}": BLOCKED, ${why}` : `"${t.title}"` });
     }
   }
   const testedKeys = new Set(coverage.filter((r) => r.positiveTests.length || r.negativeTests.length).map((r) => r.operation));

@@ -35,6 +35,7 @@ OpenAPI spec ──► lint + catalogue ──► safe probe ──► Schemathe
 npm i -D @testomut/api-test-agent @playwright/test ajv ajv-formats
 npx api-test-agent init        # 6 questions (incl. TypeScript or Python), then shows the plan and asks before applying
 npm run api-tests              # read-only analysis → reports/api-agent/report.md
+npx api-test-agent adapt       # move existing tests into the layout, convert Postman (plan first, git-safe)
 npm run api-tests:generate     # generate missing positive/negative tests and run them once
 npx playwright test
 ```

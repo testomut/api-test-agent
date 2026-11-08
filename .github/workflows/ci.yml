@@ -75,6 +75,9 @@ jobs:
         run: |
           node ../../dist/cli.js init --yes --base-url http://localhost:3100 --spec ../../demo-api/openapi.yaml --postman postman/inventory.postman_collection.json
           node ../../dist/cli.js run --no-schemathesis
+          node ../../dist/cli.js adapt --dry-run | tee adapt-plan.txt
+          grep -q "positive.items-lifecycle.spec.ts" adapt-plan.txt
+          grep -q "shared state" adapt-plan.txt
           node -e '
             const r = require("./reports/api-agent/report.json");
             const a = r.analysis;
@@ -88,6 +91,8 @@ jobs:
         run: |
           node ../../dist/cli.js init --yes --base-url http://localhost:3100 --spec ../../demo-api/openapi.yaml --lang python
           node ../../dist/cli.js run --no-schemathesis
+          node ../../dist/cli.js adapt --dry-run | tee adapt-plan.txt
+          grep -q "test_positive_item_lifecycle.py" adapt-plan.txt
           node -e '
             const r = require("./reports/api-agent/report.json");
             const a = r.analysis;
