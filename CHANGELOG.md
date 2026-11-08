@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Optional AI (`--ai` on `generate` and `run`):** Claude proposes answers for unconfirmed dependencies from a minimal excerpt (names and types only), with schema-constrained output, a spec check of every answer, a call budget and a cost summary. Accepted answers are written to `ai-deps.proposed.json` for review; nothing is applied automatically.
+
 ## 0.1.2 - 2026-11-08
 
 - **Login-based auth for short-lived tokens:** `API_LOGIN`, `API_LOGIN_BODY` (with `${VAR}` from `.env`), `API_TOKEN_POINTER`. The agent logs in before network checks; generated TypeScript (fixtures) and Python (conftest) suites log in and refresh the token themselves. `init` asks for it.

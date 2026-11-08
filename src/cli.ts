@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { Command, Option } from 'commander';
-import { readFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { join, resolve } from 'node:path';
 import { loadSpec, UnsupportedSpecError, type LoadedSpec } from './spec/loader.js';
 import { lintSpec } from './spec/lint.js';
 import { buildCatalog } from './spec/catalog.js';
@@ -18,6 +18,8 @@ import { askAnswers, askYesNo, initProject, skillNotice } from './init.js';
 import { findSpec, run } from './run.js';
 import { applyPlan, buildPlan, gitState } from './adapt.js';
 import { applyLogin } from './audit/login.js';
+import { ClaudeAdvisor, describeAiError } from './ai/claude.js';
+import { proposeDependencies } from './ai/dependencies.js';
 import { analyzeProject } from './discover/analyze.js';
 
 const VERSION = '0.1.2';
@@ -169,7 +171,10 @@ common(program.command('generate').description('audit, then generate Playwright 
   .addOption(new Option('--lang <lang>', 'language of generated tests (default: API_TESTS_LANG or typescript)').choices(['typescript', 'python']))
   .option('--run', 'run the generated tests once against --base-url (needs --allow-write)', false)
   .option('--draft-pr', 'commit to a new branch and open a GitHub Draft PR for review', false)
-  .action(async (specArg: string | undefined, o: CommonOpts & { testsDir?: string; deps?: string; run: boolean; draftPr: boolean; lang?: 'typescript' | 'python' }) => {
+  .option('--ai', 'ask Claude about unconfirmed dependencies; writes a PROPOSAL file for review, never applies it', false)
+  .option('--ai-max-calls <n>', 'AI call budget per run', '10')
+  .option('--ai-model <id>', 'Claude model (default: API_AI_MODEL or claude-opus-5-5)')
+  .action(async (specArg: string | undefined, o: CommonOpts & { testsDir?: string; deps?: string; run: boolean; draftPr: boolean; lang?: 'typescript' | 'python'; ai: boolean; aiMaxCalls: string; aiModel?: string }) => {
     const location = await resolveInputs(specArg, o);
     o.testsDir ??= cfg.testsDir;
     o.lang ??= cfg.testsLang;
@@ -177,6 +182,7 @@ common(program.command('generate').description('audit, then generate Playwright 
     if (o.run && (!o.baseUrl || !o.allowWrite)) throw new Error('--run creates and deletes data: it needs --base-url and --allow-write.');
     const r = await runAudit(location, o);
     const deps = o.deps ? JSON.parse(await readFile(o.deps, 'utf8')) : undefined;
+    if (o.ai) await aiProposals(r.spec.doc, r.ops, o.out, { maxCalls: Number(o.aiMaxCalls), model: o.aiModel }, deps);
     log('Generating functional scenarios…');
     const gen = await generate(r.spec, r.ops, { outDir: o.testsDir!, deps, version: VERSION, lang: o.lang });
     for (const s of gen.scenarios) log(`  ${s.status.padEnd(9)} ${s.name}`);
@@ -272,9 +278,20 @@ program
   .option('--no-probe', 'do not send read-only requests to the API')
   .option('--no-schemathesis', 'skip Schemathesis even if installed')
   .option('--max-time <sec>', 'Schemathesis time budget', '60')
+  .option('--ai', 'ask Claude about unconfirmed dependencies (proposal file for review)', false)
+  .option('--ai-max-calls <n>', 'AI call budget per run', '10')
+  .option('--ai-model <id>', 'Claude model (default: API_AI_MODEL or claude-opus-5-5)')
   .action(async (o) => {
     log('api-test-agent run (read-only)\n');
     const r = await run({ root: process.cwd(), out: o.out, probe: o.probe, schemathesis: o.schemathesis, maxTime: Number(o.maxTime), log });
+    if (o.ai) {
+      const specRef = await findSpec(cfg, () => undefined);
+      if (!specRef) log('AI: skipped, no spec.');
+      else {
+        const spec = await loadSpec(/^https?:/i.test(specRef) ? specRef : resolve(process.cwd(), specRef));
+        await aiProposals(spec.doc, buildCatalog(spec.doc), o.out, { maxCalls: Number(o.aiMaxCalls), model: o.aiModel });
+      }
+    }
     const a = r.analysis;
     const gaps = a.coverage.filter((c) => c.inSpec && !c.positiveTests.length && !c.generatedPositive).length;
     const postmanRequests = a.postman.reduce((s, c) => s + c.requests.length, 0);
@@ -341,6 +358,30 @@ program
     const created = plan.changes.filter((c) => c.action === 'create').map((c) => c.path);
     log(`\nReview: git status && git diff\nRevert: git restore . && git clean -f -- ${created.join(' ')}`);
   });
+
+/** --ai: proposals for unconfirmed dependencies, written for review; never applied automatically. */
+async function aiProposals(doc: any, ops: Operation[], outDir: string, opts: { maxCalls: number; model?: string }, deps?: any) {
+  log('\nAI proposals (opt-in --ai): only the operation names, field names and types of each candidate are sent to the Anthropic API.');
+  let advisor: ClaudeAdvisor;
+  try {
+    advisor = new ClaudeAdvisor(opts);
+  } catch (e) {
+    log(`  ${describeAiError(e)}`);
+    return;
+  }
+  const { proposals, depsFile } = await proposeDependencies(doc, ops, advisor, log, deps);
+  await mkdir(outDir, { recursive: true });
+  await writeFile(join(outDir, 'ai-proposals.json'), JSON.stringify({ model: advisor.model, usage: advisor.usage, proposals }, null, 2) + '\n');
+  if (!proposals.length) log('  No unconfirmed dependencies: nothing to ask.');
+  for (const p of proposals.filter((x) => x.status !== 'proposed')) log(`  ${p.status.toUpperCase()} ${p.create} → ${p.itemOperations.join(', ')}: ${p.reason}`);
+  if (depsFile.scenarios.length) {
+    const file = join(outDir, 'ai-deps.proposed.json');
+    await writeFile(file, JSON.stringify(depsFile, null, 2) + '\n');
+    log(`  ${depsFile.scenarios.length} proposal(s) passed the spec check: ${file}`);
+    log(`  Review it, then use it: generate --deps ${file.replace(/\\/g, '/')}`);
+  }
+  log(`  ${advisor.summary()}`);
+}
 
 program.parseAsync().catch((err) => {
   log(err instanceof UnsupportedSpecError ? `Unsupported spec: ${err.message}` : `Error: ${err?.message ?? err}`);

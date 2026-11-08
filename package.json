@@ -14,13 +14,15 @@
   "author": "Stanislav Mokshyn",
   "license": "MIT",
   "dependencies": {
+    "@anthropic-ai/sdk": "^1.6.0",
     "@apidevtools/swagger-parser": "^13.1.0",
     "@babel/parser": "^8.1.0",
     "@redocly/openapi-core": "^2.76.0",
     "ajv": "^8.20.0",
     "ajv-formats": "^3.0.1",
     "commander": "^15.1.0",
-    "yaml": "^2.9.1"
+    "yaml": "^2.9.1",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@babel/types": "^8.1.0",
