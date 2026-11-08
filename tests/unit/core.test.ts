@@ -13,7 +13,7 @@ const op = (key: string) => ops.find((o) => o.key === key)!;
 
 describe('catalog', () => {
   it('lists every operation with path-level params merged in', () => {
-    expect(ops).toHaveLength(9);
+    expect(ops).toHaveLength(11);
     expect(op('GET /items/{itemId}').params.map((p) => p.name)).toEqual(['itemId']);
   });
 
@@ -210,5 +210,20 @@ describe('real-world spec quirks', () => {
     expect(s.doc.openapi).toBe('3.2.0');
     expect(s.validationErrors[0]).toMatch(/3\.1 rules/);
     expect(new ContractValidator(s.doc).validateResponse({ method: 'get', path: '/a', status: 200, contentType: 'application/json', body: null }).ok).toBe(true);
+  });
+});
+
+import { expandTemplate, loginConfig } from '../../src/audit/login.js';
+import { redact as redactAll } from '../../src/audit/auth.js';
+
+describe('login auth', () => {
+  it('parses API_LOGIN and fills ${VAR} with JSON-escaped values', () => {
+    expect(loginConfig({ API_LOGIN: 'post /auth/login' })).toEqual({ method: 'POST', path: '/auth/login', bodyTemplate: '{}', pointer: '/access_token' });
+    expect(expandTemplate('{"u":"${U}","p":"${P}"}', { U: 'demo', P: 'pa"ss' })).toBe('{"u":"demo","p":"pa\\"ss"}');
+    expect(() => expandTemplate('{"u":"${MISSING}"}', {})).toThrow(/MISSING/);
+  });
+
+  it('redacts any secret-looking variable, including custom login passwords', () => {
+    expect(redactAll('login with s3cret-value', { SHOP_USER_PASSWORD: 's3cret-value' })).toBe('login with ***');
   });
 });

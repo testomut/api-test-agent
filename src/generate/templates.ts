@@ -122,7 +122,7 @@ export function renderPositive({ op, plan, helpers }: PositiveInput, meta: Meta)
   if (role === 'update' && chain?.read) extra.push(`ASSUMPTION (not in spec, reviewer must confirm): ${plan!.assumptions.find((a) => a.startsWith('after')) ?? 'read after update returns the new values'}`);
 
   const L = header('positive', op, meta, extra);
-  L.push(`import { test, expect } from '@playwright/test';`);
+  L.push(`import { test, expect } from '../../_support/fixtures.js';`);
   L.push(`import { expectContract${role ? ', readPointer' : ''} } from '../../_support/contract-assert.js';`);
   if (role) L.push(`import * as resource from '${helpers}';`);
   L.push('', `test.describe('${op.key} · positive', () => {`);
@@ -236,7 +236,7 @@ export function renderNegative(n: NegativeInput, meta: Meta): string {
     'Expected statuses come from the documented responses of this operation; each case breaks one documented rule.',
   ]);
   if (usesUuid) L.push(`import { randomUUID } from 'node:crypto';`);
-  L.push(`import { test } from '@playwright/test';`);
+  L.push(`import { test } from '../../_support/fixtures.js';`);
   L.push(`import { expectRejected } from '../../_support/contract-assert.js';`);
   if (usesHelpers) L.push(`import * as resource from '${n.helpers}';`);
   L.push('', `const rejection = ${JSON.stringify(n.validation)}; // documented in the spec`, '');
@@ -285,7 +285,8 @@ export function renderNegative(n: NegativeInput, meta: Meta): string {
 
   if (n.unauthorized) {
     L.push(`  test('returns documented 401 without credentials', async ({ playwright, baseURL }) => {`);
-    L.push(`    const anonymous = await playwright.request.newContext({ baseURL });`);
+    // Explicit headers: inside a test, newContext() would otherwise inherit the project's auth header.
+    L.push(`    const anonymous = await playwright.request.newContext({ baseURL, extraHTTPHeaders: { accept: 'application/json' }, httpCredentials: undefined });`);
     L.push(`    try {`);
     L.push(`      const res = await anonymous.${op.method}(${pathExpr(op, chain?.param, "'unused'")});`);
     L.push(`      await expectRejected(res, ['401'], '${op.method}', ${q(op.path)});`);

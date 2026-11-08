@@ -10,6 +10,7 @@ import { probe } from './audit/probe.js';
 import { findSchemathesis, runSchemathesis } from './audit/schemathesis.js';
 import { resolveAuth } from './audit/auth.js';
 import { analyzeProject, type Analysis } from './discover/analyze.js';
+import { applyLogin } from './audit/login.js';
 import { renderRunReport } from './report/run-report.js';
 import type { Finding, LintProblem, Operation } from './types.js';
 import { spawnSync } from 'node:child_process';
@@ -100,6 +101,19 @@ export async function run(o: { root: string; out: string; probe: boolean; schema
       add('OpenAPI spec', spec.validationErrors.length ? 'warn' : 'ok', `${specRef}: OpenAPI ${spec.doc.openapi}, ${ops.length} operations, lint ${lint.filter((p) => p.severity === 'error').length} errors / ${lint.filter((p) => p.severity === 'warn').length} warnings`);
     } catch (e: any) {
       add('OpenAPI spec', 'fail', `${specRef}: ${e?.message ?? e}`);
+    }
+  }
+
+  // Login (short-lived tokens): obtain a fresh token before any check that needs one.
+  if (process.env.API_LOGIN) {
+    try {
+      const r = await applyLogin(cfg.baseUrl, () => undefined);
+      if (r) {
+        cfg.token = r.token;
+        add('API_LOGIN', 'ok', `logged in${r.expiresInSec ? `, token valid ${r.expiresInSec}s (the generated tests log in on their own)` : ''}`);
+      }
+    } catch (e: any) {
+      add('API_LOGIN', 'fail', String(e?.message ?? e));
     }
   }
 

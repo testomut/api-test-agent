@@ -46,7 +46,25 @@ All settings are environment variables. `init` writes them to `.env` (ignored by
 | `API_TESTS_LANG` | no | Language of generated tests: `typescript` (Playwright Test, default) or `python` (pytest + requests). `generate --lang` overrides it. |
 | `API_TESTS_PYTHON` | no | Python interpreter that runs generated pytest suites with `generate --run`. Default: `./.venv`, then `python` on PATH. |
 
-Other credentials: `API_USER` + `API_PASSWORD` (HTTP basic), `API_KEY` (apiKey in a header or query).
+Other credentials: `API_USER` + `API_PASSWORD` (HTTP basic, or the login body below), `API_KEY` (apiKey in a header or query).
+
+### Short-lived tokens: log in instead of `API_TOKEN`
+
+Many APIs issue tokens that expire in minutes (a JWT with `expires_in: 300` is common), so a token pasted into `.env` goes stale. Configure the login request instead:
+
+```
+API_LOGIN=POST /users/login
+API_LOGIN_BODY={"email":"${API_USER}","password":"${API_PASSWORD}"}
+API_TOKEN_POINTER=/access_token
+API_USER=qa-account@example.com
+API_PASSWORD=...
+```
+
+- `${VAR}` in `API_LOGIN_BODY` is filled from `.env` / the environment, so you can name the variables as you like (`${SHOP_USER_EMAIL}`).
+- The agent logs in before `run`, `audit --probe/--schemathesis`; the report shows the result as the `API_LOGIN` check.
+- Generated suites log in on their own and refresh the token 30 s before it expires: TypeScript through `_support/fixtures.ts` (a worker-scoped token source), Python through the `token_source` session fixture in `conftest.py`. No change to `playwright.config` is needed.
+- Credentials are never written to reports, logs or generated files; any variable whose name contains TOKEN, PASSWORD, SECRET or API_KEY is redacted from output.
+- `init` asks for it (`l = login request`), or non-interactively: `init --login "POST /users/login" --login-body '{...}' --token-pointer /access_token`.
 
 You need at least one of: a spec, a Postman collection, or existing tests. With none of them there is nothing to analyse.
 

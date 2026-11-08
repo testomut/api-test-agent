@@ -64,9 +64,9 @@ function applyScheme(s: any, creds: Credentials, env: NodeJS.ProcessEnv): string
 /** Remove anything credential-shaped before text reaches a log or report. */
 export function redact(text: string, env: NodeJS.ProcessEnv = process.env): string {
   let out = text;
-  for (const k of ['API_TOKEN', 'API_KEY', 'API_PASSWORD']) {
-    const v = env[k];
-    if (v && v.length >= 4) out = out.split(v).join('***');
+  // Any secret-looking variable (also the ones API_LOGIN_BODY refers to, e.g. MY_USER_PASSWORD).
+  for (const [k, v] of Object.entries(env)) {
+    if (v && v.length >= 4 && /TOKEN|PASSWORD|SECRET|API_KEY|PASSWD/i.test(k)) out = out.split(v).join('***');
   }
   return out.replace(/(authorization|x-api-key|cookie)(["']?\s*[:=]\s*["']?)[^\s"',}]+/gi, '$1$2***');
 }

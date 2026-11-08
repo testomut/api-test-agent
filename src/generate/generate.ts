@@ -220,6 +220,7 @@ export async function generate(spec: LoadedSpec, ops: Operation[], o: GenerateOp
     const validatorSrc = await readFile(fileURLToPath(new URL('../../src/contract/validator.ts', import.meta.url)), 'utf8');
     await write(join(support, 'contract.ts'), validatorSrc);
     await write(join(support, 'contract-assert.ts'), CONTRACT_ASSERT);
+    await write(join(support, 'fixtures.ts'), await readFile(fileURLToPath(new URL('../../src/contract/fixtures.ts', import.meta.url)), 'utf8'));
     await write(join(support, 'openapi.snapshot.ts'), `// Snapshot of ${spec.location} (hash ${spec.hash}). Regenerated with the tests.\nexport const spec: any = ${JSON.stringify(spec.doc, null, 2)};\n`);
   }
   return { files, scenarios };

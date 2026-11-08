@@ -14,6 +14,11 @@ export const ENV_KEYS = {
   POSTMAN_API_KEY: 'Only for a cloud collection id. Secret.',
   API_TESTS_DIR: 'Optional. Folder with API tests (default tests/api). Other test folders (UI, unit) are never modified.',
   API_TESTS_LANG: 'Optional. Language of generated tests: typescript (Playwright Test, default) or python (pytest + requests).',
+  API_LOGIN: 'Optional. For short-lived tokens: the request that returns one, e.g. "POST /users/login". Used instead of a static API_TOKEN.',
+  API_LOGIN_BODY: 'Optional. JSON body of the login request; ${VAR} is taken from this file / the environment, e.g. {"email":"${API_USER}","password":"${API_PASSWORD}"}.',
+  API_TOKEN_POINTER: 'Optional. Where the token is in the login response (JSON pointer). Default /access_token.',
+  API_USER: 'Optional. Login user name / email (for API_LOGIN_BODY or HTTP basic auth).',
+  API_PASSWORD: 'Optional. Login password (for API_LOGIN_BODY or HTTP basic auth). Secret.',
 } as const;
 
 export type EnvKey = keyof typeof ENV_KEYS;

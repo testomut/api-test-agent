@@ -133,6 +133,32 @@ route('/stats', {
 
 route('/reports/{reportId}', { GET: (_q, res) => error(res, 404, 'Report not found') });
 
+// Short-lived tokens, like many real APIs: the agent and the generated tests must log in.
+const DEMO_USER = process.env.DEMO_USER ?? 'demo';
+const DEMO_PASSWORD = process.env.DEMO_PASSWORD ?? 'demo-password';
+const TOKEN_TTL_SEC = Number(process.env.DEMO_TOKEN_TTL ?? 300);
+const sessions = new Map<string, { username: string; expiresAt: number }>();
+
+route('/auth/login', {
+  POST: async (req, res) => {
+    const body = await readJson(req);
+    const b = body.ok ? (body.value as Record<string, unknown>) : undefined;
+    if (!b || b.username !== DEMO_USER || b.password !== DEMO_PASSWORD) return error(res, 401, 'Invalid credentials');
+    const token = randomUUID();
+    sessions.set(token, { username: DEMO_USER, expiresAt: Date.now() + TOKEN_TTL_SEC * 1000 });
+    send(res, 200, { access_token: token, token_type: 'bearer', expires_in: TOKEN_TTL_SEC });
+  },
+});
+
+route('/me', {
+  GET: (req, res) => {
+    const token = (req.headers.authorization ?? '').replace(/^Bearer\s+/i, '');
+    const s = sessions.get(token);
+    if (!s || s.expiresAt < Date.now()) return error(res, 401, 'Unauthorized');
+    send(res, 200, { username: s.username });
+  },
+});
+
 route('/admin/reset', {
   POST: (req, res) => {
     if (req.headers.authorization !== `Bearer ${ADMIN_TOKEN}`) return error(res, 401, 'Unauthorized');

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Login-based auth for short-lived tokens:** `API_LOGIN`, `API_LOGIN_BODY` (with `${VAR}` from `.env`), `API_TOKEN_POINTER`. The agent logs in before network checks; generated TypeScript (fixtures) and Python (conftest) suites log in and refresh the token themselves. `init` asks for it.
+- Generated 401 tests (TypeScript) now really send no credentials: `newContext()` inside a test inherited the project's auth header.
+- Secret redaction covers every TOKEN / PASSWORD / SECRET / API_KEY variable.
+- Demo API: `POST /auth/login` (5-minute tokens) and a secured `GET /me`.
 - Docs and CLI hints use `npx @testomut/api-test-agent`: the bare `npx api-test-agent` resolves to an unrelated npm package when the tool is not installed locally.
 
 ## 0.1.1 - 2026-11-08

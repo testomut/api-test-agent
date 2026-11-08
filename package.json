@@ -48,7 +48,8 @@
     "docs",
     "src/contract/contract.py",
     "src/discover/pytest_analyzer.py",
-    "CHANGELOG.md"
+    "CHANGELOG.md",
+    "src/contract/fixtures.ts"
   ],
   "keywords": [
     "openapi",

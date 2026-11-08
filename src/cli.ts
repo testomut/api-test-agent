@@ -17,6 +17,7 @@ import { classifyTarget, loadConfig } from './config.js';
 import { askAnswers, askYesNo, initProject, skillNotice } from './init.js';
 import { findSpec, run } from './run.js';
 import { applyPlan, buildPlan, gitState } from './adapt.js';
+import { applyLogin } from './audit/login.js';
 import { analyzeProject } from './discover/analyze.js';
 
 const VERSION = '0.1.1';
@@ -88,6 +89,7 @@ async function runAudit(location: string, o: CommonOpts) {
 
   const network = o.probe || o.schemathesis;
   if (network && !o.baseUrl) throw new Error('--probe/--schemathesis need --base-url pointing at a test environment.');
+  if (network) await applyLogin(o.baseUrl, log); // short-lived tokens: log in first (API_LOGIN)
   if (o.allowWrite && !network) log('  --allow-write has no effect without --probe or --schemathesis');
   if (o.allowWrite) log('  ⚠ write methods enabled: make sure this is a disposable test environment');
 
@@ -216,10 +218,13 @@ program
   .option('--postman <fileOrId>', 'POSTMAN_COLLECTION')
   .option('--tests-dir <dir>', 'API_TESTS_DIR', 'tests/api')
   .addOption(new Option('--lang <lang>', 'API_TESTS_LANG: language of generated tests').choices(['typescript', 'python']))
-  .option('--token', 'the API needs a token (you paste it into .env)', false)
+  .option('--token', 'the API needs a static token (you paste it into .env)', false)
+  .option('--login <request>', 'short-lived tokens: login request, e.g. "POST /users/login"')
+  .option('--login-body <json>', 'login body; ${VAR} is read from .env')
+  .option('--token-pointer <pointer>', 'where the token is in the login response (default /access_token)')
   .option('--force', 'replace .env.example and the skill even if they were changed', false)
   .action(async (o) => {
-    const defaults = { baseUrl: o.baseUrl ?? cfg.baseUrl, specUrl: o.spec ?? cfg.specUrl, postman: o.postman ?? cfg.postmanCollection, testsDir: o.testsDir, needsToken: o.token, lang: o.lang ?? cfg.testsLang };
+    const defaults = { baseUrl: o.baseUrl ?? cfg.baseUrl, specUrl: o.spec ?? cfg.specUrl, postman: o.postman ?? cfg.postmanCollection, testsDir: o.testsDir, needsToken: o.token, login: o.login, loginBody: o.loginBody, tokenPointer: o.tokenPointer, lang: o.lang ?? cfg.testsLang };
     const canAsk = !o.yes && !!process.stdin.isTTY;
     if (!canAsk && !o.yes && !o.dryRun) throw new Error('No interactive terminal: use --yes (or --dry-run) with --base-url and optional --spec, --postman, --tests-dir, --token, --with-skill.');
     const answers = canAsk ? await askAnswers(defaults) : defaults;

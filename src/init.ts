@@ -11,6 +11,10 @@ export interface InitAnswers {
   postman?: string;
   testsDir?: string;
   needsToken?: boolean;
+  /** Short-lived tokens: the login request, e.g. "POST /users/login". */
+  login?: string;
+  loginBody?: string;
+  tokenPointer?: string;
   lang?: 'typescript' | 'python';
 }
 
@@ -40,7 +44,16 @@ export async function askAnswers(defaults: InitAnswers): Promise<InitAnswers> {
     const specUrl = await ask('2/6 OpenAPI/Swagger URL or file (Enter = auto-detect)', defaults.specUrl);
     const postman = await ask('3/6 Postman collection: exported .json path or cloud collection id (Enter = none)', defaults.postman);
     const testsDir = await ask('4/6 Folder for API tests', defaults.testsDir ?? 'tests/api');
-    const token = await ask('5/6 Does the API need a token? (y/N)', defaults.needsToken ? 'y' : 'n');
+    const authAnswer = await ask('5/6 Authentication: n = none, t = static token, l = login request that returns a token', defaults.login ? 'l' : defaults.needsToken ? 't' : 'n');
+    const token = /^t/i.test(authAnswer ?? '') ? 'y' : 'n';
+    let login: string | undefined;
+    let loginBody: string | undefined;
+    let tokenPointer: string | undefined;
+    if (/^l/i.test(authAnswer ?? '')) {
+      login = await ask('   Login request', defaults.login ?? 'POST /auth/login');
+      loginBody = await ask('   Login body (${VAR} comes from .env)', defaults.loginBody ?? '{"email":"${API_USER}","password":"${API_PASSWORD}"}');
+      tokenPointer = await ask('   Where the token is in the response', defaults.tokenPointer ?? '/access_token');
+    }
     let lang: string | undefined;
     while (!lang) {
       lang = (await ask('6/6 Language of generated tests: typescript (Playwright) or python (pytest + requests)', defaults.lang ?? 'typescript'))?.toLowerCase();
@@ -51,7 +64,7 @@ export async function askAnswers(defaults: InitAnswers): Promise<InitAnswers> {
         lang = undefined;
       }
     }
-    return { baseUrl, specUrl, postman, testsDir, needsToken: /^y/i.test(token ?? ''), lang: lang as 'typescript' | 'python' };
+    return { baseUrl, specUrl, postman, testsDir, needsToken: /^y/i.test(token ?? ''), login, loginBody, tokenPointer, lang: lang as 'typescript' | 'python' };
   } finally {
     rl.close();
   }
@@ -142,6 +155,9 @@ export async function initProject(root: string, a: InitAnswers, opts: InitOption
     POSTMAN_COLLECTION: a.postman,
     API_TESTS_DIR: testsDir,
     API_TESTS_LANG: a.lang ?? 'typescript',
+    API_LOGIN: a.login,
+    API_LOGIN_BODY: a.login ? a.loginBody ?? '{"email":"${API_USER}","password":"${API_PASSWORD}"}' : undefined,
+    API_TOKEN_POINTER: a.login ? a.tokenPointer ?? '/access_token' : undefined,
   };
 
   // .env: create, or add only missing keys. Existing values are never overwritten.
@@ -159,7 +175,11 @@ export async function initProject(root: string, a: InitAnswers, opts: InitOption
     } else r.kept.push('.env');
   }
   const env: Record<string, string> = readEnvFile(root);
-  if (a.needsToken && !env.API_TOKEN) r.todo.push('Paste your TEST token into .env: API_TOKEN=...');
+  if (a.needsToken && !a.login && !env.API_TOKEN) r.todo.push('Paste your TEST token into .env: API_TOKEN=...');
+  if (a.login) {
+    const vars = [...(values.API_LOGIN_BODY ?? '').matchAll(/\$\{(\w+)\}/g)].map((m) => m[1]).filter((v) => !env[v]);
+    if (vars.length) r.todo.push(`Login (${a.login}): put the test account into .env: ${vars.map((v) => `${v}=...`).join(', ')}. The token is fetched and refreshed automatically.`);
+  }
   if (cloudPostman && !env.POSTMAN_API_KEY) r.todo.push('Postman cloud collection: paste your Postman API key into .env: POSTMAN_API_KEY=... (postman.com → Settings → API keys)');
 
   // .env.example: safe to commit, documents every variable.

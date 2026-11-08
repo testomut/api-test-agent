@@ -12,6 +12,12 @@ jobs:
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      # The demo API issues 5-minute tokens: the agent and the generated suites log in themselves.
+      API_LOGIN: POST /auth/login
+      API_LOGIN_BODY: '{"username":"${API_USER}","password":"${API_PASSWORD}"}'
+      API_USER: demo
+      API_PASSWORD: demo-password
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
