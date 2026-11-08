@@ -15,6 +15,62 @@ When an OpenAPI specification changes in a pull request, CI should identify *sem
 5. Produce a **review-only** test plan and proposed test file changes. If existing tests already cover the change, report that instead of regenerating. Never delete or rewrite existing assertions automatically (see [Generated vs. hand-written files](#generated-vs-hand-written-files) for the only exception).
 6. Publish report artifacts and optionally open a draft PR for human review. The agent should not push changes back to the triggering PR by default.
 
+## Test suite layout
+
+> **Target structure.** The current runtime generator still writes `positive.spec.ts` / `negative.spec.ts` per operation folder. The three-file structure below is the target; it is implemented by a separate implementation PR (see [Implementation order](#implementation-order)). This design describes only the target.
+
+Every API endpoint (operation folder) gets up to three test files, one per **suite type**:
+
+```text
+tests/api/
+└── orders/
+    └── patch-by-id/
+        ├── functional.spec.ts
+        ├── contract.spec.ts
+        └── scenarios.spec.ts
+```
+
+The operation folder keeps the current generator's naming (`<resource>/<method>` or `<resource>/<method>-by-id`). Python uses `test_functional.py`, `test_contract.py` and `test_scenarios.py` in the same folders.
+
+| Suite type | File | Purpose |
+|---|---|---|
+| `functional` | `functional.spec.ts` | Normal work of the endpoint: the request, the expected HTTP status, the result and basic functional behavior. |
+| `contract` | `contract.spec.ts` | Conformance to Swagger/OpenAPI: documented statuses and content types, response structure, types, required fields and schema constraints. |
+| `scenario` | `scenarios.spec.ts` | User and business scenarios: request chains, preconditions, state changes, business rules and cleanup. |
+
+**Positive/negative is not a file type.** It is a separate axis, **polarity**: positive and negative cases can live in each of the three files.
+
+Default mapping of checks:
+
+| Check | Suite type / polarity |
+|---|---|
+| a simple successful call of the endpoint | `functional/positive` |
+| expected 4xx, 401 and 404 as endpoint behavior | `functional/negative` |
+| response schema, types, required fields, documented status and content type | `contract/positive` |
+| violated request schema constraints: required, type, min/max, length, enum, pattern, … | `contract/negative` |
+| CRUD/lifecycle and multi-request flows | `scenario/positive` |
+| business rejections, invalid state transitions, negative multi-request flows | `scenario/negative` |
+
+An HTTP status may be checked in both `functional` and `contract`, with different meanings:
+
+- `functional`: the endpoint returned the specific expected result;
+- `contract`: the status actually returned is allowed by OpenAPI.
+
+This is not duplication as long as the case purpose and the case ID differ.
+
+A file is created only when it contains at least one justified case. No empty files are generated. For a suite type without cases, `plan` output records `no-change` or `BLOCKED` with the reason.
+
+A multi-operation scenario lives in the `scenarios.spec.ts` of its **primary operation**, recorded explicitly as `primaryOperationUid` in the [scenario registry](#scenarios). It is never derived from role order. For `create order → PATCH order → verify order → cleanup`, the file is `orders/patch-by-id/scenarios.spec.ts`, not under the create endpoint.
+
+### Impact by suite type
+
+| Change | Affected file |
+|---|---|
+| ordinary endpoint behavior, documented 401/404, a functional expectation | `functional.spec.ts` |
+| request/response schema, status set, content type, a schema constraint | `contract.spec.ts` |
+| dependency graph, `idFrom`, a lifecycle edge, a precondition or cleanup | `scenarios.spec.ts` |
+| an endpoint added or removed | all three suite types are analyzed |
+
 ## Stable IDs
 
 - Every operation gets a persistent **`operationUid`** that does not depend on `operationId` or on the generated method name; those are mutable attributes of the operation.
@@ -40,26 +96,32 @@ When an OpenAPI specification changes in a pull request, CI should identify *sem
 ### Case ID format
 
 ```text
-ata:<subjectUid>:<kind>:<location>:<rule>
+ata:<subjectUid>:<suiteType>:<polarity>:<location>:<rule>
 ```
 
-- `subjectUid`: an `operationUid`, or a `scenarioUid` for multi-operation (CRUD) scenarios.
-- `kind`: `positive | negative | contract`.
+- `subjectUid`: an `operationUid`, or a `scenarioUid` for multi-operation scenarios in `scenarios.spec.ts`. A single-operation scenario may use an `operationUid` when there is no dependency chain.
+- `suiteType`: `functional | contract | scenario` (see [Test suite layout](#test-suite-layout)).
+- `polarity`: `positive | negative`.
 - `location`: the canonical place being checked.
 - `rule`: a stable name of the checked behavior, **without** the constraint value: `maxLength`, not `maxLength-50`. The previous and new values (`before: 50`, `after: 100`) live in the case metadata.
 
 Examples:
 
 ```text
-ata:op_ABC123:positive:operation:documented-success
-ata:op_ABC123:negative:request.body#/name:maxLength
-ata:op_ABC123:negative:request.query#/limit:maximum
-ata:op_ABC123:negative:request.path#/brandId:not-found
-ata:op_ABC123:negative:request.header#/x-api-key:required
-ata:op_ABC123:negative:request.security:unauthorized
-ata:op_ABC123:contract:response.status#/200:documented
-ata:op_ABC123:contract:response.content-type#/application~1json:documented
-ata:op_ABC123:contract:response.body#/data/id:schema
+ata:op_ABC123:functional:positive:operation:documented-success
+ata:op_ABC123:functional:negative:request.path#/brandId:not-found
+ata:op_ABC123:functional:negative:request.security:unauthorized
+ata:op_ABC123:contract:positive:response.status#/200:documented
+ata:op_ABC123:contract:positive:response.content-type#/application~1json:documented
+ata:op_ABC123:contract:positive:response.body#:schema
+ata:op_ABC123:contract:positive:response.body#/data/id:schema
+ata:op_ABC123:contract:negative:request.body#/name:maxLength
+ata:op_ABC123:contract:negative:request.query#/limit:maximum
+ata:op_ABC123:contract:negative:request.header#/x-api-key:required
+ata:scn_XYZ789:scenario:positive:lifecycle:crud
+ata:scn_XYZ789:scenario:negative:lifecycle:business-rule
+ata:scn_CHECKOUT:scenario:positive:lifecycle:business-rule
+ata:scn_CANCEL:scenario:negative:lifecycle:business-rule
 ```
 
 `location` rules:
@@ -73,7 +135,8 @@ ata:op_ABC123:contract:response.body#/data/id:schema
 | request body field | `request.body#<JSON Pointer>` |
 | response body field | `response.body#<JSON Pointer>` |
 | status | `response.status#/<status>` |
-| content type | `response.content-type#/<RFC 6901-escaped media type>` |
+| response content type | `response.content-type#/<RFC 6901-escaped media type>` |
+| request content type | `request.content-type` |
 | security | `request.security` |
 | whole operation | `operation` |
 | whole lifecycle scenario | `lifecycle` |
@@ -103,21 +166,21 @@ request.body#/address/city
 request.body#/items/*/sku
 request.body#/meta%3Atag
 request.query#/filter%3Atype
-response.body#              (body root; e.g. ata:op_ABC123:contract:response.body#:schema)
+response.body#              (body root; e.g. ata:op_ABC123:contract:positive:response.body#:schema)
 ```
 
 HTTP header field names cannot contain a colon, but the same encoding function applies to every dynamic name.
 
 Parsing:
 
-1. The parser splits the ID into five structural parts (`ata`, subject, kind, location, rule) on its four `:`.
-2. It then percent-decodes the dynamic segments.
+1. The parser splits the ID into six structural parts (`ata`, subject, suite type, polarity, location, rule) on its five unescaped `:`.
+2. It then percent-decodes the dynamic segments. The percent-encoding rules above are unchanged.
 
 Each of these is `INVALID_CASE_ID_ENCODING` (detected without a spec):
 
 - non-canonical escaping (lowercase `%3a` instead of `%3A`);
 - an unencoded `%`;
-- an unencoded `:` inside `location` (the ID then has more than five parts).
+- an unencoded `:` inside `location` (the ID then has more than six parts).
 
 `rule` is always a static value from the [versioned vocabulary](#rule-vocabulary) and never contains `:`.
 
@@ -163,18 +226,16 @@ Forbidden:
 | a bare `*` where the resolved schema is not an array, including a property named `*` written without `%2A` | `INVALID_ARRAY_WILDCARD` | with a spec |
 | double encoding `%252A` (decodes to a property literally named `%2A`, which does not exist) | `INVALID_CASE_LOCATION` | with a spec |
 
-#### Positive cases
+#### One primary case ID per test
 
-The base positive case ID is `ata:<operationUid>:positive:operation:documented-success`. A single Playwright/pytest test that checks the success status and also calls `expectContract` keeps **one** primary positive case ID. Separate contract IDs are created only for contract cases that run on their own.
-
-What the positive case also checks is recorded in its metadata:
+The base functional case ID is `ata:<operationUid>:functional:positive:operation:documented-success`. One physical test has **one** primary case ID. Contract checks that run as their own tests in `contract.spec.ts` get their own `contract/*` IDs. If a functional test additionally validates the response contract, for example by calling `expectContract`, that is recorded in its metadata rather than as extra IDs:
 
 ```json
 {
   "covers": [
-    "response.status#/200:documented",
-    "response.content-type#/application~1json:documented",
-    "response.body#:schema"
+    "contract:positive:response.status#/200:documented",
+    "contract:positive:response.content-type#/application~1json:documented",
+    "contract:positive:response.body#:schema"
   ]
 }
 ```
@@ -183,99 +244,225 @@ One physical test does not get several equal case IDs without need.
 
 #### Rule vocabulary
 
-`rule` comes from a **versioned vocabulary**. `cases.json` records `"caseRuleVocabularyVersion": 1`. The version covers the whole case ID vocabulary: there are no separate versions for positive, negative and contract.
+`rule` comes from a **versioned vocabulary**. `cases.json` records `"caseRuleVocabularyVersion": 1`. The version covers the whole case ID vocabulary: there are no separate versions per suite type or polarity.
 
-Built-in vocabulary v1, grouped by `kind`:
+Built-in vocabulary v1, grouped by `suiteType/polarity`:
 
 ```text
-positive:  documented-success  crud
-contract:  documented  schema
-negative:  required  nullable  type  format  pattern
-           minimum  maximum  exclusiveMinimum  exclusiveMaximum  multipleOf
-           minLength  maxLength  enum  const
-           minItems  maxItems  uniqueItems  minProperties  maxProperties  additionalProperties
-           not-found  unauthorized  forbidden  content-type
+functional/positive:  documented-success
+functional/negative:  not-found  unauthorized  forbidden
+contract/positive:    documented  schema
+contract/negative:    required  nullable  type  format  pattern
+                      minimum  maximum  exclusiveMinimum  exclusiveMaximum  multipleOf
+                      minLength  maxLength  enum  const
+                      minItems  maxItems  uniqueItems  minProperties  maxProperties  additionalProperties
+                      content-type
+scenario/positive:    crud  business-rule
+scenario/negative:    business-rule
 ```
 
-This is the architecture's vocabulary. The generator may support only a subset, but it never creates unknown rules.
+This is the architecture's vocabulary. The generator may support only a subset, but it never creates unknown rules. `crud` is only for a general resource lifecycle; `business-rule` covers positive and negative business scenarios, including state transitions. A separate `state-transition` rule may come in a later vocabulary version if `business-rule` proves too broad.
 
-`registry validate` checks the allowed **combination** of `kind`, `location` and `rule`, not just that the rule exists. Allowed in v1:
+`registry validate` checks the allowed **combination** of `suiteType`, `polarity`, `location` and `rule`, not just that the rule exists. Allowed in v1:
 
-| kind | location | rule | extra condition |
-|---|---|---|---|
-| positive | `operation` | `documented-success` | |
-| positive | `lifecycle` | `crud` | `subjectUid` starts with `scn_` |
-| contract | `response.status#/<status>` | `documented` | |
-| contract | `response.content-type#/<RFC 6901-escaped media type>` | `documented` | |
-| contract | `response.body#<json-pointer>` | `schema` | |
-| negative | must match the rule | any negative rule | |
+| suiteType | polarity | location | rule | extra condition |
+|---|---|---|---|---|
+| functional | positive | `operation` | `documented-success` | |
+| functional | negative | `request.path#/<name>` | `not-found` | |
+| functional | negative | `request.security` | `unauthorized`, `forbidden` | |
+| contract | positive | `response.status#/<status>` | `documented` | |
+| contract | positive | `response.content-type#/<RFC 6901-escaped media type>` | `documented` | |
+| contract | positive | `response.body#<json-pointer>` | `schema` | |
+| contract | negative | `request.{body,query,path,header,cookie}#…` | a schema-constraint rule | the rule must describe that target |
+| contract | negative | `request.content-type` | `content-type` | |
+| scenario | positive | `lifecycle` | `crud` (general resource lifecycle only) | `subjectUid` starts with `scn_`; its definition has `scenarioType: "crud"` |
+| scenario | positive | `lifecycle` | `business-rule` (successful business flows, state transitions) | `subjectUid` starts with `scn_` |
+| scenario | negative | `lifecycle` | `business-rule` | `subjectUid` starts with `scn_` |
+| scenario | negative | `operation` | `business-rule` | single-operation scenario without a dependency chain: `subjectUid` starts with `op_` |
 
 Error examples:
 
 | Case ID fragment | Error |
 |---|---|
-| `positive:operation:schema` | `INVALID_CASE_RULE_FOR_KIND` |
-| `contract:request.body#/name:documented` | `INVALID_CASE_LOCATION` |
-| `negative:operation:documented-success` | `INVALID_CASE_RULE_FOR_KIND` |
-| `op_…:positive:lifecycle:crud` | `INVALID_CASE_SUBJECT` (lifecycle needs a `scenarioUid`) |
+| `functional:positive:operation:schema` | `INVALID_CASE_RULE_FOR_SUITE` |
+| `contract:positive:request.body#/name:documented` | `INVALID_CASE_LOCATION` |
+| `contract:negative:operation:documented-success` | `INVALID_CASE_RULE_FOR_SUITE` |
+| `op_…:scenario:positive:lifecycle:crud` | `INVALID_CASE_SUBJECT` (lifecycle needs a `scenarioUid`) |
 
 Validation:
 
 - a known built-in rule in an allowed combination for a supported version is valid;
 - an unknown rule without a namespace is `INVALID_CASE_RULE`;
-- custom rules are allowed only as `x-<namespace>-<rule>`, for any `kind`. They are kept, but automatic impact mapping returns `review` for them unless a plugin/config knows their allowed locations and meaning;
+- custom rules are allowed only as `x-<namespace>-<rule>`, for any suite type and polarity. They are kept, but automatic impact mapping returns `review` for them unless a plugin/config knows their allowed locations and meaning;
 - a registry with a vocabulary version above the supported one is `BLOCKED: UNSUPPORTED_CASE_RULE_VOCABULARY`;
 - a legacy registry without a version is treated by migration code as vocabulary `0`, never silently as the current version.
 
-Adding a built-in rule or a new allowed `kind/location/rule` combination requires a new vocabulary version (or an explicitly backward-compatible update of the validator contract) and a migration/compatibility test. For the first implementation, **any** extension of the built-in vocabulary is a version bump. Existing rules are never renamed without an alias/migration.
+Adding a built-in rule or a new allowed `suiteType/polarity/location/rule` combination requires a new vocabulary version (or an explicitly backward-compatible update of the validator contract) and a migration/compatibility test. For the first implementation, **any** extension of the built-in vocabulary is a version bump. Existing rules are never renamed without an alias/migration.
 
 `nullable` is a logical rule independent of representation: 3.0 `nullable: false` and 3.1 `type: ["string"]` give the same rule after normalization.
 
-#### CRUD scenarios
+#### Scenarios
 
-- A test of one operation gets the `operationUid` of the action under test. Create/read/delete calls used as precondition or cleanup go to `relatedOperationUids` and do not change the primary case ID:
+- A test of one operation stays a `functional` or `contract` case and gets the `operationUid` of the action under test. Calls used as precondition or cleanup go to `relatedOperationUids` and do not change the primary case ID:
 
   ```json
   {
-    "caseId": "ata:op_READ:positive:operation:documented-success",
-    "operationUid": "op_READ",
+    "caseId": "ata:op_READ:functional:positive:operation:documented-success",
+    "subjectUid": "op_READ",
     "relatedOperationUids": ["op_CREATE", "op_DELETE"]
   }
   ```
 
-- A test that checks the whole lifecycle as one scenario gets a separate `scenarioUid`:
+- A test in `scenarios.spec.ts` that checks a chain of at least two operations gets a `scenarioUid`. A single operation uses its `operationUid`.
+
+**Scenario definition.** Every `scenarioUid` has a definition with a required, ordered list of `steps`:
+
+```ts
+type ScenarioStep = {
+  operationUid: string;
+  phase: 'setup' | 'action' | 'assertion' | 'cleanup';
+};
+
+type ScenarioDefinition = {
+  scenarioType: 'crud' | 'business';
+  primaryOperationUid: string;
+  steps: ScenarioStep[];
+  externalId?: string;           // explicit stable scenario ID, see below
+  roles?: {                      // crud only: optional metadata for the dependency graph
+    create: string | null;
+    read: string | null;
+    update: string | null;
+    delete: string | null;
+  };
+};
+```
+
+CRUD scenario:
+
+```json
+{
+  "primaryOperationUid": "op_UPDATE",
+  "roles": {
+    "create": "op_CREATE",
+    "read": "op_READ",
+    "update": "op_UPDATE",
+    "delete": "op_DELETE"
+  },
+  "scenarioType": "crud",
+  "steps": [
+    { "operationUid": "op_CREATE", "phase": "setup" },
+    { "operationUid": "op_UPDATE", "phase": "action" },
+    { "operationUid": "op_READ", "phase": "assertion" },
+    { "operationUid": "op_DELETE", "phase": "cleanup" }
+  ]
+}
+```
+
+CRUD scenario with missing roles (create → delete, where delete is the action under test, followed by a read that must fail):
+
+```json
+{
+  "primaryOperationUid": "op_DELETE",
+  "roles": { "create": "op_CREATE", "read": "op_READ", "update": null, "delete": "op_DELETE" },
+  "scenarioType": "crud",
+  "steps": [
+    { "operationUid": "op_CREATE", "phase": "setup" },
+    { "operationUid": "op_DELETE", "phase": "action" },
+    { "operationUid": "op_READ", "phase": "assertion" }
+  ]
+}
+```
+
+Business scenario (checkout):
+
+```json
+{
+  "primaryOperationUid": "op_PAY",
+  "scenarioType": "business",
+  "steps": [
+    { "operationUid": "op_CREATE_CART", "phase": "setup" },
+    { "operationUid": "op_ADD_ITEM", "phase": "setup" },
+    { "operationUid": "op_PAY", "phase": "action" },
+    { "operationUid": "op_GET_INVOICE", "phase": "assertion" },
+    { "operationUid": "op_DELETE_CART", "phase": "cleanup" }
+  ]
+}
+```
+
+Rules:
+
+- `steps` is required for every `scenarioUid`, with at least two steps. Step order is meaningful, and one operation may appear several times.
+- `primaryOperationUid` must appear in at least one step. In an ordinary business scenario the primary usually has phase `action`.
+- `relatedOperationUids` are derived from `steps`: every step's operation except the primary, deduplicated, in order of first appearance. For the checkout example: `["op_CREATE_CART", "op_ADD_ITEM", "op_GET_INVOICE", "op_DELETE_CART"]`.
+- `roles` is allowed only for `scenarioType: "crud"`. It is optional CRUD metadata for the [dependency graph](#dependency-graph-impact), never the basis of identity. Every non-null UID in `roles` must appear in `steps`. Business scenarios have no `roles`.
+- Cleanup is defined by `phase: "cleanup"`, so it also works without a CRUD `delete` role.
+
+**Primary operation.** `primaryOperationUid` determines:
+
+- which endpoint folder holds the `scenarios.spec.ts`;
+- the `operationUid` of the corresponding `SuiteImpact`;
+- the main endpoint shown in reports.
+
+Choosing it:
+
+- when the scenario checks a specific action operation, that operation is primary;
+- setup and cleanup operations never become primary just because of their phase or role;
+- for a full lifecycle scenario without an obvious main operation, the primary is set in reviewed deps or the registry;
+- an ambiguous primary is `review` / `BLOCKED`, never the first step;
+- on a rename/move, the primary operation keeps its UID under the general registry rules.
+
+**`scenarioUid` formula.** Two mutually exclusive formulas (RFC 4648 base32, uppercase, no padding):
+
+1. With an `externalId`, which is the preferred stable source of identity:
+
+   ```text
+   scenarioUid = "scn_" + base32(sha256("id=<canonicalExternalId>"))[0:12]
+   ```
+
+   `<canonicalExternalId>` is the `externalId` resolved through `externalScenarioIdAliases` to its canonical value, used byte for byte.
+
+2. Without an `externalId`:
+
+   ```text
+   scenarioUid = "scn_" + base32(sha256("type=<scenarioType>;steps=<phase>:<operationUid>><phase>:<operationUid>>…"))[0:12]
+   ```
+
+   Example input:
+
+   ```text
+   type=business;steps=setup:op_CREATE_CART>setup:op_ADD_ITEM>action:op_PAY>assertion:op_GET_INVOICE>cleanup:op_DELETE_CART
+   ```
+
+`externalId` and `steps` never go into the same hash. A stable external ID therefore gives the same UID even if the registry is lost and the steps have changed meanwhile.
+
+- `primaryOperationUid`, `roles` and test names are **not** part of either hash.
+- Once written to `cases.json` (`scenarios`), a `scenarioUid` is never recomputed. These changes update the definition and keep the UID:
+  - adding or removing a step;
+  - changing a phase;
+  - changing the primary;
+  - a confirmed rename/move of an operation.
+- At bootstrap without a registry, the UID is computed from the `externalId` when there is one, otherwise from the current steps.
+- Collisions are checked the same way as for `operationUid`.
+- Several case IDs may share one `scenarioUid`. A successful checkout and a rejected payment can use the same operation sequence but differ in polarity, rule, test data and assertions:
 
   ```text
-  ata:scn_XYZ789:positive:lifecycle:crud
+  ata:scn_CHECKOUT:scenario:positive:lifecycle:business-rule
+  ata:scn_CHECKOUT:scenario:negative:lifecycle:business-rule
   ```
 
-  Formula:
+- Two chains that need independent tracking despite identical steps get explicit, stable `externalId`s, so their UIDs come from formula 1 and differ. A mutable test name never goes into the hash.
 
-  ```text
-  scenarioUid = "scn_" + base32(sha256("create=<uid-or->;read=<uid-or->;update=<uid-or->;delete=<uid-or->"))[0:12]
+**External scenario IDs** follow the same rules as operation external IDs ([`x-api-test-agent-id`](#x-api-test-agent-id)):
+
+- Two active scenarios never share an `externalId`: both get `BLOCKED: DUPLICATE_EXTERNAL_SCENARIO_ID`, with both JSON Pointers in the report.
+- Changing the steps never changes the UID of a scenario with an `externalId`.
+- Changing the `externalId` of a known scenario is `BLOCKED: STABLE_SCENARIO_ID_CHANGED` until a reviewed alias/migration exists in `externalScenarioIdAliases`:
+
+  ```json
+  { "externalScenarioIdAliases": { "checkout.old": "checkout" } }
   ```
 
-  The role order is always `create, read, update, delete`. A missing role is written as `-`, not dropped:
-
-  ```text
-  create=op_CREATE;read=-;update=-;delete=op_DELETE        create → delete
-  create=op_SETUP;read=op_READ;update=-;delete=op_CLEANUP  read-only dependency scenario
-  ```
-
-  Rules:
-
-  - A `scenarioUid` exists only for a chain of at least two related operations. A single operation uses its `operationUid`.
-  - Once written to `cases.json` (`scenarios`), a `scenarioUid` is never recomputed:
-    - adding a missing role updates `roles` but keeps the old `scenarioUid`;
-    - a confirmed rename/move of an operation updates the role mapping, not the `scenarioUid`.
-  - At bootstrap without a registry, the UID is computed from the current full set of roles.
-  - Collisions are checked the same way as for `operationUid`.
-  - One operation cannot hold two incompatible roles without an explicit resolution in the scenario model.
-  - The registry stores missing roles explicitly as `null`, so the state is unambiguous. `null` is serialized as `-` when the initial hash is computed:
-
-    ```json
-    { "scenarios": { "scn_XYZ789": { "roles": { "create": "op_CREATE", "read": null, "update": null, "delete": "op_DELETE" } } } }
-    ```
+- Scenario aliases are stored separately from operation aliases (`externalIdAliases`) and are never mixed. They resolve transitively, and a cycle is `BLOCKED`.
 
 ### `normalizedPath`
 
@@ -320,7 +507,7 @@ So `{id} → {brandId}` gives the same initial UID at bootstrap. A separate `par
 
 #### Where aliases live
 
-- The authoritative store is `_support/cases.json` (`externalIdAliases`), because aliases are part of the identity history.
+- The authoritative store is `_support/cases.json` (`externalIdAliases` for operations, `externalScenarioIdAliases` for [scenarios](#scenarios), kept separate), because aliases are part of the identity history.
 - A one-off input file may be passed with `--id-aliases api-test-agent.id-aliases.json`. It is migration input only. The command:
   1. checks the aliases for cycles, duplicates and conflicts;
   2. shows a proposal;
@@ -336,11 +523,21 @@ So `{id} → {brandId}` gives the same initial UID at bootstrap. A separate `par
 
 ### Bootstrap for existing suites
 
-Suites generated before stable IDs have no `cases.json`. A migration step:
+Suites generated before stable IDs have no `cases.json` and use the old `positive.spec.ts` / `negative.spec.ts` layout. A migration step:
 
-1. reads the operation key (`METHOD /path`) from the header comment of each generated test file (the generator already writes `// <METHOD /path> · <kind> cases. Generated by api-test-agent <version>.`);
+1. reads the operation key (`METHOD /path`) from the header comment of each generated test file (the generator already writes `// <METHOD /path> · positive|negative cases. Generated by api-test-agent <version>.`);
 2. matches it against the current spec;
-3. creates `_support/cases.json` and assigns deterministic IDs;
+3. creates `_support/cases.json`, assigns deterministic IDs and maps each existing case to a suite type and polarity:
+
+   | Existing case | New suite type / polarity |
+   |---|---|
+   | a simple positive test (documented success) | `functional/positive` |
+   | a schema-derived negative case (required, type, min/max, length, enum, …) | `contract/negative` |
+   | a 401 / 404 case | `functional/negative` |
+   | a lifecycle (CRUD chain) test | `scenario/positive` or `scenario/negative`; a `crud` scenario definition whose `steps` come from the test's calls in order. `primaryOperationUid` and phases come from reviewed deps, otherwise `review` |
+   | an ambiguous hand-written test | `review`, no ID assigned automatically |
+
+   Moving cases from the old files into `functional.spec.ts` / `contract.spec.ts` / `scenarios.spec.ts` follows the [generated vs. hand-written rules](#generated-vs-hand-written-files): generated files are replaced only via `--apply-generated`, everything else gets a proposed patch;
 4. creates the manifest **without** trusting the working tree. For each file, the fresh generator output for the same spec and the existing file are both hashed with the [canonical file hash](#case-registry-and-generation-manifest) (UTF-8, line endings normalized to LF, then SHA-256):
    - equal hashes: `ownership: generated`;
    - different hashes: `ownership: unknown` (see [Generation manifest after a merge](#generation-manifest-after-a-merge)).
@@ -357,7 +554,7 @@ Source priority for the "before" spec:
 3. a stored CI artifact from the last successful run on the base branch (a download needs [`--allow-network`](#network-access));
 4. the snapshot the generator already writes into the suite: `<tests-dir>/_support/openapi.snapshot.ts` (TypeScript) or `<tests-dir>/_support/openapi_snapshot.json` (Python).
 
-Snapshots are usable only with metadata: `generatorVersion`, `specHash`, `source`, `capturedRevision`. Today the TypeScript snapshot carries only the source and hash in its header comment, and the Python snapshot is the bare spec with no metadata. The metadata must be added (for example a sibling `_support/openapi.snapshot.meta.json`, step 2 of the [implementation order](#implementation-order)); until then a snapshot baseline is `BLOCKED: BASE_SPEC_MISSING`.
+Snapshots are usable only with metadata: `generatorVersion`, `specHash`, `source`, `capturedRevision`. Today the TypeScript snapshot carries only the source and hash in its header comment, and the Python snapshot is the bare spec with no metadata. The metadata must be added (for example a sibling `_support/openapi.snapshot.meta.json`, step 3 of the [implementation order](#implementation-order)); until then a snapshot baseline is `BLOCKED: BASE_SPEC_MISSING`.
 
 A missing or incompatible baseline is `BLOCKED: BASE_SPEC_MISSING`, an analysis result, not a runtime error (see [Exit codes](#exit-codes-and-empty-results)). The tool never compares a live spec URL with itself and reports "no changes".
 
@@ -439,18 +636,60 @@ type OpenApiChangeSet = {
   blocked: BlockedResult[];
 };
 
+type SuiteType = 'functional' | 'contract' | 'scenario';
+type Polarity = 'positive' | 'negative';
+
 type TestImpact = {
   caseId: string;
-  subjectUid: string;            // operationUid, or scenarioUid for lifecycle cases
+  subjectUid: string;            // operationUid, or scenarioUid for multi-operation scenarios
+  suiteType: SuiteType;
+  polarity: Polarity;
+  file: string;                  // e.g. brands/get-by-id/functional.spec.ts
   relatedOperationUids?: string[];
   action: 'add' | 'review' | 'regenerate-proposed' | 'no-change' | 'blocked';
   reason: string;
   affectedScenarios: string[];
 };
 
+// One entry per operation and suite type, also when the suite has no cases (no empty file is created).
+type SuiteImpact = {
+  operationUid: string;          // for the scenario suite: the scenario's primaryOperationUid
+  suiteType: SuiteType;
+  scenarioUids?: string[];       // scenario suite only: scenarios whose primary is this operation
+  relatedOperationUids?: string[];
+  file: string | null;           // null when no file exists or is proposed
+  action: 'add' | 'review' | 'no-change' | 'blocked';
+  reason: string;
+};
+
 // test-impact.json (produced by `plan`)
+type ScenarioStepRef = {
+  index: number;                 // zero-based index in the corresponding (base or head) scenario definition
+  operationUid: string;
+  phase: 'setup' | 'action' | 'assertion' | 'cleanup';
+};
+
+type AffectedScenarioStep = {
+  change: 'added' | 'removed' | 'moved' | 'modified' | 'operation-removed';
+  base?: ScenarioStepRef;        // the step in the base scenario definition
+  head?: ScenarioStepRef;        // the step in the head scenario definition
+  reason: string;
+};
+
+// One entry per scenario affected by a change.
+type ScenarioImpact = {
+  scenarioUid: string;
+  scenarioType: 'crud' | 'business';
+  primaryOperationUid: string;
+  affectedSteps: AffectedScenarioStep[];
+  action: 'add' | 'review' | 'regenerate-proposed' | 'no-change' | 'blocked';   // same as TestImpact
+  reason: string;
+};
+
 type TestImpactReport = {
   impacts: TestImpact[];
+  suites: SuiteImpact[];
+  scenarios: ScenarioImpact[];
   untrackedTests: UntrackedTest[];
   blocked: BlockedResult[];
 };
@@ -465,7 +704,48 @@ type UntrackedTest = {
 };
 ```
 
-**Breaking and "the test needs an update" are separate flags.** Example: `maxLength 50 → 100` on a request field is not breaking (`breaking: 'no'`), but the existing negative case "51 chars → 4xx" is now wrong (`testRelevant: true`, impact `review` / `regenerate-proposed`). The same applies separately to enum values added/removed, required ↔ optional, and type changes.
+`ScenarioImpact` is self-contained: every affected step carries references into **both** scenario definitions, so a reader needs no other registry version.
+
+| Change | `change` | Sides present |
+|---|---|---|
+| a step was added to the scenario definition | `added` | `head` only |
+| a step was removed from the scenario definition | `removed` | `base` only |
+| pure reorder, step content unchanged | `moved` | `base` and `head`, different `index` |
+| `phase` or `operationUid` changed (with or without a new position) | `modified` | `base` and `head` |
+| the operation was removed from OpenAPI, the step is still in the head definition | `operation-removed` | `base` and `head`, even if identical; `operationUid` is the operation's base UID |
+
+- When both the index and the phase changed, the step gets one `modified` entry with both sides, and `reason` lists both changes. `moved` is only for a pure reorder.
+- A change that affects the whole scenario lists all its steps.
+- A problem with the scenario registry entry as a whole, not tied to one step, gives `affectedSteps: []` and the cause in `reason`.
+- `relatedOperationUids` are derived from the head `steps`.
+- **Primary operation removed.** When the `primaryOperationUid` was removed from OpenAPI, the impact keeps that UID, `action` is `blocked` and `reason` is `PRIMARY_OPERATION_REMOVED`; the same code goes to `blocked[]`. A new primary is never chosen automatically.
+- Markdown report:
+  - base/head indexes are shown as `index + 1`;
+  - a missing side is shown as `—`;
+  - an operation removed from OpenAPI is marked `removed from specification`.
+
+A step removed from the scenario definition:
+
+```json
+{
+  "change": "removed",
+  "base": { "index": 3, "operationUid": "op_GET_INVOICE", "phase": "assertion" },
+  "reason": "Step removed from the scenario definition"
+}
+```
+
+A step whose operation was removed from OpenAPI:
+
+```json
+{
+  "change": "operation-removed",
+  "base": { "index": 1, "operationUid": "op_ADD_ITEM", "phase": "setup" },
+  "head": { "index": 1, "operationUid": "op_ADD_ITEM", "phase": "setup" },
+  "reason": "POST /carts/{cartId}/items removed from specification; the step is still in the head scenario definition"
+}
+```
+
+**Breaking and "the test needs an update" are separate flags.** Example: `maxLength 50 → 100` on a request field is not breaking (`breaking: 'no'`), but the existing `contract/negative` case "51 chars → 4xx" is now wrong (`testRelevant: true`, impact `review` / `regenerate-proposed`). The same applies separately to enum values added/removed, required ↔ optional, and type changes.
 
 Statuses and actions are distinct:
 
@@ -571,6 +851,12 @@ When a create operation's response changes, every dependent scenario is checked.
 
 Example: `/id` became `/data/id`. The create operation gets `review`; dependent read/update/delete scenarios get `blocked`. A new pointer may be **proposed**, never written to `deps.json` automatically.
 
+Scenario impact follows the [scenario definitions](#scenarios):
+
+- a change to any operation in a scenario's `steps` affects that scenario, whatever the step's phase;
+- "cleanup is still available" means the scenario still has a working `phase: "cleanup"` step, with or without a CRUD `delete` role;
+- CRUD `roles`, when present, add dependency-graph edges (create → read/update/delete), but identity and impact are computed from `steps`.
+
 ## Generated vs. hand-written files
 
 The layout from PR #1 (API objects, TypeScript only for now) is respected. The rules are language-independent (TypeScript and Python):
@@ -594,10 +880,35 @@ The manifest only references IDs; it does not duplicate the operation mapping.
 
 ```json
 {
-  "schemaVersion": 1,
   "caseRuleVocabularyVersion": 1,
+  "cases": {
+    "ata:op_ABC123:contract:positive:response.body#:schema": {
+      "location": "response.body#",
+      "polarity": "positive",
+      "rule": "schema",
+      "subjectUid": "op_ABC123",
+      "suiteType": "contract"
+    },
+    "ata:op_ABC123:functional:negative:request.path#/id:not-found": {
+      "location": "request.path#/id",
+      "polarity": "negative",
+      "rule": "not-found",
+      "subjectUid": "op_ABC123",
+      "suiteType": "functional"
+    },
+    "ata:scn_XYZ789:scenario:positive:lifecycle:crud": {
+      "location": "lifecycle",
+      "polarity": "positive",
+      "rule": "crud",
+      "subjectUid": "scn_XYZ789",
+      "suiteType": "scenario"
+    }
+  },
   "externalIdAliases": {
     "brands.get-one.old": "brands.get-one"
+  },
+  "externalScenarioIdAliases": {
+    "checkout.old": "checkout"
   },
   "operations": {
     "op_ABC123": {
@@ -617,31 +928,45 @@ The manifest only references IDs; it does not duplicate the operation mapping.
       "status": "retired"
     }
   },
-  "cases": {
-    "ata:op_ABC123:negative:request.body#/name:maxLength": {
-      "kind": "negative",
-      "location": "request.body#/name",
-      "operationUid": "op_ABC123",
-      "rule": "maxLength"
-    }
-  },
   "scenarios": {
+    "scn_CHECKOUT": {
+      "externalId": "checkout",
+      "primaryOperationUid": "op_PAY",
+      "scenarioType": "business",
+      "steps": [
+        { "operationUid": "op_CREATE_CART", "phase": "setup" },
+        { "operationUid": "op_ADD_ITEM", "phase": "setup" },
+        { "operationUid": "op_PAY", "phase": "action" },
+        { "operationUid": "op_GET_INVOICE", "phase": "assertion" },
+        { "operationUid": "op_DELETE_CART", "phase": "cleanup" }
+      ]
+    },
     "scn_XYZ789": {
+      "primaryOperationUid": "op_UPDATE",
       "roles": {
         "create": "op_CREATE",
         "read": "op_READ",
         "update": "op_UPDATE",
         "delete": "op_DELETE"
-      }
+      },
+      "scenarioType": "crud",
+      "steps": [
+        { "operationUid": "op_CREATE", "phase": "setup" },
+        { "operationUid": "op_UPDATE", "phase": "action" },
+        { "operationUid": "op_READ", "phase": "assertion" },
+        { "operationUid": "op_DELETE", "phase": "cleanup" }
+      ]
     }
-  }
+  },
+  "schemaVersion": 1
 }
 ```
 
 - An entry without `status` is active; `"status": "retired"` marks a [tombstone](#retired-entries-tombstones).
 - `externalId` is the operation's current `x-api-test-agent-id`, when it has one.
 - A case entry may also carry metadata: `covers`, `relatedOperationUids`, `before` / `after`.
-- The operations referenced by `scn_XYZ789` are omitted from the example for brevity; a real registry must contain them.
+- The operations referenced by the scenarios are omitted from the example for brevity; a real registry must contain them.
+- Each entry under `scenarios` is a [scenario definition](#scenarios).
 
 `generation-manifest.json`:
 
@@ -649,11 +974,19 @@ The manifest only references IDs; it does not duplicate the operation mapping.
 {
   "caseRegistryHash": "...",
   "files": {
-    "brands/get-by-id/negative.spec.ts": {
-      "caseIds": ["ata:op_ABC123:negative:request.body#/name:maxLength"],
+    "brands/get-by-id/contract.spec.ts": {
+      "caseIds": ["ata:op_ABC123:contract:positive:response.body#:schema"],
       "operationUids": ["op_ABC123"],
       "ownership": "generated",
-      "sha256": "..."
+      "sha256": "...",
+      "suiteType": "contract"
+    },
+    "brands/get-by-id/functional.spec.ts": {
+      "caseIds": ["ata:op_ABC123:functional:negative:request.path#/id:not-found"],
+      "operationUids": ["op_ABC123"],
+      "ownership": "generated",
+      "sha256": "...",
+      "suiteType": "functional"
     }
   },
   "generatorVersion": "0.2.0",
@@ -662,6 +995,7 @@ The manifest only references IDs; it does not duplicate the operation mapping.
 }
 ```
 
+- `suiteType` says which of the three files a test file is (`functional`, `contract`, `scenario`).
 - `ownership` is one of `generated`, `generated-modified`, `unknown`, `hand-written` (see [Generation manifest after a merge](#generation-manifest-after-a-merge)).
 - **Canonical file hash:** SHA-256 over UTF-8 content after normalizing line endings to LF. It is one shared function, used by generation, bootstrap, merge and `manifest validate`.
 - The manifest does not include its own hash. It is written **last**, only after every file was generated successfully.
@@ -671,7 +1005,7 @@ The manifest only references IDs; it does not duplicate the operation mapping.
 
 - The registry file (and the manifest) is UTF-8 with LF line endings, 2-space indentation and a trailing newline.
 - Keys of every object are sorted lexicographically. The only exception: CRUD `roles` keep the fixed order `create`, `read`, `update`, `delete`.
-- Arrays are sorted when their order carries no meaning.
+- Arrays are sorted when their order carries no meaning. Scenario `steps` keep their order: it is meaningful.
 - The writer always produces identical output for identical data.
 
 #### Retired entries (tombstones)
@@ -728,11 +1062,11 @@ Merged automatically:
 
 Never merged automatically:
 
-- one external ID pointing to different `operationUid`s;
+- one external ID pointing to different `operationUid`s, or one external scenario ID pointing to different `scenarioUid`s;
 - one `operationUid` pointing to different active endpoints;
-- one case ID with different `kind` / `location` / `rule`;
+- one case ID with different `suiteType` / `polarity` / `location` / `rule`;
 - an alias cycle;
-- one scenario role pointing to different operation UIDs;
+- competing changes to one scenario: its `steps` (order or content), `scenarioType`, `primaryOperationUid` or `roles`;
 - one branch retired an entry while the other changed it without an explicit rename mapping.
 
 These give `BLOCKED: CASE_REGISTRY_MERGE_CONFLICT` with the JSON Pointers of the conflicting entries.
@@ -761,10 +1095,15 @@ Validation has two levels: syntax without a spec, and semantics with a spec.
 - the JSON Schema and version of the registry;
 - canonical sorting and encoding;
 - the format of `operationUid`, `scenarioUid` and case IDs;
-- the vocabulary and `kind/location/rule` combinations;
-- case → operation/scenario references and CRUD role references;
-- uniqueness of active external IDs;
-- aliases and no cycles;
+- the vocabulary and `suiteType/polarity/location/rule` combinations;
+- case → operation/scenario references;
+- every scenario definition:
+  - at least two `steps`, each with an allowed `phase` (`setup`, `action`, `assertion`, `cleanup`) and an existing operation;
+  - `primaryOperationUid` present in `steps`;
+  - no `roles` on a `business` scenario;
+  - every non-null CRUD role present in `steps`;
+- uniqueness of active operation and scenario external IDs;
+- both alias maps (`externalIdAliases`, `externalScenarioIdAliases`) and no cycles;
 - tombstones and no reuse of retired IDs;
 - JSON Pointer syntax, including bare `*` vs. `%2A`.
 
@@ -852,7 +1191,7 @@ Hand-written tests and tests moved in by `adapt` have no case ID. They never get
 - The analyzer may infer probable coverage from API calls and assertions, but that is not a stable mapping between runs.
 - `adapt` offers a separate migration plan. It:
   1. shows the inferred mapping;
-  2. proposes a case ID;
+  2. proposes a case ID, including its suite type and polarity, and for multi-operation tests a scenario definition (`steps`, phases, primary);
   3. adds the annotation/marker only after confirmation;
   4. writes the confirmed ID to `cases.json`.
 
@@ -866,7 +1205,7 @@ Hand-written tests and tests moved in by `adapt` have no case ID. They never get
 
 There is no separate code for `BLOCKED`.
 
-- Every `BLOCKED` result is an analysis result, written to the report: `BASE_SPEC_MISSING`, `OASDIFF_UNSUPPORTED_CONSTRUCT`, `DUPLICATE_API_TEST_AGENT_ID`, `CASE_LOCATION_UNRESOLVED`, `CASE_REGISTRY_MERGE_CONFLICT`, `UNSUPPORTED_CASE_RULE_VOCABULARY`, a changed `x-api-test-agent-id` without an alias, an alias cycle. They give exit code 1 under the `blocked` policy, or 0 with `--fail-on never`.
+- Every `BLOCKED` result is an analysis result, written to the report: `BASE_SPEC_MISSING`, `OASDIFF_UNSUPPORTED_CONSTRUCT`, `DUPLICATE_API_TEST_AGENT_ID`, `DUPLICATE_EXTERNAL_SCENARIO_ID`, `STABLE_SCENARIO_ID_CHANGED`, `PRIMARY_OPERATION_REMOVED`, `CASE_LOCATION_UNRESOLVED`, `CASE_REGISTRY_MERGE_CONFLICT`, `UNSUPPORTED_CASE_RULE_VOCABULARY`, a changed `x-api-test-agent-id` without an alias, an alias cycle. They give exit code 1 under the `blocked` policy, or 0 with `--fail-on never`.
 - `registry validate` and `manifest validate` exit with 1 when they find an invalid entry (`INVALID_*`, `ACTIVE_OPERATION_NOT_FOUND`, a hash mismatch) and 0 otherwise.
 - Exit code 2 covers:
   - a missing `oasdiff` executable;
@@ -912,19 +1251,20 @@ The architecture is CI-agnostic; the CLI is the contract.
 ## Implementation order
 
 1. **Baseline + semantic diff** (first implementation PR, scope below).
-2. Stable `operationUid` and case IDs in generated suites:
+2. **Three-file suite layout in the generator** (a separate implementation PR): `functional.spec.ts` / `contract.spec.ts` / `scenarios.spec.ts` (Python: `test_functional.py` / `test_contract.py` / `test_scenarios.py`) replace `positive.spec.ts` / `negative.spec.ts`, using the [default mapping of checks](#test-suite-layout). No empty files.
+3. Stable `operationUid` and case IDs in generated suites:
    - `_support/cases.json` and the generation manifest;
    - `caseId` annotations and the `api_case_id` marker;
    - snapshot metadata;
-   - bootstrap for existing suites;
+   - bootstrap for existing suites, including the migration from the `positive` / `negative` layout;
    - `registry validate` (syntax; schema-aware with `--spec`, `--require-spec`), `registry merge` (`--git-index` and explicit files, optional `--spec`), `manifest validate`;
    - `externalIdAliases` with `--id-aliases` / `--apply-registry`;
-   - the case rule vocabulary v1 and case ID encoding/parsing.
-3. Change-to-test impact mapping (`plan`): dependency-graph traversal, `deps.json` validation, untracked tests.
-4. Base/child integration: `--apply-generated`, patch proposals, `tsc` / `pytest --collect-only` validation. Done **after PR #1 is merged**.
-5. GitHub Actions example, then Jenkinsfile; optional draft-PR integration; the `adapt` migration plan for untracked tests.
+   - the case rule vocabulary v1 and case ID encoding/parsing (six parts).
+4. Change-to-test impact mapping (`plan`): impact by suite type, `SuiteImpact` entries, dependency-graph traversal, `deps.json` validation, untracked tests.
+5. Base/child integration: `--apply-generated`, patch proposals, `tsc` / `pytest --collect-only` validation.
+6. GitHub Actions example, then Jenkinsfile; optional draft-PR integration; the `adapt` migration plan for untracked tests.
 
-The semantic diff does not depend on API-object names: `operationUid` is the stable entity, while `operationId` and the generated method name are mutable attributes. So steps 1–2 can proceed independently of PR #1.
+The semantic diff does not depend on API-object names: `operationUid` is the stable entity, while `operationId` and the generated method name are mutable attributes. So step 1 can proceed independently of PR #1. Steps 2–5 change the generator templates that PR #1 rewrote, so they start **after PR #1 is merged**.
 
 ### First implementation PR
 
@@ -936,7 +1276,7 @@ api-test-agent diff [--base <file-or-url>] --head <file-or-url> --out <dir> \
   [--allow-engine-version-mismatch]
 ```
 
-Without `--base`, the [baseline](#baseline) sources are tried in order. In this PR the snapshot source always yields `BASE_SPEC_MISSING`, because snapshot metadata arrives in step 2. Without a registry, `operationUid`s come from the deterministic hash, and `stable-id-changed` / `retired-operation-reappeared` are not emitted yet.
+Without `--base`, the [baseline](#baseline) sources are tried in order. In this PR the snapshot source always yields `BASE_SPEC_MISSING`, because snapshot metadata arrives in step 3. Without a registry, `operationUid`s come from the deterministic hash, and `stable-id-changed` / `retired-operation-reappeared` are not emitted yet.
 
 Includes:
 
@@ -960,7 +1300,7 @@ Includes:
 
 Excludes:
 
-- changing tests;
+- changing generated tests or their layout;
 - `plan` / test impact;
 - dependency-graph traversal;
 - `deps.json` updates;
@@ -968,4 +1308,5 @@ Excludes:
 - draft PRs;
 - CI workflows;
 - AI;
-- running API tests.
+- running API tests;
+- the three-file suite layout (step 2).
