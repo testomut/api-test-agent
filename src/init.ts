@@ -22,7 +22,7 @@ export interface InitResult {
 }
 
 const PKG_ROOT = fileURLToPath(new URL('../', import.meta.url)); // src/ or dist/ → package root
-const GITIGNORE_BLOCK = ['# api-test-agent', '.env', 'reports/', 'test-results/', 'playwright-report/', '__pycache__/', '.pytest_cache/'];
+const GITIGNORE_BLOCK = ['# api-test-agent', 'node_modules/', '.env', 'reports/', 'test-results/', 'playwright-report/', '__pycache__/', '.pytest_cache/'];
 
 export async function askAnswers(defaults: InitAnswers): Promise<InitAnswers> {
   const rl = createInterface({ input: process.stdin, output: process.stdout });

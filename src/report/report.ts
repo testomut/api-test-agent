@@ -52,7 +52,7 @@ export function buildReport(input: Omit<AuditReport, 'coverage' | 'operations' |
   const mismatch = exercised.filter((o) => contract(o).some((f) => f.status === 'CONTRACT_MISMATCH'));
   const functionalOps = operations.filter((o) => o.functional && o.functional.status !== 'BLOCKED');
   return {
-    tool: { name: 'api-test-agent', version: '0.1.0' },
+    tool: { name: 'api-test-agent', version: '0.1.1' },
     generatedAt: new Date().toISOString(),
     ...rest,
     operations,

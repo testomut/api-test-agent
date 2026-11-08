@@ -19,7 +19,7 @@ import { findSpec, run } from './run.js';
 import { applyPlan, buildPlan, gitState } from './adapt.js';
 import { analyzeProject } from './discover/analyze.js';
 
-const VERSION = '0.1.0';
+const VERSION = '0.1.1';
 const log = (m: string) => process.stderr.write(m + '\n');
 // .env in the current folder is loaded first; real environment variables win.
 const cfg = loadConfig(process.cwd());
@@ -64,7 +64,7 @@ async function load(location: string): Promise<{ spec: LoadedSpec; ops: Operatio
   log(`Loading ${location}`);
   const spec = await loadSpec(location);
   const ops = buildCatalog(spec.doc);
-  log(`  OpenAPI ${spec.version}, ${ops.length} operations, hash ${spec.hash}`);
+  log(`  OpenAPI ${spec.doc.openapi}, ${ops.length} operations, hash ${spec.hash}`);
   return { spec, ops };
 }
 
@@ -149,7 +149,7 @@ common(program.command('audit').description('analyse a spec (and, if allowed, a 
   const r = await runAudit(location, o);
   const report = buildReport({
     mode: 'audit',
-    spec: { location, title: r.spec.doc.info?.title, version: r.spec.version, hash: r.spec.hash, validationErrors: r.spec.validationErrors },
+    spec: { location, title: r.spec.doc.info?.title, version: String(r.spec.doc.openapi), hash: r.spec.hash, validationErrors: r.spec.validationErrors },
     target: { baseUrl: o.baseUrl, network: r.network, allowWrite: o.allowWrite },
     lint: { errors: r.lint.filter((p) => p.severity === 'error').length, warnings: r.lint.filter((p) => p.severity === 'warn').length, problems: r.lint },
     ops: r.ops,
@@ -185,7 +185,7 @@ common(program.command('generate').description('audit, then generate Playwright 
     }
     const report = buildReport({
       mode: 'generate',
-      spec: { location, title: r.spec.doc.info?.title, version: r.spec.version, hash: r.spec.hash, validationErrors: r.spec.validationErrors },
+      spec: { location, title: r.spec.doc.info?.title, version: String(r.spec.doc.openapi), hash: r.spec.hash, validationErrors: r.spec.validationErrors },
       target: { baseUrl: o.baseUrl, network: r.network || o.run, allowWrite: o.allowWrite },
       lint: { errors: r.lint.filter((p) => p.severity === 'error').length, warnings: r.lint.filter((p) => p.severity === 'warn').length, problems: r.lint },
       ops: r.ops,

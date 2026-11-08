@@ -91,8 +91,10 @@ export async function runSchemathesis(doc: OpenApiDoc, ops: Operation[], o: Sche
     const c = cases.get(op.key);
     if (!c) return { ...base, status: 'NOT_RUN', reason: 'Not executed by Schemathesis (time/budget limit or filtered).' };
     if (c.failure) {
-      const codes = [...new Set(c.failure.match(/ST\d{3}/g) ?? [])];
-      return { ...base, status: 'CONTRACT_MISMATCH', reason: `Schemathesis checks failed: ${codes.join(', ') || 'see details'}`, details: redact(truncate(c.failure, 1500)) };
+      // "- ST204 Wrong response to undeclared method" → "ST204 Wrong response to undeclared method"
+      const titled = [...new Set([...c.failure.matchAll(/^\s*-\s*(ST\d{3})\s+([^\n(]+)/gm)].map((m) => `${m[1]} ${m[2].trim()}`))];
+      const codes = titled.length ? titled : [...new Set(c.failure.match(/ST\d{3}/g) ?? [])];
+      return { ...base, status: 'CONTRACT_MISMATCH', reason: `Schemathesis checks failed: ${codes.join('; ') || 'see details'}`, details: redact(truncate(c.failure, 1500)) };
     }
     if (c.error) return { ...base, status: 'TEST_FAILURE', reason: 'Schemathesis could not exercise this operation.', details: redact(truncate(c.error, 800)) };
     if (missingAuth.has(op.key)) return { ...base, status: 'BLOCKED', reason: 'Every request was rejected as unauthorized: provide credentials.' };

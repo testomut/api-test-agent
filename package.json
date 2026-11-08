@@ -1,6 +1,6 @@
 {
   "name": "@testomut/api-test-agent",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "CLI that audits an OpenAPI spec against a test API, runs contract checks and generates reviewable Playwright API tests",
   "scripts": {
     "agent": "tsx src/cli.ts",
@@ -47,7 +47,8 @@
     "skills",
     "docs",
     "src/contract/contract.py",
-    "src/discover/pytest_analyzer.py"
+    "src/discover/pytest_analyzer.py",
+    "CHANGELOG.md"
   ],
   "keywords": [
     "openapi",

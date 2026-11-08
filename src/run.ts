@@ -97,7 +97,7 @@ export async function run(o: { root: string; out: string; probe: boolean; schema
       spec = await loadSpec(/^https?:/i.test(specRef) ? specRef : resolve(o.root, specRef));
       ops = buildCatalog(spec.doc);
       lint = await lintSpec(spec.location);
-      add('OpenAPI spec', spec.validationErrors.length ? 'warn' : 'ok', `${specRef}: OpenAPI ${spec.version}, ${ops.length} operations, lint ${lint.filter((p) => p.severity === 'error').length} errors / ${lint.filter((p) => p.severity === 'warn').length} warnings`);
+      add('OpenAPI spec', spec.validationErrors.length ? 'warn' : 'ok', `${specRef}: OpenAPI ${spec.doc.openapi}, ${ops.length} operations, lint ${lint.filter((p) => p.severity === 'error').length} errors / ${lint.filter((p) => p.severity === 'warn').length} warnings`);
     } catch (e: any) {
       add('OpenAPI spec', 'fail', `${specRef}: ${e?.message ?? e}`);
     }
