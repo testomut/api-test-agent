@@ -74,5 +74,9 @@
     "@playwright/test": {
       "optional": true
     }
+  },
+  "homepage": "https://github.com/testomut/api-test-agent#readme",
+  "bugs": {
+    "url": "https://github.com/testomut/api-test-agent/issues"
   }
 }
