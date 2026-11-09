@@ -3,6 +3,7 @@ import type { CrudChain } from '../generate/graph.js';
 import type { NegCase } from '../generate/negative.js';
 import { bodyPointer, caseId, location, scenarioUid, type CaseParts, type Phase, type ScenarioStep } from './ids.js';
 import type { ErrorPlan } from '../generate/error-cases.js';
+import type { ResolvedScenario } from '../scenarios/dsl.js';
 
 /**
  * Case IDs of the tests the generator writes for one operation (docs/OPENAPI_CHANGE_TRIGGER.md, "Stable IDs").
@@ -27,7 +28,7 @@ export interface SuiteCaseIds {
   /** `variants`: one case per documented query value, in the order of `AssignInput.queryVariants`. */
   functional: { success?: string; notFound?: string; unauthorized?: string; variants: string[]; invalidCredentials?: string; methodNotAllowed?: string; preconditionFailed?: string };
   contract: { success?: string; notFound?: string; unauthorized?: string; body: string[]; params: string[]; unsupportedMediaType?: string };
-  scenario: { createRead?: string; updateRead?: string; deleteGone?: string; conflict?: string };
+  scenario: { createRead?: string; updateRead?: string; deleteGone?: string; conflict?: string; deleteTwice?: string; business: string[] };
   /** Every case of this operation, by suite, with metadata for cases.json. */
   records: Record<'functional' | 'contract' | 'scenario', CaseRecord[]>;
   scenarios: Record<string, ScenarioDefinition>;
@@ -43,7 +44,9 @@ export interface AssignInput {
   paramCases: NegCase[];
   notFound?: { param: string };
   unauthorized: boolean;
-  scenarios: { createRead: boolean; updateRead: boolean; deleteGone: boolean; conflict?: boolean };
+  scenarios: { createRead: boolean; updateRead: boolean; deleteGone: boolean; conflict?: boolean; deleteTwice?: boolean };
+  /** Reviewed business scenarios whose primary step is this operation. */
+  business?: ResolvedScenario[];
   /** Documented error responses with a safe trigger (stage 6). */
   errors?: ErrorPlan;
   /** Documented query values the suite sends one by one (functional positive), each its own physical test. */
@@ -64,7 +67,7 @@ export function assignCaseIds(s: AssignInput, uidOf: (op: Operation) => string):
     return id;
   };
   const ok = successStatus(s.op);
-  const ids: SuiteCaseIds = { functional: { variants: [] }, contract: { body: [], params: [] }, scenario: {}, records, scenarios };
+  const ids: SuiteCaseIds = { functional: { variants: [] }, contract: { body: [], params: [] }, scenario: { business: [] }, records, scenarios };
   const rel = related.length ? { relatedOperationUids: related } : {};
 
   if (s.positive) {
@@ -128,9 +131,23 @@ export function assignCaseIds(s: AssignInput, uidOf: (op: Operation) => string):
       scenarios[sUid] = { scenarioType: 'business', primaryOperationUid: uid, steps };
       ids.scenario.conflict = add('scenario', { subjectUid: sUid, polarity: 'negative', location: location.lifecycle(), rule: 'business-rule' }, { relatedOperationUids: [...new Set(steps.map((x) => x.operationUid).filter((u) => u !== uid))] });
     }
+    if (s.scenarios.deleteTwice) {
+      // Deleting the same resource twice: the second delete gets the documented 404.
+      const steps = [...step(chain.create, 'setup'), ...step(s.op, 'action'), { operationUid: uid, phase: 'assertion' as Phase }];
+      const sUid = scenarioUid('crud', steps);
+      scenarios[sUid] = { scenarioType: 'crud', primaryOperationUid: uid, steps, roles: { create: chain.create ? uidOf(chain.create) : null, read: null, update: null, delete: uid } };
+      ids.scenario.deleteTwice = add('scenario', { subjectUid: sUid, polarity: 'negative', location: location.lifecycle(), rule: 'business-rule' }, { relatedOperationUids: [...new Set(steps.map((x) => x.operationUid).filter((u) => u !== uid))] });
+    }
     if (s.scenarios.createRead) ids.scenario.createRead = define([...step(chain.create, 'action'), ...step(chain.read, 'assertion'), ...step(chain.delete, 'cleanup')]);
     if (s.scenarios.updateRead) ids.scenario.updateRead = define([...step(chain.create, 'setup'), ...step(s.op, 'action'), ...step(chain.read, 'assertion'), ...step(chain.delete, 'cleanup')]);
     if (s.scenarios.deleteGone) ids.scenario.deleteGone = define([...step(chain.create, 'setup'), ...step(s.op, 'action'), ...step(chain.read, 'assertion')]);
+  }
+  // Reviewed business scenarios: identity from the external ID (never from the title or the steps).
+  for (const sc of s.business ?? []) {
+    const steps = sc.steps.map((st) => ({ operationUid: uidOf(st.op), phase: st.phase }));
+    const sUid = scenarioUid('business', steps, sc.id);
+    scenarios[sUid] = { scenarioType: 'business', primaryOperationUid: uidOf(sc.primaryOp), steps, externalId: sc.id };
+    ids.scenario.business.push(add('scenario', { subjectUid: sUid, polarity: sc.polarity, location: location.lifecycle(), rule: 'business-rule' }, { relatedOperationUids: [...new Set(steps.map((x) => x.operationUid).filter((u) => u !== uidOf(sc.primaryOp)))] }));
   }
   return ids;
 }

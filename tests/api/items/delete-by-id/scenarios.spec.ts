@@ -5,9 +5,22 @@
 // Each scenario: setup (create) → action (this operation) → assertion (read) → cleanup (delete).
 // Polarity is a tag: run one side with --grep @positive or --grep @negative.
 import { test, expect } from '../../_support/fixtures.js';
+import { expectStatus } from '../../_support/contract-assert.js';
 import * as resource from '../../_support/items.resource.js';
 
 test.describe('DELETE /items/{itemId} · scenarios', { tag: '@scenario' }, () => {
+  test('deleting the same resource again gets the documented 404', { tag: '@negative', annotation: { type: 'caseId', description: 'ata:scn_V2OYCQUW2VKW:scenario:negative:lifecycle:business-rule' } }, async ({ api }) => {
+    const { id } = await resource.create(api);
+    try {
+      const first = await api.items.deleteItem(id);
+      expect(first.status(), 'documented success status of deleteItem').toBe(204);
+      const res = await api.items.deleteItem(id);
+      expectStatus(res, ['404'], 'delete', '/items/{itemId}');
+    } finally {
+      await resource.remove(api, id);
+    }
+  });
+
   test('the deleted resource is no longer returned by getItem', { tag: '@positive', annotation: { type: 'caseId', description: 'ata:scn_4EG5AXFZY2YS:scenario:positive:lifecycle:crud' } }, async ({ api }) => {
     const { id } = await resource.create(api);
     try {

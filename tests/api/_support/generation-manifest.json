@@ -1,5 +1,5 @@
 {
-  "caseRegistryHash": "132c3ea625d3120236f76ce24950359b96d5a04047a9aa10b24fe127144680bd",
+  "caseRegistryHash": "8755eefa57796e2434f5acfd81f1d9dc5235dadac364c53a5928c95ea4e9604f",
   "files": {
     "_support/api/generated/AdminApiBase.ts": {
       "ownership": "generated",
@@ -39,7 +39,7 @@
     },
     "_support/contract-assert.ts": {
       "ownership": "generated",
-      "sha256": "78f7d10c5e3b5e16fc2589da1beaec473034391b3fca2ab20254b6992245729a"
+      "sha256": "3209352f79c89cb749fe9a640802f2dbf0429fa9d3b9f9faf375f307c87d0bf4"
     },
     "_support/contract.ts": {
       "ownership": "generated",
@@ -55,7 +55,7 @@
     },
     "_support/openapi.snapshot.meta.json": {
       "ownership": "generated",
-      "sha256": "dbc27d1b465c4c9fffd068d92bc28b15bde50e5f192ba77c9e6d8e8fe91c51bb"
+      "sha256": "c5b5b8d76c04ba62de4fc8ad968de49c06290fa5438da3ef05f405f534f5de32"
     },
     "_support/openapi.snapshot.ts": {
       "ownership": "generated",
@@ -111,6 +111,7 @@
     },
     "items/delete-by-id/scenarios.spec.ts": {
       "caseIds": [
+        "ata:scn_V2OYCQUW2VKW:scenario:negative:lifecycle:business-rule",
         "ata:scn_4EG5AXFZY2YS:scenario:positive:lifecycle:crud"
       ],
       "operationUids": [
@@ -119,7 +120,7 @@
         "op_7P2UH7UKQRHC"
       ],
       "ownership": "generated",
-      "sha256": "8174a9a3169561d39f2447242bb94b64ee05dbac34f71b0e7f212fe6836ad41c",
+      "sha256": "420d713c48f68e70aaeaaeaaa42b8055df861e3efa31382fe849dad6b41e9d01",
       "suiteType": "scenario"
     },
     "items/get-by-id/contract.spec.ts": {
@@ -149,6 +150,20 @@
       "ownership": "generated",
       "sha256": "2896edace4ecdb2a4980d912b9f3115ad1612169d902d2ea609947bd200b6af0",
       "suiteType": "functional"
+    },
+    "items/get-by-id/scenarios.spec.ts": {
+      "caseIds": [
+        "ata:scn_6I3KELJAMGYP:scenario:positive:lifecycle:business-rule",
+        "ata:scn_VQLGIE5JMTBU:scenario:negative:lifecycle:business-rule"
+      ],
+      "operationUids": [
+        "op_7P2UH7UKQRHC",
+        "op_UPN7JLUXYUZ7",
+        "op_EDRRXKOK26ZL"
+      ],
+      "ownership": "generated",
+      "sha256": "e236e4cd315de6dc77e56cded24124d057372b1021c70f3d30caa7c0f3e835de",
+      "suiteType": "scenario"
     },
     "items/get/contract.spec.ts": {
       "caseIds": [
@@ -356,7 +371,7 @@
   "schemaVersion": 1,
   "spec": {
     "hash": "d7b3b546ce170690",
-    "revision": "c0234b4bfb54752c38970fe2107b785bb796dc89",
+    "revision": "7f59010131f3bf9c27829bdc7e056c17a38dc803",
     "source": "demo-api/openapi.yaml"
   }
 }

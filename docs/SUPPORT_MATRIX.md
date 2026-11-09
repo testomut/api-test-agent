@@ -111,19 +111,22 @@ A case is generated only when the request that triggers the error is safe and th
 | 429 (rate limit) | ⛔ | `UNSAFE_LIVE_CHECK`: never exercised (opt-in with a request budget is not implemented) | 6 ✔ (gap) |
 | other documented 4xx | ⛔ | `UNREACHABLE_RESPONSE_STATUS` | 6 ✔ (gap) |
 
-## Scenarios (`scenarios.spec.ts`)
+## Scenarios (`scenarios.spec.ts`, `src/scenarios/dsl.ts`)
 
-| Flow | State | Stage |
-|---|---|---|
-| create → read | ✅ | |
-| create → update → read | ✅ (marked ASSUMPTION) | |
-| create → delete → read 404 | ✅ | |
-| create → list / search / filter | ❌ | 8 |
-| create → duplicate create → 409 | ✅ (deps `conflictOn`) | 6 ✔ |
-| repeated delete, update / delete unknown | ❌ | 8 |
-| login / refresh → authorized request | ❌ | 8 |
-| parent → child, state transitions, idempotency key, bounded polling | ⛔ | need the reviewed scenario file | 8 |
-| business scenario config with schema validation | ❌ | 8 |
+CRUD flows come from confirmed dependencies (OpenAPI links or the deps file). Business flows are never guessed from paths: they come from a reviewed scenarios file (`--scenarios`, JSON Schema `schemas/scenarios.schema.json`, `scenarios validate --spec`): steps in order with phases, parameters and bodies with `{var}` values saved by earlier steps, the documented status each step must get, and cleanup steps run in `finally` (failures reported). The case ID comes from the scenario's external `id`, never from the title.
+
+| Flow | State | Source / limits | Stage |
+|---|---|---|---|
+| create → read | ✅ | confirmed chain | |
+| create → update → read | ✅ | confirmed chain; marked ASSUMPTION | |
+| create → delete → read 404 | ✅ | confirmed chain | |
+| delete → repeated delete → 404 | ✅ | confirmed chain, delete documents 404 | 8 ✔ |
+| create → duplicate create → 409 | ✅ | deps `conflictOn` | 6 ✔ |
+| update / delete unknown resource → 404 | ✅ | functional `not-found` cases | |
+| business flows (login → request, parent → child, state transitions, negative transitions, idempotency key, …) | ✅ | reviewed scenarios file; strict validation: operations exist, parameters exist, every non-cleanup step names a documented status, every `{var}` is saved earlier, a writing scenario has cleanup, the primary is an action, IDs unique | 8 ✔ |
+| create → list / search / filter, pagination, sort | 🟡 | as a reviewed business scenario; no automatic derivation (list fields and filters are not in the spec) | 8 ✔ |
+| eventual consistency with bounded polling | ❌ | the scenario DSL has no retry / polling step yet | |
+| refresh token → request | 🟡 | as a reviewed scenario with explicit steps | 8 ✔ |
 
 ## Valid data (`src/generate/sample.ts`)
 

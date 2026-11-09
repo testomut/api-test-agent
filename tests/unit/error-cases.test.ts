@@ -62,7 +62,7 @@ describe('stage 6: documented error responses', () => {
       `ata:${post}:contract:negative:request.content-type:content-type`,
       `ata:${put}:contract:negative:request.content-type:content-type`,
     ]) expect(ts.reg.cases[id], id).toBeDefined();
-    const conflict = Object.entries<any>(ts.reg.cases).find(([id, c]) => c.rule === 'business-rule' && c.polarity === 'negative');
+    const conflict = Object.entries<any>(ts.reg.cases).find(([, c]) => c.rule === 'business-rule' && c.polarity === 'negative' && ts.reg.scenarios[c.subjectUid]?.scenarioType === 'business');
     expect(conflict, 'conflict scenario').toBeDefined();
     expect(ts.reg.scenarios[conflict![1].subjectUid]).toMatchObject({ scenarioType: 'business', primaryOperationUid: post });
     const active = (reg: any) => Object.keys(reg.cases).filter((k) => !reg.cases[k].status).sort();

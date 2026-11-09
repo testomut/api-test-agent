@@ -1,0 +1,27 @@
+{
+  "scenarios": [
+    {
+      "id": "items.read-created",
+      "title": "an item that was just created can be read by its id",
+      "polarity": "positive",
+      "primary": "read",
+      "steps": [
+        { "name": "create", "operationId": "createItem", "phase": "setup", "body": { "name": "Scenario item", "price": 5, "tags": ["scenario"] }, "expect": "201", "save": { "itemId": "/id" } },
+        { "name": "read", "operationId": "getItem", "phase": "action", "params": { "itemId": "{itemId}" }, "expect": "200" },
+        { "operationId": "deleteItem", "phase": "cleanup", "params": { "itemId": "{itemId}" } }
+      ]
+    },
+    {
+      "id": "items.gone-after-delete",
+      "title": "an item that was deleted cannot be read any more",
+      "polarity": "negative",
+      "primary": "read",
+      "steps": [
+        { "name": "create", "operationId": "createItem", "phase": "setup", "body": { "name": "Scenario item", "price": 5 }, "expect": "201", "save": { "itemId": "/id" } },
+        { "name": "delete", "operationId": "deleteItem", "phase": "setup", "params": { "itemId": "{itemId}" }, "expect": "204" },
+        { "name": "read", "operationId": "getItem", "phase": "action", "params": { "itemId": "{itemId}" }, "expect": "404" },
+        { "operationId": "deleteItem", "phase": "cleanup", "params": { "itemId": "{itemId}" } }
+      ]
+    }
+  ]
+}

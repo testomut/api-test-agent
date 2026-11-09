@@ -1,5 +1,7 @@
 import type { Operation } from '../types.js';
 import { requiredRequest } from './param-cases.js';
+import { varsIn, type ResolvedScenario, type ResolvedStep } from '../scenarios/dsl.js';
+import type { CrudChain } from './graph.js';
 import { hasFill, queryVariants, roleOf, scenarioCases, uniqueNote, type ChainPlan, type Meta, type SuiteInput, type SuiteType } from './templates.js';
 
 /**
@@ -359,7 +361,7 @@ function pyHeader(suite: SuiteType, s: SuiteInput, meta: Meta, extra: string[]):
   const lines = [...extra];
   if (s.plan) lines.unshift(`Preconditions and cleanup: ${s.plan.chain.source}`);
   lines.push('Polarity is a marker: run one side with -m positive or -m negative.');
-  return [header(suite, s.op, meta, lines), 'import json  # noqa: F401', 'import uuid  # noqa: F401', 'from urllib.parse import quote  # noqa: F401', '', 'import pytest', '', 'from contract import read_pointer  # noqa: F401', '', `pytestmark = pytest.mark.${suite}`, '', ''];
+  return [header(suite, s.op, meta, lines), 'import json  # noqa: F401', 'import uuid  # noqa: F401', 'from urllib.parse import quote  # noqa: F401', '', 'import pytest', '', 'from contract import fill_vars, read_pointer, report_cleanup_failure  # noqa: F401', '', `pytestmark = pytest.mark.${suite}`, '', ''];
 }
 
 /** The successful call with its precondition (fixtures) and cleanup; `assert` returns the assertion lines. */
@@ -491,6 +493,66 @@ function pyErrorTests(s: SuiteInput): string[] {
   return L;
 }
 
+/** A reviewed business scenario: steps in order, saved values, expected statuses; cleanup steps in finally. */
+function pyBusinessTest(s: SuiteInput, sc: ResolvedScenario, id?: string): string[] {
+  const L: string[] = [withId(sc.polarity === 'positive' ? POS : NEG, id), `def test_${pyName(sc.id)}(api):`, `    """${sc.title.replace(/"/g, "'")}"""`, '    saved = {}'];
+  const callOf = (st: ResolvedStep) => {
+    // Concatenation, not an f-string: the values are string literals, which an f-string expression cannot
+    // hold with escapes before Python 3.12.
+    const parts = st.op.path.replace(/^\//, '').split(/(\{[^}]+\})/).filter((x) => x !== '');
+    const p = parts
+      .map((part) => {
+        const m = part.match(/^\{(.+)\}$/);
+        if (!m) return str(part);
+        const given = st.params?.[m[1]];
+        const known = st.op.params.find((x) => x.in === 'path' && x.name === m[1])?.knownValue;
+        return `quote(str(${given !== undefined ? `fill_vars(${pyLit(given)}, saved)` : str(String(known))}), safe='')`;
+      })
+      .join(' + ');
+    const req = requiredRequest(st.op);
+    const query = Object.fromEntries(Object.entries(st.params ?? {}).filter(([k]) => st.op.params.some((x) => x.in === 'query' && x.name === k)));
+    const args = [
+      Object.keys(query).length || Object.keys(req.params).length ? `params={**${pyLit(req.params)}, **fill_vars(${pyLit(query)}, saved)}` : '',
+      st.body !== undefined ? `json=fill_vars(${pyLit(st.body)}, saved)` : '',
+      Object.keys(req.headers).length ? `headers=${pyLit(req.headers)}` : '',
+    ].filter(Boolean);
+    return `api.${st.op.method}(${p}${args.length ? ', ' + args.join(', ') : ''})`;
+  };
+  const main = sc.steps.filter((st) => st.phase !== 'cleanup');
+  const cleanup = sc.steps.filter((st) => st.phase === 'cleanup');
+  L.push('    try:');
+  main.forEach((st, j) => {
+    L.push(`        # ${st.phase}${st.name ? ` ${st.name}` : ''}: ${st.op.key}`, `        res${j} = ${callOf(st)}`);
+    if (st.expect) {
+      const e = String(st.expect).toUpperCase();
+      const cond = /^\dXX$/.test(e) ? `str(res${j}.status_code)[0] == "${e[0]}"` : `res${j}.status_code == ${e}`;
+      L.push(`        assert ${cond}, f"CONTRACT_MISMATCH ${st.op.method.toUpperCase()} ${st.op.path.replace(/[{}]/g, (c) => c + c)}: expected ${e}, got {res${j}.status_code}"`);
+    }
+    if (Object.keys(st.save ?? {}).length) {
+      L.push(`        body${j} = res${j}.json() if res${j}.content else None`);
+      for (const [name, ptr] of Object.entries(st.save ?? {})) L.push(`        saved[${str(name)}] = read_pointer(body${j}, ${str(ptr)})`);
+    }
+  });
+  if (!main.length) L.push('        pass');
+  L.push('    finally:');
+  if (!cleanup.length) L.push('        pass');
+  cleanup.forEach((st, j) => {
+    const needs = varsIn([st.params, st.body]);
+    const guard = needs.length ? needs.map((v) => `saved.get(${str(v)}) is not None`).join(' and ') : 'True';
+    L.push(
+      `        if ${guard}:`,
+      '            try:',
+      `                clean${j} = ${callOf(st)}`,
+      '            except Exception:  # noqa: BLE001 - cleanup must not hide the real failure',
+      `                clean${j} = None`,
+      `            if clean${j} is None or (not clean${j}.ok and clean${j}.status_code != 404):`,
+      `                report_cleanup_failure(${str(st.op.key)}, str(${needs.length ? `saved.get(${str(needs[0])})` : '""'}), clean${j}.status_code if clean${j} is not None else "no response")`,
+    );
+  });
+  L.push('', '');
+  return L;
+}
+
 /** test_contract.py: responses match OpenAPI; invalid requests are rejected as documented. */
 export function renderPyContract(s: SuiteInput, meta: Meta): string {
   const { op, plan } = s;
@@ -550,14 +612,31 @@ export function renderPyContract(s: SuiteInput, meta: Meta): string {
 /** test_scenarios.py: multi-request flows whose primary (action under test) is this operation. */
 export function renderPyScenarios(s: SuiteInput, meta: Meta): string {
   const { op, plan } = s;
-  const chain = plan!.chain;
-  const r = chain.read!;
-  const res = resourceModule(plan!).replace(/_resource$/, '');
+  // CRUD flows need the confirmed chain; reviewed business scenarios (--scenarios) do not.
+  const chain = plan?.chain as CrudChain;
+  const r = chain?.read as Operation;
+  const res = plan ? resourceModule(plan).replace(/_resource$/, '') : '';
   const sc = scenarioCases(s);
-  const extra = ['Each scenario: setup (create) → action (this operation) → assertion (read) → cleanup (delete).'];
+  const business = s.business ?? [];
+  const extra = plan ? ['Each scenario: setup (create) → action (this operation) → assertion (read) → cleanup (delete).'] : [];
+  if (business.length) extra.push('Business scenarios come from the reviewed scenarios file: steps, expected statuses and cleanup as written there.');
   if (sc.updateRead) extra.push(`ASSUMPTION (not in spec, reviewer must confirm): ${plan!.assumptions.find((a) => a.startsWith('after')) ?? 'read after update returns the new values'}`);
   const L = pyHeader('scenario', s, meta, extra);
   const id = `created_${res}`;
+  if (sc.deleteTwice) {
+    // A repeated delete of the same resource gets the documented 404.
+    L.push(
+      withId(NEG, s.ids?.scenario.deleteTwice),
+      `def test_deleting_the_same_resource_again_gets_404(api, ${id}):`,
+      `    first = api.${op.method}(${pathExpr(op, chain.param, id)}${pyRequired(op)})`,
+      `    ${assertSuccess(op, 'first')}`,
+      `    res = api.${op.method}(${pathExpr(op, chain.param, id)}${pyRequired(op)})`,
+      `    ${statusIs(op, '404')}`,
+      '',
+      '',
+    );
+  }
+  business.forEach((b, n) => L.push(...pyBusinessTest(s, b, s.ids?.scenario.business[n])));
   if (sc.conflict) {
     // 409 on the fields a reviewed deps file names: the same payload twice. Both records are removed.
     L.push(

@@ -71,6 +71,22 @@ def _nullable(node: Any) -> Any:
     return out
 
 
+def fill_vars(value: Any, saved: dict) -> Any:
+    """Scenario values: "{name}" alone is replaced by the saved value itself, inside a longer string by its text."""
+    import re
+
+    if isinstance(value, str):
+        whole = re.fullmatch(r"\{([A-Za-z_]\w*)\}", value)
+        if whole:
+            return saved.get(whole.group(1))
+        return re.sub(r"\{([A-Za-z_]\w*)\}", lambda m: str(saved.get(m.group(1))), value)
+    if isinstance(value, list):
+        return [fill_vars(v, saved) for v in value]
+    if isinstance(value, dict):
+        return {k: fill_vars(v, saved) for k, v in value.items()}
+    return value
+
+
 def read_pointer(body: Any, pointer: str) -> Any:
     node = body
     for raw in pointer.split("/")[1:]:

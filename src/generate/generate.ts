@@ -15,6 +15,7 @@ import { isUrl } from '../change/network.js';
 import { bodyCasesDetailed, compositionGaps, type CoverageGap } from './body-cases.js';
 import { paramCasesDetailed, sendable } from './param-cases.js';
 import { errorPlan } from './error-cases.js';
+import type { ResolvedScenario } from '../scenarios/dsl.js';
 import { bodyCases, documentedRejections, nonexistentIdExpr, type NegCase } from './negative.js';
 import { CONTRACT_ASSERT, SUITE_TYPES, TS_FILES, operationFolder, queryVariants, renderContract, renderFunctional, renderResourceHelpers, renderScenarios, scenarioCases, suiteCounts, type ChainPlan, type Meta, type SuiteInput, type SuiteType } from './templates.js';
 import { API_BASE, buildApiIndex, renderApiBaseClass, renderApiChildClass, renderApis } from './api-objects.js';
@@ -37,6 +38,8 @@ export interface GenerateOptions {
   lang?: TestLang; // default typescript
   /** Body negative cases per operation (default 60); the rest is reported as CASE_LIMIT_REACHED. */
   maxCases?: number;
+  /** Reviewed business scenarios (validated with validateScenarios against the same operations). */
+  scenarios?: ResolvedScenario[];
 }
 
 export interface Scenario {
@@ -318,10 +321,10 @@ export async function generate(spec: LoadedSpec, ops: Operation[], o: GenerateOp
     const firstWith405 = op.responses.some((r) => r.status === '405') && !paths405.has(op.path);
     if (firstWith405) paths405.add(op.path);
     const errors = op.deprecated ? { gaps: [] } : errorPlan({ doc: spec.doc, op, ops, chain: plan?.chain, role: errRole, hasUpdatePayload: plan?.updatePayload !== undefined, reachable, firstWith405 });
-    const input: SuiteInput = { op, refs, plan, helpers, positive: !posReason, validation: rej.validation, bodyCases: bCases, paramCases: qCases, notFound, unauthorized, errors };
+    const input: SuiteInput = { op, refs, plan, helpers, positive: !posReason, validation: rej.validation, bodyCases: bCases, paramCases: qCases, notFound, unauthorized, errors, business: (o.scenarios ?? []).filter((b) => b.primaryOp === op) };
     const counts = suiteCounts(input);
     const variants = input.positive && !plan && op.method === 'get' ? queryVariants(op) : [];
-    const ids = assignCaseIds({ op, chain: plan?.chain, positive: input.positive, bodyCases: bCases, paramCases: qCases, notFound, unauthorized, scenarios: scenarioCases(input), queryVariants: variants, errors }, uidOf);
+    const ids = assignCaseIds({ op, chain: plan?.chain, positive: input.positive, bodyCases: bCases, paramCases: qCases, notFound, unauthorized, scenarios: scenarioCases(input), queryVariants: variants, errors, business: input.business }, uidOf);
     input.ids = ids;
     // Explicit per-operation coverage and gaps, independent of test execution status.
     // oneOf / anyOf in a payload that is sent: the other branches are reported (never dropped silently).

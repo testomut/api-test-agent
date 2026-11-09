@@ -5,6 +5,7 @@ import { apiCall, type ApiRef } from './api-objects.js';
 import type { SuiteCaseIds } from '../cases/assign.js';
 import { requiredRequest, type ParamRequest } from './param-cases.js';
 import type { ErrorPlan } from './error-cases.js';
+import { varsIn, type ResolvedScenario, type ResolvedStep } from '../scenarios/dsl.js';
 import { boundaryValues } from './boundaries.js';
 
 /** Payloads and assumptions for one confirmed resource chain. */
@@ -225,6 +226,8 @@ export interface SuiteInput {
   ids?: SuiteCaseIds;
   /** Documented error responses with a safe trigger (stage 6). */
   errors?: ErrorPlan;
+  /** Reviewed business scenarios whose primary step is this operation (stage 8). */
+  business?: ResolvedScenario[];
 }
 
 export type Role = 'create' | 'read' | 'update' | 'delete';
@@ -236,10 +239,11 @@ export function roleOf(op: Operation, plan?: ChainPlan): Role | undefined {
 }
 
 /** Multi-request scenarios whose primary operation is `op` (the action under test, never the setup step). */
-export function scenarioCases(s: Pick<SuiteInput, 'op' | 'plan' | 'positive' | 'errors'>): { createRead: boolean; updateRead: boolean; deleteGone: boolean; conflict: boolean } {
+export function scenarioCases(s: Pick<SuiteInput, 'op' | 'plan' | 'positive' | 'errors'>): { createRead: boolean; updateRead: boolean; deleteGone: boolean; conflict: boolean; deleteTwice: boolean } {
   const role = roleOf(s.op, s.plan);
   const read = s.plan?.chain.read;
   return {
+    deleteTwice: s.positive && role === 'delete' && s.op.responses.some((r) => r.status === '404'),
     conflict: s.positive && role === 'create' && !!s.errors?.conflict,
     createRead: s.positive && role === 'create' && !!read,
     updateRead: s.positive && role === 'update' && !!read && s.plan!.updatePayload !== undefined,
@@ -255,7 +259,7 @@ export function suiteCounts(s: SuiteInput): Record<SuiteType, number> {
   return {
     functional: (s.positive ? 1 : 0) + extra + (s.positive && !s.plan ? queryVariants(s.op).length : 0) + (e?.invalidCredentials ? 1 : 0) + (e?.methodNotAllowed ? 1 : 0) + (e?.preconditionFailed && s.plan ? 1 : 0),
     contract: (s.positive ? 1 : 0) + extra + s.bodyCases.length + s.paramCases.length + (e?.unsupportedMediaType && s.plan ? 1 : 0),
-    scenario: (sc.createRead ? 1 : 0) + (sc.updateRead ? 1 : 0) + (sc.deleteGone ? 1 : 0) + (sc.conflict ? 1 : 0),
+    scenario: (sc.createRead ? 1 : 0) + (sc.updateRead ? 1 : 0) + (sc.deleteGone ? 1 : 0) + (sc.conflict ? 1 : 0) + (sc.deleteTwice ? 1 : 0) + (s.business?.length ?? 0),
   };
 }
 
@@ -405,6 +409,53 @@ export function renderFunctional(s: SuiteInput, meta: Meta): string {
   return close(L);
 }
 
+/** A reviewed business scenario: its steps in order, saved values, expected statuses; cleanup steps in finally. */
+function businessTest(s: SuiteInput, sc: ResolvedScenario, id?: string): string[] {
+  const L: string[] = [];
+  const pol = sc.polarity;
+  L.push(`  test(${q(sc.title)}, ${testOptions(pol, id)}, async ({ api }) => {`, `    const vars: Record<string, unknown> = {};`);
+  const callOf = (st: ResolvedStep, v: string, indent: string) => {
+    const ref = s.refs.get(st.op)!;
+    const req = requiredRequest(st.op);
+    const args = ref.pathParams.map((name) => {
+      const given = st.params?.[name];
+      if (given !== undefined) return `String(fillVars(${JSON.stringify(given)}, vars))`;
+      return q(String(st.op.params.find((x) => x.in === 'path' && x.name === name)?.knownValue));
+    });
+    const query = Object.fromEntries(Object.entries(st.params ?? {}).filter(([k]) => st.op.params.some((x) => x.in === 'query' && x.name === k)));
+    const opts = [
+      Object.keys(query).length || Object.keys(req.params).length ? `params: { ...${JSON.stringify(req.params)}, ...fillVars(${JSON.stringify(query)}, vars) }` : '',
+      Object.keys(req.headers).length ? `headers: ${JSON.stringify(req.headers)}` : '',
+      st.body !== undefined ? `data: fillVars(${JSON.stringify(st.body)}, vars)` : '',
+    ].filter(Boolean);
+    return `${indent}const ${v} = await ${apiCall(ref, 'api', args, opts.length ? `{ ${opts.join(', ')} }` : undefined)};`;
+  };
+  const main = sc.steps.filter((st) => st.phase !== 'cleanup');
+  const cleanup = sc.steps.filter((st) => st.phase === 'cleanup');
+  L.push(`    try {`);
+  main.forEach((st, j) => {
+    L.push(`      // ${st.phase}${st.name ? ` ${st.name}` : ''}: ${st.op.key}`, callOf(st, `res${j}`, '      '));
+    if (st.expect) L.push(`      expectStatus(res${j}, [${q(String(st.expect))}], '${st.op.method}', ${q(st.op.path)});`);
+    if (Object.keys(st.save ?? {}).length) {
+      L.push(`      const body${j} = await res${j}.json().catch(() => undefined);`);
+      for (const [name, ptr] of Object.entries(st.save ?? {})) L.push(`      vars[${q(name)}] = readPointer(body${j}, ${q(ptr)});`);
+    }
+  });
+  L.push(`    } finally {`);
+  cleanup.forEach((st, j) => {
+    const needs = varsIn([st.params, st.body]);
+    const guard = needs.length ? needs.map((v) => `vars[${q(v)}] !== undefined`).join(' && ') : 'true';
+    L.push(
+      `      if (${guard}) {`,
+      callOf(st, `clean${j}`, '        ').replace(/;$/, '.catch(() => undefined);'),
+      `        if (!clean${j} || (!clean${j}.ok() && clean${j}.status() !== 404)) reportCleanupFailure(${q(st.op.key)}, String(${needs.length ? `vars[${q(needs[0])}]` : "''"}), clean${j} ? clean${j}.status() : 'no response');`,
+      `      }`,
+    );
+  });
+  L.push(`    }`, `  });`, '');
+  return L;
+}
+
 /** Documented error responses with a safe trigger (stage 6): invalid credentials, 405, 412. */
 function errorTests(s: SuiteInput): string[] {
   const { op, plan } = s;
@@ -533,17 +584,38 @@ export function renderContract(s: SuiteInput, meta: Meta): string {
 /** scenarios.spec.ts: multi-request flows whose primary (action under test) is this operation. */
 export function renderScenarios(s: SuiteInput, meta: Meta): string {
   const { op, refs, plan } = s;
-  const chain = plan!.chain;
-  const r = chain.read!;
+  // CRUD flows need the confirmed chain; reviewed business scenarios (--scenarios) do not.
+  const chain = plan?.chain as CrudChain;
+  const r = chain?.read as Operation;
+  const business = s.business ?? [];
   const sc = scenarioCases(s);
   const call = (o: Operation, options?: string) => {
     const ref = refs.get(o)!;
     return apiCall(ref, 'api', pathArgs(o, ref, chain.param, 'id'), options);
   };
-  const extra = ['Each scenario: setup (create) → action (this operation) → assertion (read) → cleanup (delete).'];
+  const extra = plan ? ['Each scenario: setup (create) → action (this operation) → assertion (read) → cleanup (delete).'] : [];
+  if (business.length) extra.push('Business scenarios come from the reviewed scenarios file: steps, expected statuses and cleanup as written there.');
   if (sc.updateRead) extra.push(`ASSUMPTION (not in spec, reviewer must confirm): ${plan!.assumptions.find((a) => a.startsWith('after')) ?? 'read after update returns the new values'}`);
   const L = suiteHeader('scenario', s, meta, extra);
-  L.push(...imports(s, ['expect', ...(sc.createRead ? ['readPointer'] : []), ...(sc.conflict ? ['expectStatus'] : [])], true, false), '', `test.describe('${op.key} · scenarios', { tag: '@scenario' }, () => {`);
+  const names = ['expect', ...(sc.createRead || business.length ? ['readPointer'] : []), ...(sc.conflict || sc.deleteTwice || business.length ? ['expectStatus'] : []), ...(business.length ? ['fillVars', 'reportCleanupFailure'] : [])];
+  L.push(...imports(s, names, !!plan, false), '', `test.describe('${op.key} · scenarios', { tag: '@scenario' }, () => {`);
+  if (sc.deleteTwice) {
+    // A repeated delete of the same resource gets the documented 404.
+    L.push(
+      `  test('deleting the same resource again gets the documented 404', ${testOptions('negative', s.ids?.scenario.deleteTwice)}, async ({ api }) => {`,
+      `    const { id } = await resource.create(api);`,
+      `    try {`,
+      `      const first = await ${call(op, optionsWith(op))};`,
+      `      ${expectSuccess(op, 'first')}`,
+      `      const res = await ${call(op, optionsWith(op))};`,
+      `      expectStatus(res, ['404'], '${op.method}', ${q(op.path)});`,
+      `    } finally {`,
+      `      await resource.remove(api, id);`,
+      `    }`,
+      `  });`,
+      '',
+    );
+  }
   if (sc.conflict) {
     // 409 on the fields a reviewed deps file names: the same payload twice. Both records are removed.
     const fields = s.errors!.conflict!.fields;
@@ -617,6 +689,7 @@ export function renderScenarios(s: SuiteInput, meta: Meta): string {
       '',
     );
   }
+  L.push(...business.flatMap((sc2, n) => businessTest(s, sc2, s.ids?.scenario.business[n])));
   return close(L);
 }
 
@@ -683,6 +756,21 @@ export function expectStatus(res: APIResponse, documented: string[], method: str
 export async function expectRejected(res: APIResponse, documented: string[], method: string, path: string): Promise<unknown> {
   expectStatus(res, documented, method, path);
   return expectContract(res, method, path);
+}
+
+/** Scenario values: "{name}" alone is replaced by the saved value itself, inside a longer string by its text. */
+export function fillVars<T>(value: T, vars: Record<string, unknown>): T {
+  const sub = (v: any): any => {
+    if (typeof v === 'string') {
+      const whole = v.match(/^\\{([A-Za-z_]\\w*)\\}$/);
+      if (whole) return vars[whole[1]];
+      return v.replace(/\\{([A-Za-z_]\\w*)\\}/g, (_: string, k: string) => String(vars[k]));
+    }
+    if (Array.isArray(v)) return v.map(sub);
+    if (v && typeof v === 'object') return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, sub(x)]));
+    return v;
+  };
+  return sub(value);
 }
 
 export function readPointer(body: unknown, pointer: string): unknown {

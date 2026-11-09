@@ -55,6 +55,21 @@ export async function expectRejected(res: APIResponse, documented: string[], met
   return expectContract(res, method, path);
 }
 
+/** Scenario values: "{name}" alone is replaced by the saved value itself, inside a longer string by its text. */
+export function fillVars<T>(value: T, vars: Record<string, unknown>): T {
+  const sub = (v: any): any => {
+    if (typeof v === 'string') {
+      const whole = v.match(/^\{([A-Za-z_]\w*)\}$/);
+      if (whole) return vars[whole[1]];
+      return v.replace(/\{([A-Za-z_]\w*)\}/g, (_: string, k: string) => String(vars[k]));
+    }
+    if (Array.isArray(v)) return v.map(sub);
+    if (v && typeof v === 'object') return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, sub(x)]));
+    return v;
+  };
+  return sub(value);
+}
+
 export function readPointer(body: unknown, pointer: string): unknown {
   return pointer
     .split('/')

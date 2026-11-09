@@ -504,6 +504,17 @@
       "subjectUid": "scn_4EG5AXFZY2YS",
       "suiteType": "scenario"
     },
+    "ata:scn_6I3KELJAMGYP:scenario:positive:lifecycle:business-rule": {
+      "location": "lifecycle",
+      "polarity": "positive",
+      "relatedOperationUids": [
+        "op_EDRRXKOK26ZL",
+        "op_UPN7JLUXYUZ7"
+      ],
+      "rule": "business-rule",
+      "subjectUid": "scn_6I3KELJAMGYP",
+      "suiteType": "scenario"
+    },
     "ata:scn_7MN4FYBHZCZQ:scenario:positive:lifecycle:crud": {
       "location": "lifecycle",
       "polarity": "positive",
@@ -525,6 +536,27 @@
       ],
       "rule": "crud",
       "subjectUid": "scn_I6MIGZS3ULNR",
+      "suiteType": "scenario"
+    },
+    "ata:scn_V2OYCQUW2VKW:scenario:negative:lifecycle:business-rule": {
+      "location": "lifecycle",
+      "polarity": "negative",
+      "relatedOperationUids": [
+        "op_UPN7JLUXYUZ7"
+      ],
+      "rule": "business-rule",
+      "subjectUid": "scn_V2OYCQUW2VKW",
+      "suiteType": "scenario"
+    },
+    "ata:scn_VQLGIE5JMTBU:scenario:negative:lifecycle:business-rule": {
+      "location": "lifecycle",
+      "polarity": "negative",
+      "relatedOperationUids": [
+        "op_EDRRXKOK26ZL",
+        "op_UPN7JLUXYUZ7"
+      ],
+      "rule": "business-rule",
+      "subjectUid": "scn_VQLGIE5JMTBU",
       "suiteType": "scenario"
     }
   },
@@ -623,6 +655,25 @@
         }
       ]
     },
+    "scn_6I3KELJAMGYP": {
+      "externalId": "items.read-created",
+      "primaryOperationUid": "op_7P2UH7UKQRHC",
+      "scenarioType": "business",
+      "steps": [
+        {
+          "operationUid": "op_UPN7JLUXYUZ7",
+          "phase": "setup"
+        },
+        {
+          "operationUid": "op_7P2UH7UKQRHC",
+          "phase": "action"
+        },
+        {
+          "operationUid": "op_EDRRXKOK26ZL",
+          "phase": "cleanup"
+        }
+      ]
+    },
     "scn_7MN4FYBHZCZQ": {
       "primaryOperationUid": "op_UPN7JLUXYUZ7",
       "roles": {
@@ -668,6 +719,53 @@
         {
           "operationUid": "op_7P2UH7UKQRHC",
           "phase": "assertion"
+        },
+        {
+          "operationUid": "op_EDRRXKOK26ZL",
+          "phase": "cleanup"
+        }
+      ]
+    },
+    "scn_V2OYCQUW2VKW": {
+      "primaryOperationUid": "op_EDRRXKOK26ZL",
+      "roles": {
+        "create": "op_UPN7JLUXYUZ7",
+        "read": null,
+        "update": null,
+        "delete": "op_EDRRXKOK26ZL"
+      },
+      "scenarioType": "crud",
+      "steps": [
+        {
+          "operationUid": "op_UPN7JLUXYUZ7",
+          "phase": "setup"
+        },
+        {
+          "operationUid": "op_EDRRXKOK26ZL",
+          "phase": "action"
+        },
+        {
+          "operationUid": "op_EDRRXKOK26ZL",
+          "phase": "assertion"
+        }
+      ]
+    },
+    "scn_VQLGIE5JMTBU": {
+      "externalId": "items.gone-after-delete",
+      "primaryOperationUid": "op_7P2UH7UKQRHC",
+      "scenarioType": "business",
+      "steps": [
+        {
+          "operationUid": "op_UPN7JLUXYUZ7",
+          "phase": "setup"
+        },
+        {
+          "operationUid": "op_EDRRXKOK26ZL",
+          "phase": "setup"
+        },
+        {
+          "operationUid": "op_7P2UH7UKQRHC",
+          "phase": "action"
         },
         {
           "operationUid": "op_EDRRXKOK26ZL",
