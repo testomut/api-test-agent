@@ -38,11 +38,17 @@ export const newUpdatePayload = () => unique(updatePayload, {});
 /** POST /items: creates a resource for a test and returns its id (at $response.body#/id). */
 export async function create(api: Apis, data: unknown = newCreatePayload()): Promise<{ id: string; body: unknown }> {
   const res = await api.items.createItem({ data });
-  expect(res.status(), 'documented success status of createItem').toBe(201);
-  const body = await expectContract(res, 'post', '/items');
-  const id = String(readPointer(body, '/id') ?? '');
-  expect(id, 'identifier at $response.body#/id').not.toBe('');
-  return { id, body };
+  try {
+    expect(res.status(), 'documented success status of createItem').toBe(201);
+    const body = await expectContract(res, 'post', '/items');
+    const id = String(readPointer(body, '/id') ?? '');
+    expect(id, 'identifier at $response.body#/id').not.toBe('');
+    return { id, body };
+  } catch (error) {
+    // The record may exist although a check failed (e.g. an undocumented 2xx status): remove it, then fail.
+    await removeIfCreated(api, res);
+    throw error;
+  }
 }
 
 /** DELETE /items/{itemId}: best-effort cleanup, never fails the test. A record it cannot remove is reported (404 = already gone). */

@@ -126,10 +126,15 @@ ${chain.fill!.map((f) => `        source = self.api.${f.from!.method}(${str(f.fr
     def create(self, data=None):
         """${c.key}: creates a resource for a test and returns (id, body)."""
         res = self.api.${c.method}(${str(c.path.replace(/^\//, ''))}, json=self.new_create_payload() if data is None else data)
-        ${assertSuccess(c)}
-        body = self.contract.expect(res, ${str(c.method)}, ${str(c.path)})
-        resource_id = read_pointer(body, ${str(chain.idPointer)})
-        assert resource_id not in (None, ""), "identifier at $response.body#${chain.idPointer}"
+        try:
+            ${assertSuccess(c)}
+            body = self.contract.expect(res, ${str(c.method)}, ${str(c.path)})
+            resource_id = read_pointer(body, ${str(chain.idPointer)})
+            assert resource_id not in (None, ""), "identifier at $response.body#${chain.idPointer}"
+        except AssertionError:
+            # The record may exist although a check failed (e.g. an undocumented 2xx status): remove it, then fail.
+            self.remove_if_created(res)
+            raise
         return str(resource_id), body
 
     def remove(self, resource_id):

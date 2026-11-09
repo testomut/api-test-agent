@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **A failed create check no longer leaves data:** the resource helper's `create()` removes the record before failing when a check after the request fails (e.g. the API answers an undocumented `201` where the spec says `200`). Before, the test failed before cleanup was registered, and the record stayed (found on Toolshop favorites).
 - **deps file `fill`: values from existing data:** a chain can take a create body field from an existing record at run time, e.g. `"fill": { "product_id": { "from": "getProducts", "pointer": "/data/0/id" } }`, instead of creating the parent. The source must be a `GET` with no unknown required parameters, and the pointer a JSON pointer; otherwise the chain is blocked with the reason. Filled values are never suffixed. `newCreatePayload(api)` becomes async for such chains (Python: an instance method).
 - **Stale resource helpers are removed:** `generate` deletes generated `_support/*.resource.ts` (`*_resource.py`) of chains it no longer plans (e.g. a delete was unlinked) and lists them as `REMOVED`. Hand-written helpers stay.
 - **Test data left on the target is reported:** the generated cleanup (`remove()` in the resource helpers, TypeScript and Python) still never fails a test, but a delete that does not succeed (anything but 2xx or 404) is now recorded. `generate --run` prints `WARNING: cleanup could not remove N record(s)` with a summary per operation and status, and the report gets a "Test data left on the target" table with every id. A standalone run prints a warning per record.
