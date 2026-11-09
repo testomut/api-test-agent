@@ -135,6 +135,12 @@ async function prepareAccount(o: CommonOpts, agentLogin: boolean, suiteRun = fal
       }
     }
     if (!o.allowWrite) throw new Error(`Test account: ${why}. Registering a new one writes to the API: add --allow-write (test environments only), or fix the account in .env.`);
+    // Only the generated suite logs in, and the project configures registration for it (e.g. defaults in
+    // playwright.config.ts): its globalSetup registers the one account of the run.
+    if (!agentLogin && (!process.env.API_REGISTER || !process.env.API_REGISTER_BODY)) {
+      log(`Test account: auto, ${why}; the generated tests register one account for the run (their globalSetup).`);
+      return;
+    }
     checkRegisterConfig();
     const acc = await registerAccount(o.baseUrl);
     log(`Test account: auto, ${why}: registered ${acc.label} (stays on the server). This run, and the generated tests it starts, use it; .env is not changed.`);
