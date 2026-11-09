@@ -1,6 +1,6 @@
 # OpenAPI change-triggered incremental generation (design)
 
-Status: **proposed architecture**, not implemented. The existing CLI behavior remains unchanged.
+Status: **proposed architecture**. Step 2 of the [implementation order](#implementation-order) (the three-file suite layout) is implemented; the change trigger itself (`diff`, `plan`, case IDs) is not. See [Current generator](#current-generator) for what the design can rely on today.
 
 ## Goal
 
@@ -15,9 +15,26 @@ When an OpenAPI specification changes in a pull request, CI should identify *sem
 5. Produce a **review-only** test plan and proposed test file changes. If existing tests already cover the change, report that instead of regenerating. Never delete or rewrite existing assertions automatically (see [Generated vs. hand-written files](#generated-vs-hand-written-files) for the only exception).
 6. Publish report artifacts and optionally open a draft PR for human review. The agent should not push changes back to the triggering PR by default.
 
+## Current generator
+
+What `generate` does today (api-test-agent `main`, November 2026), and what the change trigger builds on:
+
+| Feature | State | Relevance to this design |
+|---|---|---|
+| Three files per operation: `functional` / `contract` / `scenarios`, polarity as a tag (`@positive` / `@negative`, pytest markers), no empty files | implemented (#3) | the target [test suite layout](#test-suite-layout); `plan` maps impact onto these files |
+| Removal of generated files of the old `positive` / `negative` layout and of stale suite files, header-checked | implemented (#3) | a narrow, existing case of "generated files may be changed"; the [manifest](#case-registry-and-generation-manifest) replaces the header check later |
+| Scenarios: create → read (under create), update → read (under update), delete → read 404 (under delete) | implemented (#3, #5) | each lives under its primary operation, as [below](#test-suite-layout) |
+| GET cases for each `enum` value of a query parameter; rejection cases for `exclusiveMinimum` / `exclusiveMaximum`, `minItems`, query `minLength` | implemented (#5) | a change of these facets is test-relevant (`schema-constraint-changed`) |
+| `coverage-gaps.json` next to the report: cases per suite per operation and why a side is missing | implemented (#5) | a starting point for `SuiteImpact` (`no-change` / `blocked` with the reason) |
+| Unique suffix for plain string fields when create / update documents `409` | implemented (#6) | adding or removing a documented `409`, or a field's `enum` / `format` / `pattern`, changes the generated payload: test-relevant |
+| Cleanup that cannot remove a record is reported (`WARNING`, report table); a failed create check removes the record first | implemented (#7, #9) | — |
+| `deps.json` `fill`: a create body field read from existing data at run time (`{ "from": "<GET operationId>", "pointer": "/data/0/id" }`) | implemented (#8) | [dependency graph validation](#dependency-graph-impact) must cover `fill` sources too |
+| Stale `_support/*.resource.ts` / `*_resource.py` removed, header-checked | implemented (#8) | — |
+| `diff`, `plan`, `operationUid`, case IDs, `cases.json`, generation manifest, snapshot metadata | not implemented | steps 1 and 3–6 |
+
 ## Test suite layout
 
-> **Target structure.** The current runtime generator still writes `positive.spec.ts` / `negative.spec.ts` per operation folder. The three-file structure below is the target; it is implemented by a separate implementation PR (see [Implementation order](#implementation-order)). This design describes only the target.
+> **Implemented.** The generator writes this structure since #3 (step 2 of the [implementation order](#implementation-order)); `generate` removes the generated `positive` / `negative` files of the old layout. Case IDs and the scenario registry referenced below are not implemented yet: today the scenario's primary operation is derived from its CRUD role (create → read under create, update → read under update, delete → read 404 under delete).
 
 Every API endpoint (operation folder) gets up to three test files, one per **suite type**:
 
@@ -851,6 +868,14 @@ When a create operation's response changes, every dependent scenario is checked.
 
 Example: `/id` became `/data/id`. The create operation gets `review`; dependent read/update/delete scenarios get `blocked`. A new pointer may be **proposed**, never written to `deps.json` automatically.
 
+Each `fill` source in `deps.json` (a create body field read from existing data at run time) is validated the same way:
+
+- the source operation still exists and is still a `GET` without unknown required parameters;
+- its `pointer` still exists in the source's success response schema, and its type is compatible with the filled field;
+- the filled field still exists in the create request body.
+
+A failed check makes the chain `blocked`; the generator already refuses such a chain with the reason, so `plan` reports the same cause before regeneration.
+
 Scenario impact follows the [scenario definitions](#scenarios):
 
 - a change to any operation in a scenario's `steps` affects that scenario, whatever the step's phase;
@@ -1251,7 +1276,7 @@ The architecture is CI-agnostic; the CLI is the contract.
 ## Implementation order
 
 1. **Baseline + semantic diff** (first implementation PR, scope below).
-2. **Three-file suite layout in the generator** (a separate implementation PR): `functional.spec.ts` / `contract.spec.ts` / `scenarios.spec.ts` (Python: `test_functional.py` / `test_contract.py` / `test_scenarios.py`) replace `positive.spec.ts` / `negative.spec.ts`, using the [default mapping of checks](#test-suite-layout). No empty files.
+2. ~~**Three-file suite layout in the generator**~~ **done in #3**: `functional.spec.ts` / `contract.spec.ts` / `scenarios.spec.ts` (Python: `test_functional.py` / `test_contract.py` / `test_scenarios.py`) replace `positive.spec.ts` / `negative.spec.ts`, using the [default mapping of checks](#test-suite-layout). No empty files.
 3. Stable `operationUid` and case IDs in generated suites:
    - `_support/cases.json` and the generation manifest;
    - `caseId` annotations and the `api_case_id` marker;
@@ -1264,7 +1289,7 @@ The architecture is CI-agnostic; the CLI is the contract.
 5. Base/child integration: `--apply-generated`, patch proposals, `tsc` / `pytest --collect-only` validation.
 6. GitHub Actions example, then Jenkinsfile; optional draft-PR integration; the `adapt` migration plan for untracked tests.
 
-The semantic diff does not depend on API-object names: `operationUid` is the stable entity, while `operationId` and the generated method name are mutable attributes. So step 1 can proceed independently of PR #1. Steps 2–5 change the generator templates that PR #1 rewrote, so they start **after PR #1 is merged**.
+The semantic diff does not depend on API-object names: `operationUid` is the stable entity, while `operationId` and the generated method name are mutable attributes. So step 1 can proceed independently of PR #1. Steps 2–5 change the generator templates that PR #1 rewrote, so they start after PR #1 is merged (it is, and step 2 is done).
 
 ### First implementation PR
 
@@ -1309,4 +1334,4 @@ Excludes:
 - CI workflows;
 - AI;
 - running API tests;
-- the three-file suite layout (step 2).
+- the three-file suite layout (step 2, already done in #3).
