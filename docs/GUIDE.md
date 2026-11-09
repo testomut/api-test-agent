@@ -119,8 +119,29 @@ Non-interactive (CI, scripts): `npx @testomut/api-test-agent init --yes --base-u
 | `generate [spec]` | only `API_TESTS_DIR` | with `--run`: creates and deletes test data (needs `--allow-write`) | Generates `functional` / `contract` / `scenarios` tests for each operation. |
 | `generate --draft-pr` | new git branch | pushes the branch | Opens a GitHub Draft PR for review. Never touches the default branch. |
 | `adapt` | yes, after showing the plan and your confirmation | no | Moves existing API tests into the layout and converts uncovered Postman requests (see §5a). `--dry-run`, `--yes`, `--only moves|postman`. |
+| `diff --head <spec>` | only `--out` (default `reports/api-agent/diff/`) | no (a URL needs `--allow-network`) | Semantic diff of two specs: `changes.json` (and `changes.md` with `--format markdown`), a compatibility verdict per change from [oasdiff](https://github.com/oasdiff/oasdiff). See §4a. |
 
 `[spec]` defaults to `API_SPEC_URL`, `--base-url` to `API_BASE_URL`, `--tests-dir` to `API_TESTS_DIR`.
+
+## 4a. `diff`: what changed between two specs
+
+The first step of the [change-triggered generation design](OPENAPI_CHANGE_TRIGGER.md). Static: it never calls the API and writes only to `--out`.
+
+```sh
+npx api-test-agent diff --base old/openapi.yaml --head openapi.yaml --format markdown
+npx api-test-agent diff --head openapi.yaml            # base: the same file at the Git merge base (GITHUB_BASE_REF, else origin's default branch)
+npx api-test-agent diff --head https://host/openapi.json --base snapshot.json --allow-network --allow-host host
+```
+
+- **Engine:** compatibility verdicts (`breaking: yes | no | unknown`) come from [oasdiff](https://github.com/oasdiff/oasdiff) `1.34.1`, found through `OASDIFF_BIN` or `PATH`; it is not bundled. Another version stops with exit code 2 unless `--allow-engine-version-mismatch`. A change the engine says nothing about stays `unknown`.
+- **Identity:** each operation gets `operationUid = op_ + base32(sha256(METHOD + " " + normalizedPath))[0:12]`; path parameter names are not part of it (`/brands/{id}` and `/brands/{brandId}` are the same operation, reported as `parameter-renamed`). Moves and renames are detected with the documented rules and thresholds; a link below 0.90, or without a clear lead, is marked `review`.
+- **No noise:** formatting, key order, descriptions, `$ref` layout, inline ↔ component, equivalent `allOf` and 3.0 `nullable` ↔ 3.1 `type: [x, null]` give no changes. Example / default changes are listed separately (non-breaking, but the generator uses them as payloads).
+- **Baseline:** `--base`, else the Git merge base. The suite's snapshot is not used yet (it has no metadata): without a baseline the result is `BLOCKED: BASE_SPEC_MISSING`.
+- **Network:** off by default. `--allow-network` is needed for any URL; localhost, private and link-local addresses (including cloud metadata) are denied unless named in `--allow-host`.
+- **Exit codes:** 0 the policy passed, 1 a `--fail-on` policy triggered, 2 configuration or runtime error. `--fail-on breaking | blocked | unknown` can be repeated and combined; default `blocked`; `never` stands alone.
+- **Output:** `changes.json` (schema: [`schemas/changes.schema.json`](../schemas/changes.schema.json)), plus `changes.md` with `--format markdown`.
+
+Not in this step: which tests a change affects (`plan`), case IDs, updating tests.
 
 ## 5. What `run` does, step by step
 

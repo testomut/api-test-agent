@@ -1,0 +1,70 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/testomut/api-test-agent/schemas/changes.schema.json",
+  "title": "OpenApiChangeSet",
+  "description": "changes.json written by `api-test-agent diff` (docs/OPENAPI_CHANGE_TRIGGER.md, Change kinds).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["baseRevision", "headRevision", "baseSource", "engine", "changes", "blocked"],
+  "properties": {
+    "baseRevision": { "type": "string" },
+    "headRevision": { "type": "string" },
+    "baseSource": { "enum": ["flag", "merge-base", "ci-artifact", "snapshot", null] },
+    "engine": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version", "versionMismatch"],
+      "properties": {
+        "name": { "const": "oasdiff" },
+        "version": { "type": "string" },
+        "versionMismatch": { "type": "boolean" }
+      }
+    },
+    "changes": { "type": "array", "items": { "$ref": "#/definitions/change" } },
+    "blocked": { "type": "array", "items": { "$ref": "#/definitions/blocked" } }
+  },
+  "definitions": {
+    "change": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "operationUid", "operationKey", "breaking", "testRelevant"],
+      "properties": {
+        "kind": {
+          "enum": [
+            "operation-added", "operation-removed", "operation-moved", "operationId-renamed", "stable-id-changed",
+            "parameter-changed", "parameter-renamed", "request-changed", "response-changed", "schema-constraint-changed",
+            "example-changed", "servers-changed", "retired-operation-reappeared"
+          ]
+        },
+        "operationUid": { "type": "string", "pattern": "^(op_[A-Z2-7]{12,52})?$" },
+        "operationKey": { "type": "string" },
+        "pointer": { "type": "string" },
+        "scope": { "enum": ["request", "response"] },
+        "facet": {
+          "enum": [
+            "required", "nullable", "type", "format", "pattern", "minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum",
+            "multipleOf", "minLength", "maxLength", "enum", "const", "minItems", "maxItems", "uniqueItems", "minProperties",
+            "maxProperties", "additionalProperties"
+          ]
+        },
+        "before": {},
+        "after": {},
+        "breaking": { "enum": ["yes", "no", "unknown"] },
+        "testRelevant": { "type": "boolean" },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "review": { "type": "boolean" },
+        "note": { "type": "string" }
+      }
+    },
+    "blocked": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "reason"],
+      "properties": {
+        "code": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]*$" },
+        "pointers": { "type": "array", "items": { "type": "string" } },
+        "reason": { "type": "string" }
+      }
+    }
+  }
+}

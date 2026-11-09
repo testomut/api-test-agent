@@ -40,6 +40,7 @@ npm run api-tests              # read-only analysis → reports/api-agent/report
 npx @testomut/api-test-agent adapt       # move existing tests into the layout, convert Postman (plan first, git-safe)
 npm run api-tests:generate     # generate missing functional/contract/scenario tests and run them once
 npx playwright test
+npx @testomut/api-test-agent diff --head openapi.yaml   # what changed in the spec since the merge base (needs oasdiff)
 ```
 
 `init` first prints every file it will create or change and asks for confirmation (`--dry-run` only shows the plan). It writes `.env` / `.env.example`, appends to `.gitignore`, creates `playwright.config.ts` only if you have none and adds npm scripts. The Claude Code skill is offered separately, with an explanation of what it does, and is installed only if you say yes: files in `.claude/` steer the AI agent, so read it first and review `.claude/` changes like code.
