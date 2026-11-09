@@ -509,3 +509,14 @@ describe('deps "fill": values from existing data', () => {
     expect(await run({ name: { from: 'getHealth', pointer: 'status' } })).toMatch(/pointer must be a JSON pointer/);
   });
 });
+
+describe('create helper never leaves a record behind', () => {
+  it('removes what it created when a check fails (e.g. an undocumented 2xx), TypeScript and Python', async () => {
+    const dir = await mkdtemp(joinP(tmpdir(), 'ata-cr-'));
+    await generate(demo, ops, { outDir: dir, version: 'test' });
+    expect(await readFileP(joinP(dir, '_support/items.resource.ts'), 'utf8')).toMatch(/  try \{\n    expect\(res\.status\(\)[\s\S]*return \{ id, body \};\n  \} catch \(error\) \{\n[^\n]*\n    await removeIfCreated\(api, res\);\n    throw error;/);
+    const py = await mkdtemp(joinP(tmpdir(), 'ata-cr-py-'));
+    await generate(demo, ops, { outDir: py, version: 'test', lang: 'python' });
+    expect(await readFileP(joinP(py, '_support/items_resource.py'), 'utf8')).toMatch(/        except AssertionError:\n[^\n]*\n            self\.remove_if_created\(res\)\n            raise/);
+  });
+});
