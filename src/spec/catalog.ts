@@ -47,6 +47,8 @@ export function buildCatalog(doc: OpenApiDoc): Operation[] {
           knownValue: knownValueWithSource(p, schema).value,
           knownSource: knownValueWithSource(p, schema).source,
           schema,
+          ...(p.style ? { style: p.style } : {}),
+          ...(typeof p.explode === 'boolean' ? { explode: p.explode } : {}),
         };
       });
 

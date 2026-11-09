@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path';
 import { normalizePath, type NormOp, type NormSpec } from '../change/normalize.js';
 import { CASE_RULE_VOCABULARY_VERSION, parseCaseId } from './ids.js';
 import { canonicalJson, fileHash, type Registry } from './registry.js';
+import { boundaryValues } from '../generate/boundaries.js';
 
 /** `registry validate` / `manifest validate` (docs/OPENAPI_CHANGE_TRIGGER.md, "Registry validation"). */
 
@@ -190,9 +191,16 @@ function checkLocation(o: NormOp, loc: string, rule: string): Finding | undefine
   const bad = (reason: string): Finding => ({ code: 'INVALID_CASE_LOCATION', pointer: '', reason: `${o.key}: ${reason}` });
   const m = loc.match(/^request\.(query|path|header|cookie)#\/(.*)$/);
   if (m) {
-    const name = String(decodeSegment(m[2]));
+    const [rawName, rawValue] = m[2].split('/');
+    const name = String(decodeSegment(rawName));
     const p = o.params.find((x) => x.in === m[1] && (m[1] === 'header' ? x.name.toLowerCase() === name : x.name === name));
     if (!p) return bad(`no ${m[1]} parameter "${name}"`);
+    if (rawValue !== undefined) {
+      // accepted-value: the value must be one the spec documents for this parameter.
+      const value = String(decodeSegment(rawValue));
+      const allowed = Array.isArray(p.schema?.enum) ? p.schema.enum.map(String) : p.schema?.const !== undefined ? [String(p.schema.const)] : boundaryValues(p.schema).map(String);
+      return allowed.includes(value) ? undefined : bad(`"${value}" is not a documented value or valid limit of ${m[1]} "${name}"`);
+    }
     if (rule !== 'required' && rule !== 'not-found' && !ruleFits(p.schema, rule)) return { code: 'INVALID_CASE_RULE_FOR_SCHEMA', pointer: '', reason: `${o.key}: "${rule}" does not apply to ${m[1]} "${name}"` };
     return undefined;
   }

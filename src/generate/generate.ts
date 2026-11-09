@@ -12,8 +12,13 @@ import { assignCaseIds, type CaseRecord, type ScenarioDefinition } from '../case
 import { buildRegistry, canonicalJson, fileHash, readRegistry, resolveOperationUids } from '../cases/registry.js';
 import { headRevision } from '../change/baseline.js';
 import { isUrl } from '../change/network.js';
-import { bodyCases, documentedRejections, nonexistentIdExpr, queryCases } from './negative.js';
-import { CONTRACT_ASSERT, SUITE_TYPES, TS_FILES, operationFolder, renderContract, renderFunctional, renderResourceHelpers, renderScenarios, scenarioCases, suiteCounts, type ChainPlan, type Meta, type SuiteInput, type SuiteType } from './templates.js';
+import { bodyCasesDetailed, compositionGaps, type CoverageGap } from './body-cases.js';
+import { paramCasesDetailed, sendable } from './param-cases.js';
+import { errorPlan } from './error-cases.js';
+import { positiveCode, uncheckedRequest, uncheckedStatuses } from './coverage.js';
+import type { ResolvedScenario } from '../scenarios/dsl.js';
+import { bodyCases, documentedRejections, nonexistentIdExpr, type NegCase } from './negative.js';
+import { CONTRACT_ASSERT, SUITE_TYPES, TS_FILES, operationFolder, queryVariants, renderContract, renderFunctional, renderResourceHelpers, renderScenarios, scenarioCases, suiteCounts, type ChainPlan, type Meta, type SuiteInput, type SuiteType } from './templates.js';
 import { API_BASE, buildApiIndex, renderApiBaseClass, renderApiChildClass, renderApis } from './api-objects.js';
 import { PY_FILES, pyName, renderConftest, renderPyContract, renderPyFunctional, renderPyResource, renderPyScenarios, resourceModule } from './python.js';
 
@@ -32,6 +37,10 @@ export interface GenerateOptions {
   deps?: DepsFile;
   version: string;
   lang?: TestLang; // default typescript
+  /** Body negative cases per operation (default 60); the rest is reported as CASE_LIMIT_REACHED. */
+  maxCases?: number;
+  /** Reviewed business scenarios (validated with validateScenarios against the same operations). */
+  scenarios?: ResolvedScenario[];
 }
 
 export interface Scenario {
@@ -52,6 +61,8 @@ export interface GenerateResult {
   coverage: Coverage[];
   /** Test data the generated cleanup could not remove during --run (it stays on the target). */
   cleanupFailures: CleanupFailure[];
+  /** After --run: every physical test has its own registered case ID. */
+  caseIdCheck?: CaseIdCheck;
 }
 
 export interface CleanupFailure {
@@ -66,6 +77,20 @@ export interface Coverage {
   positiveBlocked: string | null;
   negativeGaps: string[];
   lifecycle: string | null;
+  /** Checks that could not be generated, each with a machine code and its exact location. */
+  gaps: CoverageGap[];
+  /** Body negative cases found / generated / dropped by the limit. */
+  bodyCases?: { potential: number; generated: number; dropped: number };
+  /** Machine code of positiveBlocked. */
+  positiveBlockedCode: string | null;
+  /** Per suite: generated tests, and the code when the suite is empty. */
+  suites: Record<SuiteType, { generated: number; missingCode: string | null }>;
+  /** Documented statuses no generated test exercises. */
+  uncheckedStatuses: { status: string; code: string }[];
+  /** Request media types never sent (the suite sends JSON). */
+  uncheckedRequestContentTypes: string[];
+  /** Security alternatives beyond the one the suite uses. */
+  uncheckedSecurityAlternatives: string[][];
 }
 
 function jsonBodySchema(spec: LoadedSpec, op: Operation): any {
@@ -218,6 +243,7 @@ export async function generate(spec: LoadedSpec, ops: Operation[], o: GenerateOp
   // 2. Per operation: <resource>/<action>/{functional,contract,scenarios}.spec.ts, each only when it has a case.
   //    Polarity (positive/negative) is a tag inside the files, not a file of its own.
   const used = new Set<string>();
+  const paths405 = new Set<string>(); // one 405 case per path
   for (const op of ops) {
     let { resource, action } = operationFolder(op);
     if (py) {
@@ -233,7 +259,8 @@ export async function generate(spec: LoadedSpec, ops: Operation[], o: GenerateOp
     const safe = SAFE_METHODS.includes(op.method);
     const pathParams = op.params.filter((p) => p.in === 'path');
     const unresolvedPath = pathParams.filter((p) => p.knownValue === undefined && p.name !== plan?.chain.param);
-    const unresolvedQuery = op.params.filter((p) => p.in === 'query' && p.required && p.knownValue === undefined);
+    // Required query / header / cookie parameters need a documented value, or no valid request exists.
+    const unresolvedQuery = op.params.filter((p) => p.in !== 'path' && p.required && p.knownValue === undefined && sendable(p));
 
     // --- positive
     let posReason: string | undefined;
@@ -260,7 +287,9 @@ export async function generate(spec: LoadedSpec, ops: Operation[], o: GenerateOp
     const reachable = safe || !!plan; // never fire write requests at operations without confirmed cleanup
     const why: string[] = [];
     let bCases: ReturnType<typeof bodyCases> = [];
-    let qCases: ReturnType<typeof queryCases> = [];
+    let bodyGaps: CoverageGap[] = [];
+    let bodyStats: Coverage['bodyCases'];
+    let qCases: NegCase[] = [];
     let notFound: { idExpr: string; param: string } | undefined;
     let unauthorized = false;
 
@@ -271,8 +300,17 @@ export async function generate(spec: LoadedSpec, ops: Operation[], o: GenerateOp
         const schema = jsonBodySchema(spec, op);
         const base = plan?.chain.create === op ? plan.createPayload : plan?.chain.update === op ? plan.updatePayload : undefined;
         const bodyTarget = schema && base && typeof base === 'object' && (plan?.chain.create === op || plan?.chain.update === op);
-        if (bodyTarget) bCases = bodyCases(spec.doc, schema, base as Record<string, unknown>, schema.$ref?.split('/').pop() ?? 'body');
-        if (!unresolvedPath.length) qCases = queryCases(op);
+        if (bodyTarget) {
+          const detailed = bodyCasesDetailed(spec.doc, schema, base, schema.$ref?.split('/').pop() ?? 'body', o.maxCases);
+          bCases = detailed.cases;
+          bodyGaps = detailed.gaps;
+          bodyStats = { potential: detailed.potential, generated: detailed.cases.length, dropped: detailed.dropped.length };
+        }
+        // Path parameters: only where an invalid value cannot reach a request body we cannot build.
+        const allowPath = !op.requestBodyRequired;
+        const pc = paramCasesDetailed(spec.doc, op, { allowPath, allowOthers: !unresolvedPath.length });
+        qCases = pc.cases;
+        bodyGaps = [...bodyGaps, ...pc.gaps];
         if (!bCases.length && !qCases.length) why.push(`${rej.validation.join('/')} is documented but there is no constraint the agent can break safely`);
       } else why.push('no 400/422 documented');
 
@@ -289,12 +327,52 @@ export async function generate(spec: LoadedSpec, ops: Operation[], o: GenerateOp
     }
 
     // --- suites
-    const input: SuiteInput = { op, refs, plan, helpers, positive: !posReason, validation: rej.validation, bodyCases: bCases, queryCases: qCases, notFound, unauthorized };
+    // Documented error responses with a safe trigger; the rest are gaps (stage 6).
+    const errRole = !plan ? undefined : plan.chain.create === op ? 'create' : plan.chain.read === op ? 'read' : plan.chain.update === op ? 'update' : plan.chain.delete === op ? 'delete' : undefined;
+    const firstWith405 = op.responses.some((r) => r.status === '405') && !paths405.has(op.path);
+    if (firstWith405) paths405.add(op.path);
+    const errors = op.deprecated ? { gaps: [] } : errorPlan({ doc: spec.doc, op, ops, chain: plan?.chain, role: errRole, hasUpdatePayload: plan?.updatePayload !== undefined, reachable, firstWith405 });
+    const input: SuiteInput = { op, refs, plan, helpers, positive: !posReason, validation: rej.validation, bodyCases: bCases, paramCases: qCases, notFound, unauthorized, errors, business: (o.scenarios ?? []).filter((b) => b.primaryOp === op) };
     const counts = suiteCounts(input);
-    const ids = assignCaseIds({ op, chain: plan?.chain, positive: input.positive, bodyCases: bCases, queryCases: qCases, notFound, unauthorized, scenarios: scenarioCases(input) }, uidOf);
+    const variants = input.positive && !plan && op.method === 'get' ? queryVariants(op) : [];
+    const ids = assignCaseIds({ op, chain: plan?.chain, positive: input.positive, bodyCases: bCases, paramCases: qCases, notFound, unauthorized, scenarios: scenarioCases(input), queryVariants: variants, errors, business: input.business }, uidOf);
     input.ids = ids;
     // Explicit per-operation coverage and gaps, independent of test execution status.
-    coverage.push({ operation: op.key, counts, positiveBlocked: posReason ?? null, negativeGaps: why, lifecycle: plan ? plan.chain.name : null });
+    // oneOf / anyOf in a payload that is sent: the other branches are reported (never dropped silently).
+    const payloadSchema = plan && (plan.chain.create === op || plan.chain.update === op) ? jsonBodySchema(spec, op) : undefined;
+    const payloadValue = plan?.chain.create === op ? plan.createPayload : plan?.chain.update === op ? plan.updatePayload : undefined;
+    const variantGaps: CoverageGap[] = payloadSchema && payloadValue !== undefined ? compositionGaps(spec.doc, payloadSchema, payloadValue) : [];
+    // Response bodies the validator cannot check: said explicitly, never passed silently.
+    const responseGaps: CoverageGap[] = op.responses.flatMap((resp) =>
+      resp.contentTypes.flatMap((ct): CoverageGap[] => {
+        const media = ct.split(';')[0].trim().toLowerCase();
+        const loc = `response.content-type#/${media.replace(/~/g, '~0').replace(/\//g, '~1')}`;
+        if (!resp.hasSchema) return [{ code: 'MISSING_RESPONSE_SCHEMA', location: loc, reason: `${resp.status} ${media}: no schema documented, the body is not checked` }];
+        if (!media.includes('json') && !media.startsWith('text/')) return [{ code: 'UNSUPPORTED_MEDIA_TYPE', location: loc, reason: `${resp.status} ${media}: the validator checks JSON and text bodies only` }];
+        return [];
+      }),
+    );
+    const pCode = positiveCode(posReason);
+    const req = uncheckedRequest(op);
+    const scn = scenarioCases(input);
+    coverage.push({
+      operation: op.key,
+      counts,
+      positiveBlocked: posReason ?? null,
+      positiveBlockedCode: pCode,
+      negativeGaps: why,
+      lifecycle: plan ? plan.chain.name : null,
+      gaps: [...bodyGaps, ...errors.gaps, ...variantGaps, ...responseGaps],
+      ...(bodyStats ? { bodyCases: bodyStats } : {}),
+      suites: {
+        functional: { generated: counts.functional, missingCode: counts.functional ? null : pCode ?? 'NO_DOCUMENTED_REJECTION' },
+        contract: { generated: counts.contract, missingCode: counts.contract ? null : pCode ?? 'NO_DOCUMENTED_REJECTION' },
+        scenario: { generated: counts.scenario, missingCode: counts.scenario ? null : plan ? pCode ?? 'UNCONFIRMED_BUSINESS_RULE' : 'UNCONFIRMED_BUSINESS_RULE' },
+      },
+      uncheckedStatuses: uncheckedStatuses(op, { positive: input.positive, notFound: !!notFound, unauthorized, validation: rej.validation, invalidInput: bCases.length + qCases.length > 0, errors, deleteTwice: scn.deleteTwice }),
+      uncheckedRequestContentTypes: req.contentTypes,
+      uncheckedSecurityAlternatives: req.securityAlternatives,
+    });
     const render: Record<SuiteType, (s: SuiteInput, m: Meta) => string> = py
       ? { functional: renderPyFunctional, contract: renderPyContract, scenario: renderPyScenarios }
       : { functional: renderFunctional, contract: renderContract, scenario: renderScenarios };
@@ -476,8 +554,15 @@ export async function runGenerated(result: GenerateResult, env: { baseUrl: strin
   const cleanupLog = resolve(outDir, 'cleanup-failures.jsonl');
   await mkdir(dirname(cleanupLog), { recursive: true });
   await rm(cleanupLog, { force: true });
-  const runEnv = { ...process.env, API_BASE_URL: env.baseUrl, API_AGENT_CLEANUP_LOG: cleanupLog };
+  const casesOut = resolve(outDir, 'collected-cases.jsonl');
+  await rm(casesOut, { force: true });
+  const runEnv = { ...process.env, API_BASE_URL: env.baseUrl, API_AGENT_CLEANUP_LOG: cleanupLog, API_AGENT_CASES_OUT: casesOut };
   await (lang === 'python' ? runPytest(specs, runEnv, outDir) : runPlaywright(specs, runEnv, outDir));
+  // Every physical test that ran (or was collected) must carry its own case ID from the registry.
+  const collected = lang === 'python' ? await readCollected(casesOut) : await playwrightCaseIds(resolve(outDir, 'playwright-results.json'));
+  const registryFile = result.files.find((f) => /[\\/]_support[\\/]cases\.json$/.test(f));
+  const registered = registryFile && existsSync(registryFile) ? new Set(Object.keys(JSON.parse(await readFile(registryFile, 'utf8')).cases ?? {})) : new Set<string>();
+  result.caseIdCheck = checkCaseIds(collected, registered);
   result.cleanupFailures = existsSync(cleanupLog)
     ? (await readFile(cleanupLog, 'utf8')).split('\n').filter((l) => l.trim()).flatMap((l) => {
         try {
@@ -487,6 +572,52 @@ export async function runGenerated(result: GenerateResult, env: { baseUrl: strin
         }
       })
     : [];
+}
+
+export interface CaseIdCheck {
+  tests: number;
+  /** Tests without a case ID. */
+  missing: string[];
+  /** Case IDs carried by more than one physical test. */
+  duplicates: string[];
+  /** Case IDs that are not in _support/cases.json. */
+  unregistered: string[];
+}
+
+export function checkCaseIds(tests: { test: string; caseId: string | null }[], registered: Set<string>): CaseIdCheck {
+  const count = new Map<string, number>();
+  for (const t of tests) if (t.caseId) count.set(t.caseId, (count.get(t.caseId) ?? 0) + 1);
+  return {
+    tests: tests.length,
+    missing: tests.filter((t) => !t.caseId).map((t) => t.test),
+    duplicates: [...count].filter(([, n]) => n > 1).map(([id]) => id),
+    unregistered: [...count.keys()].filter((id) => !registered.has(id)),
+  };
+}
+
+async function readCollected(file: string): Promise<{ test: string; caseId: string | null }[]> {
+  if (!existsSync(file)) return [];
+  return (await readFile(file, 'utf8')).split('\n').filter((l) => l.trim()).map((l) => JSON.parse(l));
+}
+
+/** Case IDs from the Playwright JSON report: the `caseId` annotation of every test. */
+async function playwrightCaseIds(file: string): Promise<{ test: string; caseId: string | null }[]> {
+  if (!existsSync(file)) return [];
+  const report = JSON.parse(await readFile(file, 'utf8'));
+  const out: { test: string; caseId: string | null }[] = [];
+  const walk = (suite: any, file?: string) => {
+    const f = suite.file ?? file;
+    for (const spec of suite.specs ?? []) {
+      for (const t of spec.tests ?? []) {
+        const annotations = [...(t.annotations ?? []), ...(t.results ?? []).flatMap((r: any) => r.annotations ?? [])];
+        const id = annotations.find((a: any) => a.type === 'caseId')?.description ?? null;
+        out.push({ test: `${f} › ${spec.title}`, caseId: id });
+      }
+    }
+    for (const s of suite.suites ?? []) walk(s, f);
+  };
+  for (const s of report.suites ?? []) walk(s);
+  return out;
 }
 
 /** Groups cleanup failures by operation and status: "DELETE /brands/{brandId} → 403: 13 record(s)". */

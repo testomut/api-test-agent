@@ -11,6 +11,7 @@ import { runSchemathesis } from './audit/schemathesis.js';
 import { resolveAuth } from './audit/auth.js';
 import { buildReport, writeReport, type AuditReport } from './report/report.js';
 import { cleanupSummary, generate, runGenerated, scenarioFindings } from './generate/generate.js';
+import { summarize } from './generate/coverage.js';
 import { openDraftPr } from './pr.js';
 import type { Finding, Operation } from './types.js';
 import { classifyTarget, loadConfig } from './config.js';
@@ -23,6 +24,8 @@ import { SUPPORTED_OASDIFF_VERSION } from './change/oasdiff.js';
 import { normalizeSpec } from './change/normalize.js';
 import { readSource } from './change/network.js';
 import { validateManifest, validateRegistry } from './cases/validate.js';
+import { validateScenarios, type ResolvedScenario } from './scenarios/dsl.js';
+import { isUrl } from './change/network.js';
 import { accountNotice, ACCOUNT_MODES, checkRegisterConfig, missingLoginVars, parseAccountMode, registerAccount, type AccountMode } from './audit/account.js';
 import { AiRunner, describeAiError, RUNNERS, type RunnerKind } from './ai/runner.js';
 import { proposeDependencies } from './ai/dependencies.js';
@@ -214,6 +217,8 @@ common(program.command('audit').description('analyse a spec (and, if allowed, a 
 common(program.command('generate').description('audit, then generate Playwright API tests for confirmed CRUD dependencies'))
   .option('--tests-dir <dir>', 'where generated tests are written (default: API_TESTS_DIR or tests/api)')
   .option('--deps <file>', 'JSON file with human-confirmed dependencies')
+  .option('--scenarios <file>', 'reviewed business scenarios (schemas/scenarios.schema.json); validated against the spec')
+  .option('--max-cases <n>', 'request-body negative cases per operation; the rest is reported as CASE_LIMIT_REACHED', '60')
   .addOption(new Option('--lang <lang>', 'language of generated tests (default: API_TESTS_LANG or typescript)').choices(['typescript', 'python']))
   .option('--run', 'run the generated tests once against --base-url (needs --allow-write)', false)
   .option('--draft-pr', 'commit to a new branch and open a GitHub Draft PR for review', false)
@@ -221,7 +226,7 @@ common(program.command('generate').description('audit, then generate Playwright 
   .addOption(new Option('--ai-runner <runner>', 'console tool: claude, codex, or command (API_AI_COMMAND). Default: API_AI or claude').choices(RUNNERS))
   .option('--ai-max-calls <n>', 'AI call budget per run', '10')
   .option('--ai-model <id>', 'model name passed to the console tool (default: its own default)')
-  .action(async (specArg: string | undefined, o: CommonOpts & { testsDir?: string; deps?: string; run: boolean; draftPr: boolean; lang?: 'typescript' | 'python'; ai: boolean; aiMaxCalls: string; aiModel?: string; aiRunner?: RunnerKind }) => {
+  .action(async (specArg: string | undefined, o: CommonOpts & { testsDir?: string; deps?: string; run: boolean; draftPr: boolean; lang?: 'typescript' | 'python'; ai: boolean; aiMaxCalls: string; maxCases: string; scenarios?: string; aiModel?: string; aiRunner?: RunnerKind }) => {
     const location = await resolveInputs(specArg, o);
     o.testsDir ??= cfg.testsDir;
     o.lang ??= cfg.testsLang;
@@ -235,13 +240,30 @@ common(program.command('generate').description('audit, then generate Playwright 
     const deps = o.deps ? JSON.parse(await readFile(o.deps, 'utf8')) : undefined;
     if (o.ai) await aiProposals(r.spec.doc, r.ops, o.out, { maxCalls: Number(o.aiMaxCalls), model: o.aiModel, runner: o.aiRunner }, deps);
     log('Generating test suites (functional / contract / scenarios)…');
-    const gen = await generate(r.spec, r.ops, { outDir: o.testsDir!, deps, version: VERSION, lang: o.lang });
+    const maxCases = Number(o.maxCases);
+    if (!Number.isInteger(maxCases) || maxCases < 1) throw new Error(`--max-cases must be a positive integer, got "${o.maxCases}".`);
+    let scenarios: ResolvedScenario[] | undefined;
+    if (o.scenarios) {
+      const checked = validateScenarios(JSON.parse(await readFile(o.scenarios, 'utf8')), r.ops);
+      if (checked.errors.length) throw new Error(`${o.scenarios} is invalid:\n${checked.errors.map((e) => `  ${e.pointer || '(root)'}: ${e.reason}`).join('\n')}`);
+      scenarios = checked.scenarios;
+      log(`Scenarios: ${scenarios.length} reviewed business scenario(s) from ${o.scenarios}`);
+    }
+    const gen = await generate(r.spec, r.ops, { outDir: o.testsDir!, deps, version: VERSION, lang: o.lang, maxCases, scenarios });
     for (const s of gen.scenarios) log(`  ${s.status.padEnd(9)} ${s.name}`);
     for (const f of gen.removed) log(`  REMOVED   ${relative(process.cwd(), f).replace(/\\/g, '/')} (generated earlier, no longer produced)`);
     if (o.run) {
       log('Running generated tests once (assertions are never changed to pass)…');
       await runGenerated(gen, { baseUrl: o.baseUrl! }, o.out, o.lang);
       for (const s of gen.scenarios.filter((x) => x.file)) log(`  ${s.status.padEnd(9)} ${s.name}`);
+      const ids = gen.caseIdCheck;
+      if (ids) {
+        const bad = ids.missing.length + ids.duplicates.length + ids.unregistered.length;
+        log(`Case IDs: ${ids.tests} test(s)${bad ? ` · WARNING: ${ids.missing.length} without an ID, ${ids.duplicates.length} duplicated, ${ids.unregistered.length} not in cases.json` : ', each with its own registered ID'}`);
+        for (const t of ids.missing.slice(0, 10)) log(`  NO ID     ${t}`);
+        for (const d of ids.duplicates.slice(0, 10)) log(`  DUPLICATE ${d}`);
+        for (const u of ids.unregistered.slice(0, 10)) log(`  UNREGISTERED ${u}`);
+      }
       if (gen.cleanupFailures.length) {
         log(`WARNING: cleanup could not remove ${gen.cleanupFailures.length} record(s); they stay on ${o.baseUrl}:`);
         for (const line of cleanupSummary(gen.cleanupFailures)) log(`  LEFT      ${line}`);
@@ -259,11 +281,15 @@ common(program.command('generate').description('audit, then generate Playwright 
         files: gen.files.map((f) => resolve(f).replace(process.cwd() + (process.platform === 'win32' ? '\\' : '/'), '').replace(/\\/g, '/')),
         scenarios: gen.scenarios.map(({ name, status, reason, operations }) => ({ name, status, reason, operations })),
         cleanupFailures: gen.cleanupFailures,
+        ...(gen.caseIdCheck ? { caseIdCheck: gen.caseIdCheck } : {}),
       },
     });
     const files = await writeReport(report, o.out);
     const coverageFile = join(o.out, 'coverage-gaps.json');
-    await writeFile(coverageFile, JSON.stringify({ spec: location, hash: r.spec.hash, operations: gen.coverage }, null, 2) + '\n');
+    const byCode = summarize(gen.coverage);
+    const generated = Object.fromEntries((['functional', 'contract', 'scenario'] as const).map((k) => [k, gen.coverage.reduce((n, c) => n + c.counts[k], 0)]));
+    await writeFile(coverageFile, JSON.stringify({ spec: location, hash: r.spec.hash, summary: { operations: gen.coverage.length, generated, gapsByCode: byCode }, operations: gen.coverage }, null, 2) + '\n');
+    if (Object.keys(byCode).length) log(`Coverage gaps: ${Object.entries(byCode).map(([k, n]) => `${k} ${n}`).join(', ')} (${coverageFile})`);
     log(`Report: ${files.md}`);
     log(`Coverage and gaps per operation: ${coverageFile}`);
     if (o.draftPr) {
@@ -385,6 +411,22 @@ program
     for (const b of s.blocked) log(`  BLOCKED   ${b.code}: ${b.reason}`);
     for (const f of r.files) log(`Report: ${f}`);
     process.exitCode = r.exitCode;
+  });
+
+program
+  .command('scenarios')
+  .description('reviewed business scenarios')
+  .command('validate')
+  .description('check a scenarios file against the spec: operations, parameters, documented statuses, saved values, cleanup (exit 1 on an error)')
+  .argument('<file>', 'scenarios JSON (schemas/scenarios.schema.json)')
+  .requiredOption('--spec <fileOrUrl>', 'the spec the scenarios run against')
+  .option('--allow-network', 'allow a URL --spec', false)
+  .action(async (file: string, o: { spec: string; allowNetwork: boolean }) => {
+    const spec = await loadSpec(isUrl(o.spec) ? (o.allowNetwork ? o.spec : (() => { throw new Error(`${o.spec} is a URL: pass --allow-network`); })()) : o.spec);
+    const r = validateScenarios(JSON.parse(await readFile(file, 'utf8')), buildCatalog(spec.doc));
+    log(`${r.scenarios.length} valid scenario(s), ${r.errors.length} error(s)`);
+    for (const e of r.errors) log(`  ${e.pointer || '(root)'}: ${e.reason}`);
+    if (r.errors.length) process.exitCode = 1;
   });
 
 const registryCmd = program.command('registry').description('the case registry (_support/cases.json): stable operation, case and scenario IDs');

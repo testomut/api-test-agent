@@ -34,6 +34,24 @@ jobs:
       - run: npm run build
       - run: npm test
 
+      - name: Generated code for the synthetic fixture compiles (TypeScript and Python)
+        # tests/fixtures/coverage/kitchen-sink.yaml exercises every template: nested bodies, all parameter
+        # kinds, error responses, scenarios. Generated, never run (no server), but it must compile.
+        run: |
+          npx tsx src/cli.ts generate tests/fixtures/coverage/kitchen-sink.yaml --deps tests/fixtures/coverage/kitchen-sink.deps.json --tests-dir tests/api-ks --max-cases 500 -o reports/ks --fail-on never
+          npx tsc --noEmit
+          npx tsx src/cli.ts generate tests/fixtures/coverage/kitchen-sink.yaml --deps tests/fixtures/coverage/kitchen-sink.deps.json --tests-dir tests/api-ks-python --lang python --max-cases 500 -o reports/ks-python --fail-on never
+          python -m py_compile $(find tests/api-ks-python -name '*.py')
+          npx tsx src/cli.ts registry validate tests/api-ks/_support/cases.json --spec tests/fixtures/coverage/kitchen-sink.yaml --require-spec > /dev/null
+          # TypeScript / Python parity on every template: the same active cases.
+          node -e '
+            const active = (f) => Object.entries(require(f).cases).filter(([, c]) => c.status !== "retired").map(([id]) => id).sort();
+            const ts = active("./tests/api-ks/_support/cases.json"), py = active("./tests/api-ks-python/_support/cases.json");
+            console.log("kitchen sink cases:", ts.length, "TypeScript /", py.length, "Python");
+            if (JSON.stringify(ts) !== JSON.stringify(py)) process.exit(1);
+          '
+          rm -rf tests/api-ks tests/api-ks-python
+
       - name: Start demo API
         run: |
           nohup npm run demo > demo-api.log 2>&1 &
@@ -53,7 +71,7 @@ jobs:
           '
 
       - name: Generate tests (resource/method/functional|contract|scenarios) and run them once
-        run: npx tsx src/cli.ts generate demo-api/openapi.yaml -u http://localhost:3100 --allow-write --run -o reports/generate --fail-on never
+        run: npx tsx src/cli.ts generate demo-api/openapi.yaml -u http://localhost:3100 --scenarios demo-api/scenarios.json --allow-write --run -o reports/generate --fail-on never
 
       - name: Self-check - generated suite fails only on the known defect
         run: |
@@ -65,17 +83,44 @@ jobs:
             if (JSON.stringify(bad) !== JSON.stringify(["stats/get/contract"]) || passed < 10) process.exit(1);
           '
 
+      - name: Self-check - every physical test has its own registered case ID; registry and manifest are valid
+        run: |
+          node -e '
+            const c = require("./reports/generate/report.json").generated.caseIdCheck;
+            console.log(JSON.stringify(c));
+            if (!c || c.tests < 10 || c.missing.length || c.duplicates.length || c.unregistered.length) process.exit(1);
+          '
+          npx tsx src/cli.ts registry validate tests/api/_support/cases.json --spec demo-api/openapi.yaml --require-spec > /dev/null
+          npx tsx src/cli.ts manifest validate --tests-dir tests/api
+          # Coverage gaps are exactly the expected ones: a new gap or a silently vanished one fails.
+          node -e '
+            const got = require("./reports/generate/coverage-gaps.json").summary.gapsByCode;
+            const want = require("./demo-api/expected-gaps.json");
+            console.log("coverage gaps:", JSON.stringify(got));
+            if (JSON.stringify(got) !== JSON.stringify(want)) { console.log("expected:", JSON.stringify(want)); process.exit(1); }
+          '
+
       - name: Generate Python tests (pytest + requests) and run them once
         run: |
           pip install pytest requests jsonschema
-          npx tsx src/cli.ts generate demo-api/openapi.yaml -u http://localhost:3100 --allow-write --run --lang python --tests-dir tests/api-python -o reports/generate-python --fail-on never
+          npx tsx src/cli.ts generate demo-api/openapi.yaml -u http://localhost:3100 --scenarios demo-api/scenarios.json --allow-write --run --lang python --tests-dir tests/api-python -o reports/generate-python --fail-on never
           node -e '
             const r = require("./reports/generate-python/report.json");
             const bad = r.generated.scenarios.filter(s => s.status === "CONTRACT_MISMATCH" || s.status === "TEST_FAILURE").map(s => s.name);
             const passed = r.generated.scenarios.filter(s => s.status === "PASS").length;
             console.log("failing:", bad, "passed:", passed);
             if (JSON.stringify(bad) !== JSON.stringify(["stats/get/contract"]) || passed < 10) process.exit(1);
+            const c = r.generated.caseIdCheck;
+            console.log(JSON.stringify(c));
+            if (!c || c.tests < 10 || c.missing.length || c.duplicates.length || c.unregistered.length) process.exit(1);
+            // TypeScript and Python generate the same active cases (retired ones are history).
+            const active = (f) => Object.entries(require(f).cases).filter(([, c]) => c.status !== "retired").map(([id]) => id).sort();
+            const ts = active("./tests/api/_support/cases.json");
+            const py = active("./tests/api-python/_support/cases.json");
+            if (JSON.stringify(ts) !== JSON.stringify(py)) { console.log("TS/Python case sets differ"); process.exit(1); }
           '
+          npx tsx src/cli.ts registry validate tests/api-python/_support/cases.json --spec demo-api/openapi.yaml --require-spec > /dev/null
+          npx tsx src/cli.ts manifest validate --tests-dir tests/api-python
 
       - name: Analyse the legacy example project (init + run)
         working-directory: examples/legacy-project

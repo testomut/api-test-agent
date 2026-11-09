@@ -11,4 +11,14 @@ test.describe('GET /items · functional', { tag: '@functional' }, () => {
     const res = await publicApi.items.listItems();
     expect(res.status(), 'documented success status of listItems').toBe(200);
   });
+
+  test('accepts documented limit=1', { tag: '@positive', annotation: { type: 'caseId', description: 'ata:op_4PIO72ZI3SIY:functional:positive:request.query#/limit/1:accepted-value' } }, async ({ publicApi }) => {
+    const res = await publicApi.items.listItems({ params: {"limit":1} });
+    expect(res.status(), 'documented success status of listItems').toBe(200);
+  });
+
+  test('accepts documented limit=100', { tag: '@positive', annotation: { type: 'caseId', description: 'ata:op_4PIO72ZI3SIY:functional:positive:request.query#/limit/100:accepted-value' } }, async ({ publicApi }) => {
+    const res = await publicApi.items.listItems({ params: {"limit":100} });
+    expect(res.status(), 'documented success status of listItems').toBe(200);
+  });
 });

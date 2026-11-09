@@ -3,6 +3,10 @@ import type { CrudChain } from './graph.js';
 import type { NegCase } from './negative.js';
 import { apiCall, type ApiRef } from './api-objects.js';
 import type { SuiteCaseIds } from '../cases/assign.js';
+import { requiredRequest, type ParamRequest } from './param-cases.js';
+import type { ErrorPlan } from './error-cases.js';
+import { varsIn, type ResolvedScenario, type ResolvedStep } from '../scenarios/dsl.js';
+import { boundaryValues } from './boundaries.js';
 
 /** Payloads and assumptions for one confirmed resource chain. */
 export interface ChainPlan {
@@ -54,18 +58,35 @@ function expectSuccess(op: Operation, v = 'res') {
 }
 
 function requiredQuery(op: Operation): Record<string, unknown> {
-  return Object.fromEntries(op.params.filter((p) => p.in === 'query' && p.required && p.knownValue !== undefined).map((p) => [p.name, p.knownValue]));
+  return requiredRequest(op).params;
 }
 
-/** Safe query variations: only values explicitly allowed by the schema. */
+/**
+ * Request options with the operation's required query / header / cookie parameters (documented values) merged in.
+ * `inner` is an options literal such as "{ data: c.data }"; its own params / headers win.
+ */
+export function optionsWith(op: Operation, inner?: string): string | undefined {
+  const req = requiredRequest(op);
+  const body = inner ? inner.trim().replace(/^\{\s*/, '').replace(/\s*\}$/, '') : '';
+  const fields: string[] = [];
+  if (Object.keys(req.params).length && !/\bparams:/.test(body)) fields.push(`params: ${JSON.stringify(req.params)}`);
+  if (Object.keys(req.headers).length && !/\bheaders:/.test(body)) fields.push(`headers: ${JSON.stringify(req.headers)}`);
+  if (body) fields.push(body);
+  return fields.length ? `{ ${fields.join(', ')} }` : undefined;
+}
+
+/** Safe query variations: only values explicitly allowed by the schema (enum values, else the valid limits). */
 export function queryVariants(op: Operation): Array<{ name: string; value: string | number | boolean }> {
   if (op.method !== 'get') return [];
   return op.params.filter((p) => p.in === 'query' && !p.required).flatMap((p) => {
-    const schema = p.schema ?? {};
-    const values = Array.isArray(schema.enum) ? schema.enum : [];
-    return values.filter((v): v is string | number | boolean =>
-      typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean'
-    ).slice(0, 5).map((value) => ({ name: p.name, value }));
+    const schema: any = p.schema ?? {};
+    const values: unknown[] = Array.isArray(schema.enum) ? [...schema.enum] : [];
+    // Boundary-valid values: the documented limits themselves must be accepted.
+    if (!values.length) values.push(...boundaryValues(schema));
+    const kept = values.filter((v): v is string | number | boolean => typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean');
+    // One physical test per value, each with its own case ID: values equal as strings would share an ID.
+    const unique = kept.filter((v, i) => kept.findIndex((x) => String(x) === String(v)) === i);
+    return unique.slice(0, 5).map((value) => ({ name: p.name, value }));
   }).slice(0, 15);
 }
 
@@ -198,11 +219,15 @@ export interface SuiteInput {
   positive: boolean; // a successful call can be sent safely
   validation: string[]; // documented validation rejections: 400 / 422 / 4XX
   bodyCases: NegCase[];
-  queryCases: NegCase[];
+  paramCases: NegCase[];
   notFound?: { idExpr: string; param: string };
   unauthorized: boolean;
   /** Stable case IDs of this operation's tests (Playwright annotation caseId, pytest marker api_case_id). */
   ids?: SuiteCaseIds;
+  /** Documented error responses with a safe trigger (stage 6). */
+  errors?: ErrorPlan;
+  /** Reviewed business scenarios whose primary step is this operation (stage 8). */
+  business?: ResolvedScenario[];
 }
 
 export type Role = 'create' | 'read' | 'update' | 'delete';
@@ -214,10 +239,12 @@ export function roleOf(op: Operation, plan?: ChainPlan): Role | undefined {
 }
 
 /** Multi-request scenarios whose primary operation is `op` (the action under test, never the setup step). */
-export function scenarioCases(s: Pick<SuiteInput, 'op' | 'plan' | 'positive'>): { createRead: boolean; updateRead: boolean; deleteGone: boolean } {
+export function scenarioCases(s: Pick<SuiteInput, 'op' | 'plan' | 'positive' | 'errors'>): { createRead: boolean; updateRead: boolean; deleteGone: boolean; conflict: boolean; deleteTwice: boolean } {
   const role = roleOf(s.op, s.plan);
   const read = s.plan?.chain.read;
   return {
+    deleteTwice: s.positive && role === 'delete' && s.op.responses.some((r) => r.status === '404'),
+    conflict: s.positive && role === 'create' && !!s.errors?.conflict,
     createRead: s.positive && role === 'create' && !!read,
     updateRead: s.positive && role === 'update' && !!read && s.plan!.updatePayload !== undefined,
     deleteGone: s.positive && role === 'delete' && !!read && read.responses.some((r) => r.status === '404'),
@@ -228,10 +255,11 @@ export function scenarioCases(s: Pick<SuiteInput, 'op' | 'plan' | 'positive'>): 
 export function suiteCounts(s: SuiteInput): Record<SuiteType, number> {
   const extra = (s.notFound ? 1 : 0) + (s.unauthorized ? 1 : 0);
   const sc = scenarioCases(s);
+  const e = s.errors;
   return {
-    functional: (s.positive ? 1 : 0) + extra + (s.positive && !s.plan ? queryVariants(s.op).length : 0),
-    contract: (s.positive ? 1 : 0) + extra + s.bodyCases.length + s.queryCases.length,
-    scenario: (sc.createRead ? 1 : 0) + (sc.updateRead ? 1 : 0) + (sc.deleteGone ? 1 : 0),
+    functional: (s.positive ? 1 : 0) + extra + (s.positive && !s.plan ? queryVariants(s.op).length : 0) + (e?.invalidCredentials ? 1 : 0) + (e?.methodNotAllowed ? 1 : 0) + (e?.preconditionFailed && s.plan ? 1 : 0),
+    contract: (s.positive ? 1 : 0) + extra + s.bodyCases.length + s.paramCases.length + (e?.unsupportedMediaType && s.plan ? 1 : 0),
+    scenario: (sc.createRead ? 1 : 0) + (sc.updateRead ? 1 : 0) + (sc.deleteGone ? 1 : 0) + (sc.conflict ? 1 : 0) + (sc.deleteTwice ? 1 : 0) + (s.business?.length ?? 0),
   };
 }
 
@@ -260,10 +288,9 @@ function positiveTest(s: SuiteInput, title: string, assert: (indent: string) => 
   const chain = plan?.chain;
   const role = roleOf(op, plan);
   const ref = refs.get(op)!;
-  const call = (idVar?: string, options?: string) => apiCall(ref, 'api', pathArgs(op, ref, chain?.param, idVar), options);
+  const call = (idVar?: string, options?: string) => apiCall(ref, 'api', pathArgs(op, ref, chain?.param, idVar), optionsWith(op, options));
   if (!role) {
-    const query = requiredQuery(op);
-    const opts = Object.keys(query).length ? `{ params: ${JSON.stringify(query)} }` : undefined;
+    const opts = optionsWith(op);
     const fx = apiFixture(op);
     return [
       `  test(${q(title)}, ${POS}, async ({ ${fx} }) => {`,
@@ -275,7 +302,8 @@ function positiveTest(s: SuiteInput, title: string, assert: (indent: string) => 
   if (role === 'create') {
     return [
       `  test(${q(title)}, ${POS}, async ({ api }) => {`,
-      `    const res = await ${call('id', hasFill(plan) ? '{ data: await resource.newCreatePayload(api) }' : '{ data: resource.newCreatePayload() }')};`,
+      `    const payload = ${hasFill(plan) ? 'await resource.newCreatePayload(api)' : 'resource.newCreatePayload()'};`,
+      `    const res = await ${call('id', '{ data: payload }')};`,
       `    try {`,
       ...assert('      '),
       `    } finally {`,
@@ -314,11 +342,11 @@ function notFoundCall(s: SuiteInput, fx: string): string[] {
   const ref = refs.get(op)!;
   const chain = plan?.chain;
   const body = plan?.updatePayload !== undefined && chain?.update === op ? `{ data: resource.newUpdatePayload() }` : undefined;
-  return [`    const missingId = String(${s.notFound!.idExpr});`, `    const res = await ${apiCall(ref, fx, pathArgs(op, ref, chain?.param ?? s.notFound!.param, 'missingId'), body)};`];
+  return [`    const missingId = String(${s.notFound!.idExpr});`, `    const res = await ${apiCall(ref, fx, pathArgs(op, ref, chain?.param ?? s.notFound!.param, 'missingId'), optionsWith(op, body))};`];
 }
 const anonymousCall = (s: SuiteInput) => {
   const ref = s.refs.get(s.op)!;
-  return `    const res = await ${apiCall(ref, 'publicApi', pathArgs(s.op, ref, s.plan?.chain.param, "'unused'"))};`;
+  return `    const res = await ${apiCall(ref, 'publicApi', pathArgs(s.op, ref, s.plan?.chain.param, "'unused'"), optionsWith(s.op))};`;
 };
 const notFoundNeedsHelpers = (s: SuiteInput) => !!s.notFound && s.plan?.updatePayload !== undefined && s.plan.chain.update === s.op;
 
@@ -328,8 +356,9 @@ export function renderFunctional(s: SuiteInput, meta: Meta): string {
   const chain = plan?.chain;
   const role = roleOf(op, plan);
   const fx = chain ? 'api' : apiFixture(op);
-  const usesHelpers = (s.positive && !!role) || notFoundNeedsHelpers(s);
-  const names = ['expect', ...(s.positive && (role === 'create' || role === 'read') ? ['readPointer'] : []), ...(s.notFound || s.unauthorized ? ['expectStatus'] : [])];
+  const usesHelpers = (s.positive && !!role) || notFoundNeedsHelpers(s) || !!(s.errors?.preconditionFailed && plan);
+  const errorStatus = !!(s.errors?.invalidCredentials || s.errors?.methodNotAllowed || s.errors?.preconditionFailed);
+  const names = ['expect', ...(s.positive && (role === 'create' || role === 'read') ? ['readPointer'] : []), ...(s.notFound || s.unauthorized || errorStatus ? ['expectStatus'] : [])];
   const L = suiteHeader('functional', s, meta, ['Checks the behavior of the endpoint: status and result. The response schema is checked in contract.spec.ts.']);
   L.push(...imports(s, names, usesHelpers), '', `test.describe('${op.key} · functional', { tag: '@functional' }, () => {`);
 
@@ -344,7 +373,11 @@ export function renderFunctional(s: SuiteInput, meta: Meta): string {
     L.push(
       ...positiveTest(s, titles[role ?? 'none'], (i) => {
         const a = [`${i}${expectSuccess(op)}`];
-        if (role === 'create') a.push(`${i}const id = readPointer(await res.json().catch(() => undefined), ${q(chain!.idPointer)});`, `${i}expect(String(id ?? ''), 'identifier at $response.body#${chain!.idPointer}').not.toBe('');`);
+        if (role === 'create') {
+          a.push(`${i}const created = await res.json().catch(() => undefined);`, `${i}const id = readPointer(created, ${q(chain!.idPointer)});`, `${i}expect(String(id ?? ''), 'identifier at $response.body#${chain!.idPointer}').not.toBe('');`);
+          // Fields a reviewed deps file says the create response returns as sent.
+          for (const field of chain!.echoes ?? []) a.push(`${i}expect(readPointer(created, ${q('/' + field.replace(/~/g, '~0').replace(/\//g, '~1'))}), ${q(`${field} returned as sent`)}).toEqual((payload as Record<string, unknown>)[${q(field)}]);`);
+        }
         if (role === 'read') a.push(`${i}expect(String(readPointer(await res.json().catch(() => undefined), ${q(chain!.idPointer)})), 'same resource').toBe(id);`);
         return a;
       }, s.ids?.functional.success),
@@ -354,16 +387,16 @@ export function renderFunctional(s: SuiteInput, meta: Meta): string {
   if (s.positive && !plan && op.method === 'get') {
     const ref = s.refs.get(op)!;
     const base = requiredQuery(op);
-    for (const variant of queryVariants(op)) {
+    queryVariants(op).forEach((variant, n) => {
       const params = { ...base, [variant.name]: variant.value };
       L.push(
-        `  test(${q(`accepts documented ${variant.name}=${String(variant.value)}`)}, ${testOptions('positive', s.ids?.functional.success)}, async ({ ${fx} }) => {`,
-        `    const res = await ${apiCall(ref, fx, pathArgs(op, ref), `{ params: ${JSON.stringify(params)} }`)};`,
+        `  test(${q(`accepts documented ${variant.name}=${String(variant.value)}`)}, ${testOptions('positive', s.ids?.functional.variants[n])}, async ({ ${fx} }) => {`,
+        `    const res = await ${apiCall(ref, fx, pathArgs(op, ref), optionsWith(op, `{ params: ${JSON.stringify(params)} }`))};`,
         `    ${expectSuccess(op)}`,
         `  });`,
         '',
       );
-    }
+    });
   }
   if (s.notFound) {
     L.push(`  test('returns documented 404 for an id that does not exist', ${testOptions('negative', s.ids?.functional.notFound)}, async ({ ${fx} }) => {`, ...notFoundCall(s, fx), `    expectStatus(res, ['404'], '${op.method}', ${q(op.path)});`, `  });`, '');
@@ -372,7 +405,107 @@ export function renderFunctional(s: SuiteInput, meta: Meta): string {
     // publicApi sends no credentials at all (not even the project's static token).
     L.push(`  test('returns documented 401 without credentials', ${testOptions('negative', s.ids?.functional.unauthorized)}, async ({ publicApi }) => {`, anonymousCall(s), `    expectStatus(res, ['401'], '${op.method}', ${q(op.path)});`, `  });`, '');
   }
+  L.push(...errorTests(s));
   return close(L);
+}
+
+/** A reviewed business scenario: its steps in order, saved values, expected statuses; cleanup steps in finally. */
+function businessTest(s: SuiteInput, sc: ResolvedScenario, id?: string): string[] {
+  const L: string[] = [];
+  const pol = sc.polarity;
+  L.push(`  test(${q(sc.title)}, ${testOptions(pol, id)}, async ({ api }) => {`, `    const vars: Record<string, unknown> = {};`);
+  const callOf = (st: ResolvedStep, v: string, indent: string) => {
+    const ref = s.refs.get(st.op)!;
+    const req = requiredRequest(st.op);
+    const args = ref.pathParams.map((name) => {
+      const given = st.params?.[name];
+      if (given !== undefined) return `String(fillVars(${JSON.stringify(given)}, vars))`;
+      return q(String(st.op.params.find((x) => x.in === 'path' && x.name === name)?.knownValue));
+    });
+    const query = Object.fromEntries(Object.entries(st.params ?? {}).filter(([k]) => st.op.params.some((x) => x.in === 'query' && x.name === k)));
+    const opts = [
+      Object.keys(query).length || Object.keys(req.params).length ? `params: { ...${JSON.stringify(req.params)}, ...fillVars(${JSON.stringify(query)}, vars) }` : '',
+      Object.keys(req.headers).length ? `headers: ${JSON.stringify(req.headers)}` : '',
+      st.body !== undefined ? `data: fillVars(${JSON.stringify(st.body)}, vars)` : '',
+    ].filter(Boolean);
+    return `${indent}const ${v} = await ${apiCall(ref, 'api', args, opts.length ? `{ ${opts.join(', ')} }` : undefined)};`;
+  };
+  const main = sc.steps.filter((st) => st.phase !== 'cleanup');
+  const cleanup = sc.steps.filter((st) => st.phase === 'cleanup');
+  L.push(`    try {`);
+  main.forEach((st, j) => {
+    L.push(`      // ${st.phase}${st.name ? ` ${st.name}` : ''}: ${st.op.key}`, callOf(st, `res${j}`, '      '));
+    if (st.expect) L.push(`      expectStatus(res${j}, [${q(String(st.expect))}], '${st.op.method}', ${q(st.op.path)});`);
+    if (Object.keys(st.save ?? {}).length) {
+      L.push(`      const body${j} = await res${j}.json().catch(() => undefined);`);
+      for (const [name, ptr] of Object.entries(st.save ?? {})) L.push(`      vars[${q(name)}] = readPointer(body${j}, ${q(ptr)});`);
+    }
+  });
+  L.push(`    } finally {`);
+  cleanup.forEach((st, j) => {
+    const needs = varsIn([st.params, st.body]);
+    const guard = needs.length ? needs.map((v) => `vars[${q(v)}] !== undefined`).join(' && ') : 'true';
+    L.push(
+      `      if (${guard}) {`,
+      callOf(st, `clean${j}`, '        ').replace(/;$/, '.catch(() => undefined);'),
+      `        if (!clean${j} || (!clean${j}.ok() && clean${j}.status() !== 404)) reportCleanupFailure(${q(st.op.key)}, String(${needs.length ? `vars[${q(needs[0])}]` : "''"}), clean${j} ? clean${j}.status() : 'no response');`,
+      `      }`,
+    );
+  });
+  L.push(`    }`, `  });`, '');
+  return L;
+}
+
+/** Documented error responses with a safe trigger (stage 6): invalid credentials, 405, 412. */
+function errorTests(s: SuiteInput): string[] {
+  const { op, plan } = s;
+  const e = s.errors;
+  if (!e) return [];
+  const ref = s.refs.get(op)!;
+  const req = requiredRequest(op);
+  const L: string[] = [];
+  if (e.invalidCredentials) {
+    const params = { ...req.params, ...e.invalidCredentials.params };
+    const headers = { ...req.headers, ...e.invalidCredentials.headers };
+    const opts = [Object.keys(params).length ? `params: ${JSON.stringify(params)}` : '', `headers: ${JSON.stringify(headers)}`].filter(Boolean).join(', ');
+    // publicApi carries no credentials of its own: only the invalid one is sent.
+    L.push(
+      `  test('returns documented 401 for invalid credentials', ${testOptions('negative', s.ids?.functional.invalidCredentials)}, async ({ publicApi }) => {`,
+      `    const res = await ${apiCall(ref, 'publicApi', pathArgs(op, ref, plan?.chain.param, "'unused'"), `{ ${opts} }`)};`,
+      `    expectStatus(res, ['401'], '${op.method}', ${q(op.path)});`,
+      `  });`,
+      '',
+    );
+  }
+  if (e.methodNotAllowed) {
+    const path = op.path.replace(/\{([^}]+)\}/g, (_, name) => encodeURIComponent(String(op.params.find((p) => p.in === 'path' && p.name === name)?.knownValue ?? 'unused')));
+    // GET is the only method that is safe to send to a route the spec does not define.
+    L.push(
+      `  test('answers documented 405 to a method the path does not define (GET)', ${testOptions('negative', s.ids?.functional.methodNotAllowed)}, async ({ request }) => {`,
+      `    const res = await request.get(${q(path.replace(/^\//, ''))});`,
+      `    expectStatus(res, ['405'], '${op.method}', ${q(op.path)});`,
+      `  });`,
+      '',
+    );
+  }
+  if (e.preconditionFailed && plan) {
+    const headers = { ...req.headers, [e.preconditionFailed.header]: e.preconditionFailed.value };
+    const data = plan.chain.update === op ? ', data: resource.newUpdatePayload()' : '';
+    const params = Object.keys(req.params).length ? `params: ${JSON.stringify(req.params)}, ` : '';
+    L.push(
+      `  test('returns documented 412 when ${e.preconditionFailed.header} does not match', ${testOptions('negative', s.ids?.functional.preconditionFailed)}, async ({ api }) => {`,
+      `    const { id } = await resource.create(api);`,
+      `    try {`,
+      `      const res = await ${apiCall(ref, 'api', pathArgs(op, ref, plan.chain.param, 'id'), `{ ${params}headers: ${JSON.stringify(headers)}${data} }`)};`,
+      `      expectStatus(res, ['412'], '${op.method}', ${q(op.path)});`,
+      `    } finally {`,
+      `      await resource.remove(api, id);`,
+      `    }`,
+      `  });`,
+      '',
+    );
+  }
+  return L;
 }
 
 const caseField = (id?: string) => (id ? `caseId: ${q(id)}, ` : '');
@@ -387,14 +520,15 @@ export function renderContract(s: SuiteInput, meta: Meta): string {
   const ref = s.refs.get(op)!;
   const isCreate = chain?.create === op;
   const needsExisting = !!chain && chain.create !== op && op.params.some((p) => p.in === 'path' && p.name === chain.param);
-  const invalid = s.bodyCases.length + s.queryCases.length > 0;
-  const usesHelpers = (s.positive && !!role) || notFoundNeedsHelpers(s) || (s.bodyCases.length > 0 && !!chain && (isCreate || needsExisting));
+  const wrongMedia = !!(s.errors?.unsupportedMediaType && chain);
+  const invalid = s.bodyCases.length + s.paramCases.length > 0 || wrongMedia;
+  const usesHelpers = (s.positive && !!role) || notFoundNeedsHelpers(s) || (s.bodyCases.length > 0 && !!chain && (isCreate || needsExisting)) || wrongMedia;
   // Validation cases go through the same fixture as the positive test (anonymous for public operations).
   const fx = chain ? 'api' : apiFixture(op);
   const names = [...(s.positive || s.notFound || s.unauthorized ? ['expectContract'] : []), ...(invalid ? ['expectRejected'] : [])];
   const L = suiteHeader('contract', s, meta, ['Checks conformance to the OpenAPI document: the status actually returned is documented and the body matches its schema.', 'Invalid requests break one documented constraint each and must get a documented rejection.']);
   L.push(...imports(s, names, usesHelpers));
-  if (invalid) L.push('', `const rejection = ${JSON.stringify(s.validation)}; // documented in the spec`);
+  if (s.bodyCases.length + s.paramCases.length > 0) L.push('', `const rejection = ${JSON.stringify(s.validation)}; // documented in the spec`);
   L.push('', `test.describe('${op.key} · contract', { tag: '@contract' }, () => {`);
 
   const contract = (i: string, v = 'res') => [`${i}await expectContract(${v}, '${op.method}', ${q(op.path)});`];
@@ -402,7 +536,7 @@ export function renderContract(s: SuiteInput, meta: Meta): string {
   if (s.notFound) L.push(`  test('response for a missing id matches the documented contract', ${testOptions('positive', s.ids?.contract.notFound)}, async ({ ${fx} }) => {`, ...notFoundCall(s, fx), ...contract('    '), `  });`, '');
   if (s.unauthorized) L.push(`  test('response without credentials matches the documented contract', ${testOptions('positive', s.ids?.contract.unauthorized)}, async ({ publicApi }) => {`, anonymousCall(s), ...contract('    '), `  });`, '');
 
-  const send = (indent: string, options: string) => `${indent}const res = await ${apiCall(ref, fx, pathArgs(op, ref, chain?.param, 'id'), options)};`;
+  const send = (indent: string, options: string) => `${indent}const res = await ${apiCall(ref, fx, pathArgs(op, ref, chain?.param, 'id'), optionsWith(op, options))};`;
   if (s.bodyCases.length) {
     L.push(`  const invalidBodies = [`);
     s.bodyCases.forEach((c, n) => L.push(`    { title: ${q(c.title)}, source: ${q(c.source)}, ${caseField(s.ids?.contract.body[n])}data: ${JSON.stringify(c.data)} },`));
@@ -417,11 +551,32 @@ export function renderContract(s: SuiteInput, meta: Meta): string {
     }
     L.push(`    });`, `  }`, '');
   }
-  if (s.queryCases.length) {
-    L.push(`  const invalidQueries = [`);
-    s.queryCases.forEach((c, n) => L.push(`    { title: ${q(c.title)}, source: ${q(c.source)}, ${caseField(s.ids?.contract.query[n])}params: ${JSON.stringify(c.query)} },`));
-    L.push(`  ];`, '', `  for (const c of invalidQueries) {`, `    test(\`rejects invalid query: \${c.title}\`, ${loopOptions(s.ids?.contract.query)}, async ({ ${fx} }) => {`);
-    L.push(`      const res = await ${apiCall(ref, fx, pathArgs(op, ref), '{ params: c.params }')};`, `      await expectRejected(res, rejection, '${op.method}', ${q(op.path)});`, `    });`, `  }`, '');
+  if (s.paramCases.length) {
+    // Each row is a whole request: the valid required parameters plus the one parameter under test.
+    L.push(`  const invalidParameters: { title: string; source: string; caseId?: string; params?: Record<string, string | number | boolean> | string; headers?: Record<string, string>; path?: Record<string, string> }[] = [`);
+    s.paramCases.forEach((c, n) => {
+      const r: ParamRequest = c.request ?? (c.query ? { params: c.query as ParamRequest['params'] } : {});
+      const fields = [r.params !== undefined ? `params: ${JSON.stringify(r.params)}` : '', r.headers ? `headers: ${JSON.stringify(r.headers)}` : '', r.path ? `path: ${JSON.stringify(r.path)}` : ''].filter(Boolean).join(', ');
+      L.push(`    { title: ${q(c.title)}, source: ${q(c.source)}, ${caseField(s.ids?.contract.params[n])}${fields} },`);
+    });
+    const args = ref.pathParams.map((name) => {
+      const known = op.params.find((x) => x.in === 'path' && x.name === name)?.knownValue;
+      return `c.path?.[${q(name)}] ?? ${known === undefined ? "'unused'" : q(String(known))}`;
+    });
+    L.push(`  ];`, '', `  for (const c of invalidParameters) {`, `    test(\`rejects invalid parameter: \${c.title}\`, ${loopOptions(s.ids?.contract.params)}, async ({ ${fx} }) => {`);
+    L.push(`      const res = await ${apiCall(ref, fx, args, '{ params: c.params, headers: c.headers }')};`, `      await expectRejected(res, rejection, '${op.method}', ${q(op.path)});`, `    });`, `  }`, '');
+  }
+  if (wrongMedia) {
+    // 415: the documented body, but declared as text/plain. Anything the API wrongly creates is removed.
+    const req = requiredRequest(op);
+    const headers = JSON.stringify({ ...req.headers, 'content-type': 'text/plain' });
+    const params = Object.keys(req.params).length ? `params: ${JSON.stringify(req.params)}, ` : '';
+    const payload = isCreate ? (hasFill(plan) ? 'await resource.newCreatePayload(api)' : 'resource.newCreatePayload()') : 'resource.newUpdatePayload()';
+    const opts = `{ ${params}headers: ${headers}, data: JSON.stringify(${payload}) }`;
+    L.push(`  test('rejects a body sent as text/plain with documented 415', ${testOptions('negative', s.ids?.contract.unsupportedMediaType)}, async ({ api }) => {`);
+    if (isCreate) L.push(`    const res = await ${apiCall(ref, 'api', pathArgs(op, ref), opts)};`, `    await resource.removeIfCreated(api, res);`, `    await expectRejected(res, ['415'], '${op.method}', ${q(op.path)});`);
+    else L.push(`    const { id } = await resource.create(api);`, `    try {`, `      const res = await ${apiCall(ref, 'api', pathArgs(op, ref, chain!.param, 'id'), opts)};`, `      await expectRejected(res, ['415'], '${op.method}', ${q(op.path)});`, `    } finally {`, `      await resource.remove(api, id);`, `    }`);
+    L.push(`  });`, '');
   }
   return close(L);
 }
@@ -429,17 +584,60 @@ export function renderContract(s: SuiteInput, meta: Meta): string {
 /** scenarios.spec.ts: multi-request flows whose primary (action under test) is this operation. */
 export function renderScenarios(s: SuiteInput, meta: Meta): string {
   const { op, refs, plan } = s;
-  const chain = plan!.chain;
-  const r = chain.read!;
+  // CRUD flows need the confirmed chain; reviewed business scenarios (--scenarios) do not.
+  const chain = plan?.chain as CrudChain;
+  const r = chain?.read as Operation;
+  const business = s.business ?? [];
   const sc = scenarioCases(s);
   const call = (o: Operation, options?: string) => {
     const ref = refs.get(o)!;
     return apiCall(ref, 'api', pathArgs(o, ref, chain.param, 'id'), options);
   };
-  const extra = ['Each scenario: setup (create) → action (this operation) → assertion (read) → cleanup (delete).'];
+  const extra = plan ? ['Each scenario: setup (create) → action (this operation) → assertion (read) → cleanup (delete).'] : [];
+  if (business.length) extra.push('Business scenarios come from the reviewed scenarios file: steps, expected statuses and cleanup as written there.');
   if (sc.updateRead) extra.push(`ASSUMPTION (not in spec, reviewer must confirm): ${plan!.assumptions.find((a) => a.startsWith('after')) ?? 'read after update returns the new values'}`);
   const L = suiteHeader('scenario', s, meta, extra);
-  L.push(...imports(s, ['expect', ...(sc.createRead ? ['readPointer'] : [])], true, false), '', `test.describe('${op.key} · scenarios', { tag: '@scenario' }, () => {`);
+  const names = ['expect', ...(sc.createRead || business.length ? ['readPointer'] : []), ...(sc.conflict || sc.deleteTwice || business.length ? ['expectStatus'] : []), ...(business.length ? ['fillVars', 'reportCleanupFailure'] : [])];
+  L.push(...imports(s, names, !!plan, false), '', `test.describe('${op.key} · scenarios', { tag: '@scenario' }, () => {`);
+  if (sc.deleteTwice) {
+    // A repeated delete of the same resource gets the documented 404.
+    L.push(
+      `  test('deleting the same resource again gets the documented 404', ${testOptions('negative', s.ids?.scenario.deleteTwice)}, async ({ api }) => {`,
+      `    const { id } = await resource.create(api);`,
+      `    try {`,
+      `      const first = await ${call(op, optionsWith(op))};`,
+      `      ${expectSuccess(op, 'first')}`,
+      `      const res = await ${call(op, optionsWith(op))};`,
+      `      expectStatus(res, ['404'], '${op.method}', ${q(op.path)});`,
+      `    } finally {`,
+      `      await resource.remove(api, id);`,
+      `    }`,
+      `  });`,
+      '',
+    );
+  }
+  if (sc.conflict) {
+    // 409 on the fields a reviewed deps file names: the same payload twice. Both records are removed.
+    const fields = s.errors!.conflict!.fields;
+    const payload = hasFill(plan) ? 'await resource.newCreatePayload(api)' : 'resource.newCreatePayload()';
+    L.push(
+      `  test(${q(`a second create with the same ${fields.join(', ')} gets the documented 409`)}, ${testOptions('negative', s.ids?.scenario.conflict)}, async ({ api }) => {`,
+      `    const payload = ${payload};`,
+      `    const first = await resource.create(api, payload);`,
+      `    try {`,
+      `      const res = await ${call(op, optionsWith(op, '{ data: payload }'))};`,
+      `      try {`,
+      `        expectStatus(res, ['409'], '${op.method}', ${q(op.path)});`,
+      `      } finally {`,
+      `        await resource.removeIfCreated(api, res);`,
+      `      }`,
+      `    } finally {`,
+      `      await resource.remove(api, first.id);`,
+      `    }`,
+      `  });`,
+      '',
+    );
+  }
   if (sc.createRead) {
     L.push(
       `  test('the created resource can be retrieved by ${r.operationId ?? r.key}', ${testOptions('positive', s.ids?.scenario.createRead)}, async ({ api }) => {`,
@@ -491,6 +689,7 @@ export function renderScenarios(s: SuiteInput, meta: Meta): string {
       '',
     );
   }
+  L.push(...business.flatMap((sc2, n) => businessTest(s, sc2, s.ids?.scenario.business[n])));
   return close(L);
 }
 
@@ -504,7 +703,7 @@ function close(L: string[]): string {
 
 export const CONTRACT_ASSERT = `// Generated by api-test-agent. Bridges Playwright responses to the OpenAPI contract.
 import { appendFileSync } from 'node:fs';
-import { expect, type APIResponse } from '@playwright/test';
+import { expect, test, type APIResponse } from '@playwright/test';
 import { ContractValidator } from './contract.js';
 import { spec } from './openapi.snapshot.js';
 
@@ -520,24 +719,28 @@ export function reportCleanupFailure(operation: string, id: string, status: numb
   else console.warn(\`cleanup failed: \${operation} \${id} → \${status} (test data left on the target)\`);
 }
 
-async function readBody(res: APIResponse): Promise<{ contentType: string | null; body: unknown }> {
+async function readBody(res: APIResponse): Promise<{ contentType: string | null; body: unknown; rawText: string }> {
   const contentType = res.headers()['content-type'] ?? null;
-  const text = await res.text();
-  let body: unknown = text;
+  const rawText = await res.text();
+  let body: unknown = rawText;
   if (contentType?.includes('json')) {
     try {
-      body = text.length ? JSON.parse(text) : null;
+      body = rawText.length ? JSON.parse(rawText) : null;
     } catch {
       body = undefined;
     }
   }
-  return { contentType, body };
+  return { contentType, body, rawText };
 }
 
-/** Validates status, content type and body against the spec. Failures are tagged CONTRACT_MISMATCH. */
+/**
+ * Validates status, headers, content type and body against the spec. Failures are tagged CONTRACT_MISMATCH.
+ * What could not be checked (e.g. a media type without a schema) is added to the test report as a note.
+ */
 export async function expectContract(res: APIResponse, method: string, path: string): Promise<unknown> {
-  const { contentType, body } = await readBody(res);
-  const r = validator.validateResponse({ method, path, status: res.status(), contentType, body });
+  const { contentType, body, rawText } = await readBody(res);
+  const r = validator.validateResponse({ method, path, status: res.status(), contentType, body, rawText, headers: res.headers() });
+  for (const note of r.notes ?? []) test.info().annotations.push({ type: 'contract-note', description: note });
   expect(r.ok, \`CONTRACT_MISMATCH \${method.toUpperCase()} \${path} (\${r.kind}): \${r.errors.join('; ')}\`).toBe(true);
   return body;
 }
@@ -553,6 +756,21 @@ export function expectStatus(res: APIResponse, documented: string[], method: str
 export async function expectRejected(res: APIResponse, documented: string[], method: string, path: string): Promise<unknown> {
   expectStatus(res, documented, method, path);
   return expectContract(res, method, path);
+}
+
+/** Scenario values: "{name}" alone is replaced by the saved value itself, inside a longer string by its text. */
+export function fillVars<T>(value: T, vars: Record<string, unknown>): T {
+  const sub = (v: any): any => {
+    if (typeof v === 'string') {
+      const whole = v.match(/^\\{([A-Za-z_]\\w*)\\}$/);
+      if (whole) return vars[whole[1]];
+      return v.replace(/\\{([A-Za-z_]\\w*)\\}/g, (_: string, k: string) => String(vars[k]));
+    }
+    if (Array.isArray(v)) return v.map(sub);
+    if (v && typeof v === 'object') return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, sub(x)]));
+    return v;
+  };
+  return sub(value);
 }
 
 export function readPointer(body: unknown, pointer: string): unknown {

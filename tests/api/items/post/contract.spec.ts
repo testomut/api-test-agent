@@ -13,7 +13,8 @@ const rejection = ["400"]; // documented in the spec
 
 test.describe('POST /items · contract', { tag: '@contract' }, () => {
   test('success response matches the documented contract', { tag: '@positive', annotation: { type: 'caseId', description: 'ata:op_UPN7JLUXYUZ7:contract:positive:response.body#:schema' } }, async ({ api }) => {
-    const res = await api.items.createItem({ data: resource.newCreatePayload() });
+    const payload = resource.newCreatePayload();
+    const res = await api.items.createItem({ data: payload });
     try {
       await expectContract(res, 'post', '/items');
     } finally {
@@ -22,16 +23,23 @@ test.describe('POST /items · contract', { tag: '@contract' }, () => {
   });
 
   const invalidBodies = [
-    { title: 'missing required field "name"', source: 'ItemInput.required', caseId: 'ata:op_UPN7JLUXYUZ7:contract:negative:request.body#/name:required', data: {"price":89.9,"tags":["hardware"]} },
-    { title: 'missing required field "price"', source: 'ItemInput.required', caseId: 'ata:op_UPN7JLUXYUZ7:contract:negative:request.body#/price:required', data: {"name":"Mechanical keyboard","tags":["hardware"]} },
+    { title: 'missing required field "name"', source: 'ItemInput.name.required', caseId: 'ata:op_UPN7JLUXYUZ7:contract:negative:request.body#/name:required', data: {"price":89.9,"tags":["hardware"]} },
+    { title: 'missing required field "price"', source: 'ItemInput.price.required', caseId: 'ata:op_UPN7JLUXYUZ7:contract:negative:request.body#/price:required', data: {"name":"Mechanical keyboard","tags":["hardware"]} },
+    { title: 'unknown field is rejected (additionalProperties: false)', source: 'ItemInput.additionalProperties', caseId: 'ata:op_UPN7JLUXYUZ7:contract:negative:request.body#:additionalProperties', data: {"name":"Mechanical keyboard","price":89.9,"tags":["hardware"],"__unexpected_field__":"api-agent"} },
     { title: '"name" has wrong type (string expected)', source: 'ItemInput.name.type', caseId: 'ata:op_UPN7JLUXYUZ7:contract:negative:request.body#/name:type', data: {"name":12345,"price":89.9,"tags":["hardware"]} },
+    { title: '"name" is null (not nullable)', source: 'ItemInput.name.nullable', caseId: 'ata:op_UPN7JLUXYUZ7:contract:negative:request.body#/name:nullable', data: {"name":null,"price":89.9,"tags":["hardware"]} },
     { title: '"name" shorter than minLength 1', source: 'ItemInput.name.minLength', caseId: 'ata:op_UPN7JLUXYUZ7:contract:negative:request.body#/name:minLength', data: {"name":"","price":89.9,"tags":["hardware"]} },
     { title: '"name" longer than maxLength 100', source: 'ItemInput.name.maxLength', caseId: 'ata:op_UPN7JLUXYUZ7:contract:negative:request.body#/name:maxLength', data: {"name":"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx","price":89.9,"tags":["hardware"]} },
     { title: '"price" has wrong type (number expected)', source: 'ItemInput.price.type', caseId: 'ata:op_UPN7JLUXYUZ7:contract:negative:request.body#/price:type', data: {"name":"Mechanical keyboard","price":"not-a-number","tags":["hardware"]} },
+    { title: '"price" is null (not nullable)', source: 'ItemInput.price.nullable', caseId: 'ata:op_UPN7JLUXYUZ7:contract:negative:request.body#/price:nullable', data: {"name":"Mechanical keyboard","price":null,"tags":["hardware"]} },
     { title: '"price" below minimum 0', source: 'ItemInput.price.minimum', caseId: 'ata:op_UPN7JLUXYUZ7:contract:negative:request.body#/price:minimum', data: {"name":"Mechanical keyboard","price":-1,"tags":["hardware"]} },
     { title: '"tags" has wrong type (array expected)', source: 'ItemInput.tags.type', caseId: 'ata:op_UPN7JLUXYUZ7:contract:negative:request.body#/tags:type', data: {"name":"Mechanical keyboard","price":89.9,"tags":"not-an-array"} },
-    { title: '"tags" has more than maxItems 10', source: 'ItemInput.tags.maxItems', caseId: 'ata:op_UPN7JLUXYUZ7:contract:negative:request.body#/tags:maxItems', data: {"name":"Mechanical keyboard","price":89.9,"tags":["x","x","x","x","x","x","x","x","x","x","x"]} },
-    { title: 'unknown field is rejected (additionalProperties: false)', source: 'ItemInput.additionalProperties', caseId: 'ata:op_UPN7JLUXYUZ7:contract:negative:request.body#:additionalProperties', data: {"name":"Mechanical keyboard","price":89.9,"tags":["hardware"],"unexpectedField":"api-agent"} },
+    { title: '"tags" is null (not nullable)', source: 'ItemInput.tags.nullable', caseId: 'ata:op_UPN7JLUXYUZ7:contract:negative:request.body#/tags:nullable', data: {"name":"Mechanical keyboard","price":89.9,"tags":null} },
+    { title: '"tags" has more than maxItems 10', source: 'ItemInput.tags.maxItems', caseId: 'ata:op_UPN7JLUXYUZ7:contract:negative:request.body#/tags:maxItems', data: {"name":"Mechanical keyboard","price":89.9,"tags":["hardware","hardware","hardware","hardware","hardware","hardware","hardware","hardware","hardware","hardware","hardware"]} },
+    { title: '"tags[]" has wrong type (string expected)', source: 'ItemInput.tags[].type', caseId: 'ata:op_UPN7JLUXYUZ7:contract:negative:request.body#/tags/*:type', data: {"name":"Mechanical keyboard","price":89.9,"tags":[12345]} },
+    { title: '"tags[]" is null (not nullable)', source: 'ItemInput.tags[].nullable', caseId: 'ata:op_UPN7JLUXYUZ7:contract:negative:request.body#/tags/*:nullable', data: {"name":"Mechanical keyboard","price":89.9,"tags":[null]} },
+    { title: '"tags[]" shorter than minLength 1', source: 'ItemInput.tags[].minLength', caseId: 'ata:op_UPN7JLUXYUZ7:contract:negative:request.body#/tags/*:minLength', data: {"name":"Mechanical keyboard","price":89.9,"tags":[""]} },
+    { title: '"tags[]" longer than maxLength 30', source: 'ItemInput.tags[].maxLength', caseId: 'ata:op_UPN7JLUXYUZ7:contract:negative:request.body#/tags/*:maxLength', data: {"name":"Mechanical keyboard","price":89.9,"tags":["xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"]} },
   ];
 
   for (const c of invalidBodies) {

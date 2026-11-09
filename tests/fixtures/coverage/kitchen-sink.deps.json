@@ -1,0 +1,14 @@
+{
+  "scenarios": [
+    {
+      "create": "createOrder",
+      "idFrom": "/id",
+      "param": "orderId",
+      "read": "getOrder",
+      "update": "updateOrder",
+      "delete": "deleteOrder",
+      "conflictOn": ["customer"],
+      "echoes": ["total", "status"]
+    }
+  ]
+}

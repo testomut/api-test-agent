@@ -11,7 +11,7 @@ import { expectContract } from '../../_support/contract-assert.js';
 import * as resource from '../../_support/items.resource.js';
 
 test.describe('DELETE /items/{itemId} · contract', { tag: '@contract' }, () => {
-  test('success response matches the documented contract', { tag: '@positive', annotation: { type: 'caseId', description: 'ata:op_EDRRXKOK26ZL:contract:positive:response.body#:schema' } }, async ({ api }) => {
+  test('success response matches the documented contract', { tag: '@positive', annotation: { type: 'caseId', description: 'ata:op_EDRRXKOK26ZL:contract:positive:response.status#/204:documented' } }, async ({ api }) => {
     const { id } = await resource.create(api);
     try {
       const res = await api.items.deleteItem(id);

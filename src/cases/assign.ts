@@ -2,6 +2,8 @@ import type { Operation } from '../types.js';
 import type { CrudChain } from '../generate/graph.js';
 import type { NegCase } from '../generate/negative.js';
 import { bodyPointer, caseId, location, scenarioUid, type CaseParts, type Phase, type ScenarioStep } from './ids.js';
+import type { ErrorPlan } from '../generate/error-cases.js';
+import type { ResolvedScenario } from '../scenarios/dsl.js';
 
 /**
  * Case IDs of the tests the generator writes for one operation (docs/OPENAPI_CHANGE_TRIGGER.md, "Stable IDs").
@@ -23,9 +25,10 @@ export interface ScenarioDefinition {
 }
 
 export interface SuiteCaseIds {
-  functional: { success?: string; notFound?: string; unauthorized?: string };
-  contract: { success?: string; notFound?: string; unauthorized?: string; body: string[]; query: string[] };
-  scenario: { createRead?: string; updateRead?: string; deleteGone?: string };
+  /** `variants`: one case per documented query value, in the order of `AssignInput.queryVariants`. */
+  functional: { success?: string; notFound?: string; unauthorized?: string; variants: string[]; invalidCredentials?: string; methodNotAllowed?: string; preconditionFailed?: string };
+  contract: { success?: string; notFound?: string; unauthorized?: string; body: string[]; params: string[]; unsupportedMediaType?: string };
+  scenario: { createRead?: string; updateRead?: string; deleteGone?: string; conflict?: string; deleteTwice?: string; business: string[] };
   /** Every case of this operation, by suite, with metadata for cases.json. */
   records: Record<'functional' | 'contract' | 'scenario', CaseRecord[]>;
   scenarios: Record<string, ScenarioDefinition>;
@@ -38,10 +41,16 @@ export interface AssignInput {
   chain?: CrudChain;
   positive: boolean;
   bodyCases: NegCase[];
-  queryCases: NegCase[];
+  paramCases: NegCase[];
   notFound?: { param: string };
   unauthorized: boolean;
-  scenarios: { createRead: boolean; updateRead: boolean; deleteGone: boolean };
+  scenarios: { createRead: boolean; updateRead: boolean; deleteGone: boolean; conflict?: boolean; deleteTwice?: boolean };
+  /** Reviewed business scenarios whose primary step is this operation. */
+  business?: ResolvedScenario[];
+  /** Documented error responses with a safe trigger (stage 6). */
+  errors?: ErrorPlan;
+  /** Documented query values the suite sends one by one (functional positive), each its own physical test. */
+  queryVariants?: { name: string; value: string | number | boolean }[];
 }
 
 export function assignCaseIds(s: AssignInput, uidOf: (op: Operation) => string): SuiteCaseIds {
@@ -58,7 +67,7 @@ export function assignCaseIds(s: AssignInput, uidOf: (op: Operation) => string):
     return id;
   };
   const ok = successStatus(s.op);
-  const ids: SuiteCaseIds = { functional: {}, contract: { body: [], query: [] }, scenario: {}, records, scenarios };
+  const ids: SuiteCaseIds = { functional: { variants: [] }, contract: { body: [], params: [] }, scenario: { business: [] }, records, scenarios };
   const rel = related.length ? { relatedOperationUids: related } : {};
 
   if (s.positive) {
@@ -72,6 +81,9 @@ export function assignCaseIds(s: AssignInput, uidOf: (op: Operation) => string):
       ids.contract.success = add('contract', { subjectUid: uid, polarity: 'positive', location: location.status(ok?.status ?? '200'), rule: 'documented' }, rel);
     }
   }
+  for (const v of s.queryVariants ?? []) {
+    ids.functional.variants.push(add('functional', { subjectUid: uid, polarity: 'positive', location: location.paramValue('query', v.name, v.value), rule: 'accepted-value' }));
+  }
   if (s.notFound) {
     ids.functional.notFound = add('functional', { subjectUid: uid, polarity: 'negative', location: location.path(s.notFound.param), rule: 'not-found' });
     ids.contract.notFound = add('contract', { subjectUid: uid, polarity: 'positive', location: location.status('404'), rule: 'documented' });
@@ -82,12 +94,20 @@ export function assignCaseIds(s: AssignInput, uidOf: (op: Operation) => string):
   }
   for (const c of s.bodyCases) {
     const t = c.target;
-    ids.contract.body.push(t ? add('contract', { subjectUid: uid, polarity: 'negative', location: location.requestBody(t.field === null ? '' : bodyPointer([t.field])), rule: t.rule }) : '');
+    ids.contract.body.push(t?.in === 'body' ? add('contract', { subjectUid: uid, polarity: 'negative', location: location.requestBody(bodyPointer(t.path)), rule: t.rule }) : '');
   }
-  for (const c of s.queryCases) {
+  for (const c of s.paramCases) {
     const t = c.target;
-    ids.contract.query.push(t?.field ? add('contract', { subjectUid: uid, polarity: 'negative', location: location.query(t.field), rule: t.rule }) : '');
+    const at = t && t.in !== 'body' && t.field ? { query: location.query, header: location.header, cookie: location.cookie, path: location.path }[t.in](t.field) : undefined;
+    ids.contract.params.push(at ? add('contract', { subjectUid: uid, polarity: 'negative', location: at, rule: t!.rule }) : '');
   }
+
+  // Documented error responses (stage 6).
+  const e = s.errors;
+  if (e?.invalidCredentials) ids.functional.invalidCredentials = add('functional', { subjectUid: uid, polarity: 'negative', location: location.security(), rule: 'invalid-credentials' });
+  if (e?.methodNotAllowed) ids.functional.methodNotAllowed = add('functional', { subjectUid: uid, polarity: 'negative', location: location.operation(), rule: 'method-not-allowed' });
+  if (e?.preconditionFailed && chain) ids.functional.preconditionFailed = add('functional', { subjectUid: uid, polarity: 'negative', location: location.header(e.preconditionFailed.header), rule: 'precondition-failed' }, rel);
+  if (e?.unsupportedMediaType && chain) ids.contract.unsupportedMediaType = add('contract', { subjectUid: uid, polarity: 'negative', location: location.requestContentType(), rule: 'content-type' }, rel);
 
   // CRUD scenarios: steps in order; the operation under test is the action.
   if (chain) {
@@ -104,9 +124,30 @@ export function assignCaseIds(s: AssignInput, uidOf: (op: Operation) => string):
       scenarios[sUid] = def;
       return add('scenario', { subjectUid: sUid, polarity: 'positive', location: location.lifecycle(), rule: 'crud' }, { relatedOperationUids: [...new Set(steps.map((x) => x.operationUid).filter((u) => u !== uid))] });
     };
+    if (s.scenarios.conflict) {
+      // A business rule confirmed by the deps file: the same create twice conflicts. Business scenarios have no roles.
+      const steps = [...step(chain.create, 'setup'), ...step(s.op, 'action'), ...step(chain.delete, 'cleanup')];
+      const sUid = scenarioUid('business', steps);
+      scenarios[sUid] = { scenarioType: 'business', primaryOperationUid: uid, steps };
+      ids.scenario.conflict = add('scenario', { subjectUid: sUid, polarity: 'negative', location: location.lifecycle(), rule: 'business-rule' }, { relatedOperationUids: [...new Set(steps.map((x) => x.operationUid).filter((u) => u !== uid))] });
+    }
+    if (s.scenarios.deleteTwice) {
+      // Deleting the same resource twice: the second delete gets the documented 404.
+      const steps = [...step(chain.create, 'setup'), ...step(s.op, 'action'), { operationUid: uid, phase: 'assertion' as Phase }];
+      const sUid = scenarioUid('crud', steps);
+      scenarios[sUid] = { scenarioType: 'crud', primaryOperationUid: uid, steps, roles: { create: chain.create ? uidOf(chain.create) : null, read: null, update: null, delete: uid } };
+      ids.scenario.deleteTwice = add('scenario', { subjectUid: sUid, polarity: 'negative', location: location.lifecycle(), rule: 'business-rule' }, { relatedOperationUids: [...new Set(steps.map((x) => x.operationUid).filter((u) => u !== uid))] });
+    }
     if (s.scenarios.createRead) ids.scenario.createRead = define([...step(chain.create, 'action'), ...step(chain.read, 'assertion'), ...step(chain.delete, 'cleanup')]);
     if (s.scenarios.updateRead) ids.scenario.updateRead = define([...step(chain.create, 'setup'), ...step(s.op, 'action'), ...step(chain.read, 'assertion'), ...step(chain.delete, 'cleanup')]);
     if (s.scenarios.deleteGone) ids.scenario.deleteGone = define([...step(chain.create, 'setup'), ...step(s.op, 'action'), ...step(chain.read, 'assertion')]);
+  }
+  // Reviewed business scenarios: identity from the external ID (never from the title or the steps).
+  for (const sc of s.business ?? []) {
+    const steps = sc.steps.map((st) => ({ operationUid: uidOf(st.op), phase: st.phase }));
+    const sUid = scenarioUid('business', steps, sc.id);
+    scenarios[sUid] = { scenarioType: 'business', primaryOperationUid: uidOf(sc.primaryOp), steps, externalId: sc.id };
+    ids.scenario.business.push(add('scenario', { subjectUid: sUid, polarity: sc.polarity, location: location.lifecycle(), rule: 'business-rule' }, { relatedOperationUids: [...new Set(steps.map((x) => x.operationUid).filter((u) => u !== uidOf(sc.primaryOp)))] }));
   }
   return ids;
 }

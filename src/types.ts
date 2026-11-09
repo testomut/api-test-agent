@@ -15,6 +15,9 @@ export interface ParamInfo {
   /** Where knownValue came from: an illustrative example, or a value the schema defines (default/enum/const). */
   knownSource?: 'example' | 'default' | 'enum' | 'const';
   schema?: Record<string, unknown>;
+  /** Serialization as documented (form, simple, spaceDelimited, …); defaults follow OpenAPI. */
+  style?: string;
+  explode?: boolean;
 }
 
 export interface ResponseInfo {

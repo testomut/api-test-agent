@@ -19,6 +19,10 @@ export interface CrudChain {
   source: string;
   /** Body fields of create taken from existing data at run time (deps file "fill"), never created by the test. */
   fill?: FillRule[];
+  /** Create body fields a reviewed deps file names as unique: the same values twice must give the documented 409. */
+  conflictOn?: string[];
+  /** Create body fields the create response returns unchanged (a reviewed mapping): asserted in the create test. */
+  echoes?: string[];
 }
 
 export interface FillRule {
@@ -46,6 +50,10 @@ export interface DepsFile {
     delete?: string;
     /** field → where its value comes from at run time: { "product_id": { "from": "getProducts", "pointer": "/data/0/id" } } */
     fill?: Record<string, { from: string; pointer: string }>;
+    /** Fields whose repeated values make create answer 409 (a reviewed business rule). */
+    conflictOn?: string[];
+    /** Fields the create response returns as sent. */
+    echoes?: string[];
   }[];
 }
 
@@ -69,6 +77,8 @@ export function findChains(doc: OpenApiDoc, ops: Operation[], deps?: DepsFile): 
       delete: s.delete ? byId.get(s.delete) : undefined,
       source: 'deps file (human-confirmed)',
       ...(s.fill ? { fill: Object.entries(s.fill).map(([field, f]) => ({ field, fromId: f?.from, from: byId.get(f?.from), pointer: f?.pointer })) } : {}),
+      ...(Array.isArray(s.conflictOn) && s.conflictOn.length ? { conflictOn: s.conflictOn.map(String) } : {}),
+      ...(Array.isArray(s.echoes) && s.echoes.length ? { echoes: s.echoes.map(String) } : {}),
     });
   }
 

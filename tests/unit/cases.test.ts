@@ -8,7 +8,7 @@ import { stringify, parse } from 'yaml';
 import { loadSpec } from '../../src/spec/loader.js';
 import { buildCatalog } from '../../src/spec/catalog.js';
 import { generate, findPython } from '../../src/generate/generate.js';
-import { ARRAY, bodyPointer, encodeSegment, parseCaseId, scenarioUid } from '../../src/cases/ids.js';
+import { ARRAY, CASE_RULE_VOCABULARY_VERSION, bodyPointer, encodeSegment, parseCaseId, scenarioUid } from '../../src/cases/ids.js';
 import { canonicalJson } from '../../src/cases/registry.js';
 import { validateManifest, validateRegistry } from '../../src/cases/validate.js';
 import { normalizeSpec, operationUid } from '../../src/change/normalize.js';
@@ -69,7 +69,7 @@ describe('generated suites carry case IDs', () => {
       expect((text.match(/  test\(/g) ?? []).length, f).toBe((text.match(/annotation: \{ type: 'caseId'/g) ?? []).length);
     }
     const reg = await registry();
-    expect(reg.caseRuleVocabularyVersion).toBe(1);
+    expect(reg.caseRuleVocabularyVersion).toBe(CASE_RULE_VOCABULARY_VERSION);
     expect(reg.operations[uid]).toEqual({ method: 'GET', path: '/items/{itemId}', normalizedPath: '/items/{}', operationId: 'getItem' });
     const covers = reg.cases[`ata:${operationUid('POST', '/items')}:contract:positive:response.body#:schema`].covers;
     expect(covers).toEqual(['contract:positive:response.content-type#/application~1json:documented', 'contract:positive:response.status#/201:documented']);
@@ -156,7 +156,7 @@ describe('registry validate', () => {
     reg.operations.op_AAAAAAAAAAAA = { method: 'GET', path: '/gone', normalizedPath: '/gone', status: 'retired' };
     const codes = run(reg).errors.map((e) => e.code);
     for (const c of ['CASE_ENTRY_MISMATCH', 'CASE_SUBJECT_NOT_FOUND', 'INVALID_SCENARIO', 'DUPLICATE_API_TEST_AGENT_ID', 'ALIAS_CYCLE', 'INVALID_TOMBSTONE']) expect(codes, c).toContain(c);
-    expect(run({ ...(await base()), caseRuleVocabularyVersion: 2 }).blocked.map((x) => x.code)).toEqual(['UNSUPPORTED_CASE_RULE_VOCABULARY']);
+    expect(run({ ...(await base()), caseRuleVocabularyVersion: CASE_RULE_VOCABULARY_VERSION + 1 }).blocked.map((x) => x.code)).toEqual(['UNSUPPORTED_CASE_RULE_VOCABULARY']);
   });
 
   it('with a spec: missing operations, unknown fields and parameters, wildcards on non-arrays, rules that do not fit', async () => {

@@ -34,6 +34,8 @@ export interface AuditReport {
     scenarios: { name: string; status: Status; reason: string; operations: string[] }[];
     /** Test data cleanup could not remove during the run: it stays on the target. */
     cleanupFailures?: { operation: string; id: string; status: number | string }[];
+    /** After a run: every physical test has its own case ID registered in cases.json. */
+    caseIdCheck?: { tests: number; missing: string[]; duplicates: string[]; unregistered: string[] };
   };
 }
 

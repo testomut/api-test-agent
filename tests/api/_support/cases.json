@@ -1,5 +1,5 @@
 {
-  "caseRuleVocabularyVersion": 1,
+  "caseRuleVocabularyVersion": 2,
   "cases": {
     "ata:op_4PIO72ZI3SIY:contract:negative:request.query#/limit:maximum": {
       "location": "request.query#/limit",
@@ -37,6 +37,20 @@
       "location": "operation",
       "polarity": "positive",
       "rule": "documented-success",
+      "subjectUid": "op_4PIO72ZI3SIY",
+      "suiteType": "functional"
+    },
+    "ata:op_4PIO72ZI3SIY:functional:positive:request.query#/limit/100:accepted-value": {
+      "location": "request.query#/limit/100",
+      "polarity": "positive",
+      "rule": "accepted-value",
+      "subjectUid": "op_4PIO72ZI3SIY",
+      "suiteType": "functional"
+    },
+    "ata:op_4PIO72ZI3SIY:functional:positive:request.query#/limit/1:accepted-value": {
+      "location": "request.query#/limit/1",
+      "polarity": "positive",
+      "rule": "accepted-value",
       "subjectUid": "op_4PIO72ZI3SIY",
       "suiteType": "functional"
     },
@@ -90,6 +104,17 @@
         "op_UPN7JLUXYUZ7"
       ],
       "rule": "schema",
+      "status": "retired",
+      "subjectUid": "op_EDRRXKOK26ZL",
+      "suiteType": "contract"
+    },
+    "ata:op_EDRRXKOK26ZL:contract:positive:response.status#/204:documented": {
+      "location": "response.status#/204",
+      "polarity": "positive",
+      "relatedOperationUids": [
+        "op_UPN7JLUXYUZ7"
+      ],
+      "rule": "documented",
       "subjectUid": "op_EDRRXKOK26ZL",
       "suiteType": "contract"
     },
@@ -163,6 +188,13 @@
       "subjectUid": "op_UPN7JLUXYUZ7",
       "suiteType": "contract"
     },
+    "ata:op_UPN7JLUXYUZ7:contract:negative:request.body#/name:nullable": {
+      "location": "request.body#/name",
+      "polarity": "negative",
+      "rule": "nullable",
+      "subjectUid": "op_UPN7JLUXYUZ7",
+      "suiteType": "contract"
+    },
     "ata:op_UPN7JLUXYUZ7:contract:negative:request.body#/name:required": {
       "location": "request.body#/name",
       "polarity": "negative",
@@ -184,6 +216,13 @@
       "subjectUid": "op_UPN7JLUXYUZ7",
       "suiteType": "contract"
     },
+    "ata:op_UPN7JLUXYUZ7:contract:negative:request.body#/price:nullable": {
+      "location": "request.body#/price",
+      "polarity": "negative",
+      "rule": "nullable",
+      "subjectUid": "op_UPN7JLUXYUZ7",
+      "suiteType": "contract"
+    },
     "ata:op_UPN7JLUXYUZ7:contract:negative:request.body#/price:required": {
       "location": "request.body#/price",
       "polarity": "negative",
@@ -198,10 +237,45 @@
       "subjectUid": "op_UPN7JLUXYUZ7",
       "suiteType": "contract"
     },
+    "ata:op_UPN7JLUXYUZ7:contract:negative:request.body#/tags/*:maxLength": {
+      "location": "request.body#/tags/*",
+      "polarity": "negative",
+      "rule": "maxLength",
+      "subjectUid": "op_UPN7JLUXYUZ7",
+      "suiteType": "contract"
+    },
+    "ata:op_UPN7JLUXYUZ7:contract:negative:request.body#/tags/*:minLength": {
+      "location": "request.body#/tags/*",
+      "polarity": "negative",
+      "rule": "minLength",
+      "subjectUid": "op_UPN7JLUXYUZ7",
+      "suiteType": "contract"
+    },
+    "ata:op_UPN7JLUXYUZ7:contract:negative:request.body#/tags/*:nullable": {
+      "location": "request.body#/tags/*",
+      "polarity": "negative",
+      "rule": "nullable",
+      "subjectUid": "op_UPN7JLUXYUZ7",
+      "suiteType": "contract"
+    },
+    "ata:op_UPN7JLUXYUZ7:contract:negative:request.body#/tags/*:type": {
+      "location": "request.body#/tags/*",
+      "polarity": "negative",
+      "rule": "type",
+      "subjectUid": "op_UPN7JLUXYUZ7",
+      "suiteType": "contract"
+    },
     "ata:op_UPN7JLUXYUZ7:contract:negative:request.body#/tags:maxItems": {
       "location": "request.body#/tags",
       "polarity": "negative",
       "rule": "maxItems",
+      "subjectUid": "op_UPN7JLUXYUZ7",
+      "suiteType": "contract"
+    },
+    "ata:op_UPN7JLUXYUZ7:contract:negative:request.body#/tags:nullable": {
+      "location": "request.body#/tags",
+      "polarity": "negative",
+      "rule": "nullable",
       "subjectUid": "op_UPN7JLUXYUZ7",
       "suiteType": "contract"
     },
@@ -279,6 +353,13 @@
       "subjectUid": "op_WRZHS7HTMVON",
       "suiteType": "contract"
     },
+    "ata:op_WRZHS7HTMVON:functional:negative:request.security:invalid-credentials": {
+      "location": "request.security",
+      "polarity": "negative",
+      "rule": "invalid-credentials",
+      "subjectUid": "op_WRZHS7HTMVON",
+      "suiteType": "functional"
+    },
     "ata:op_WRZHS7HTMVON:functional:negative:request.security:unauthorized": {
       "location": "request.security",
       "polarity": "negative",
@@ -307,6 +388,13 @@
       "subjectUid": "op_Z4MCICNBZN3S",
       "suiteType": "contract"
     },
+    "ata:op_Z4MCICNBZN3S:contract:negative:request.body#/name:nullable": {
+      "location": "request.body#/name",
+      "polarity": "negative",
+      "rule": "nullable",
+      "subjectUid": "op_Z4MCICNBZN3S",
+      "suiteType": "contract"
+    },
     "ata:op_Z4MCICNBZN3S:contract:negative:request.body#/name:type": {
       "location": "request.body#/name",
       "polarity": "negative",
@@ -321,6 +409,13 @@
       "subjectUid": "op_Z4MCICNBZN3S",
       "suiteType": "contract"
     },
+    "ata:op_Z4MCICNBZN3S:contract:negative:request.body#/price:nullable": {
+      "location": "request.body#/price",
+      "polarity": "negative",
+      "rule": "nullable",
+      "subjectUid": "op_Z4MCICNBZN3S",
+      "suiteType": "contract"
+    },
     "ata:op_Z4MCICNBZN3S:contract:negative:request.body#/price:type": {
       "location": "request.body#/price",
       "polarity": "negative",
@@ -332,6 +427,7 @@
       "location": "request.body#/tags",
       "polarity": "negative",
       "rule": "maxItems",
+      "status": "retired",
       "subjectUid": "op_Z4MCICNBZN3S",
       "suiteType": "contract"
     },
@@ -339,6 +435,7 @@
       "location": "request.body#/tags",
       "polarity": "negative",
       "rule": "type",
+      "status": "retired",
       "subjectUid": "op_Z4MCICNBZN3S",
       "suiteType": "contract"
     },
@@ -407,6 +504,17 @@
       "subjectUid": "scn_4EG5AXFZY2YS",
       "suiteType": "scenario"
     },
+    "ata:scn_6I3KELJAMGYP:scenario:positive:lifecycle:business-rule": {
+      "location": "lifecycle",
+      "polarity": "positive",
+      "relatedOperationUids": [
+        "op_EDRRXKOK26ZL",
+        "op_UPN7JLUXYUZ7"
+      ],
+      "rule": "business-rule",
+      "subjectUid": "scn_6I3KELJAMGYP",
+      "suiteType": "scenario"
+    },
     "ata:scn_7MN4FYBHZCZQ:scenario:positive:lifecycle:crud": {
       "location": "lifecycle",
       "polarity": "positive",
@@ -428,6 +536,27 @@
       ],
       "rule": "crud",
       "subjectUid": "scn_I6MIGZS3ULNR",
+      "suiteType": "scenario"
+    },
+    "ata:scn_V2OYCQUW2VKW:scenario:negative:lifecycle:business-rule": {
+      "location": "lifecycle",
+      "polarity": "negative",
+      "relatedOperationUids": [
+        "op_UPN7JLUXYUZ7"
+      ],
+      "rule": "business-rule",
+      "subjectUid": "scn_V2OYCQUW2VKW",
+      "suiteType": "scenario"
+    },
+    "ata:scn_VQLGIE5JMTBU:scenario:negative:lifecycle:business-rule": {
+      "location": "lifecycle",
+      "polarity": "negative",
+      "relatedOperationUids": [
+        "op_EDRRXKOK26ZL",
+        "op_UPN7JLUXYUZ7"
+      ],
+      "rule": "business-rule",
+      "subjectUid": "scn_VQLGIE5JMTBU",
       "suiteType": "scenario"
     }
   },
@@ -526,6 +655,25 @@
         }
       ]
     },
+    "scn_6I3KELJAMGYP": {
+      "externalId": "items.read-created",
+      "primaryOperationUid": "op_7P2UH7UKQRHC",
+      "scenarioType": "business",
+      "steps": [
+        {
+          "operationUid": "op_UPN7JLUXYUZ7",
+          "phase": "setup"
+        },
+        {
+          "operationUid": "op_7P2UH7UKQRHC",
+          "phase": "action"
+        },
+        {
+          "operationUid": "op_EDRRXKOK26ZL",
+          "phase": "cleanup"
+        }
+      ]
+    },
     "scn_7MN4FYBHZCZQ": {
       "primaryOperationUid": "op_UPN7JLUXYUZ7",
       "roles": {
@@ -571,6 +719,53 @@
         {
           "operationUid": "op_7P2UH7UKQRHC",
           "phase": "assertion"
+        },
+        {
+          "operationUid": "op_EDRRXKOK26ZL",
+          "phase": "cleanup"
+        }
+      ]
+    },
+    "scn_V2OYCQUW2VKW": {
+      "primaryOperationUid": "op_EDRRXKOK26ZL",
+      "roles": {
+        "create": "op_UPN7JLUXYUZ7",
+        "read": null,
+        "update": null,
+        "delete": "op_EDRRXKOK26ZL"
+      },
+      "scenarioType": "crud",
+      "steps": [
+        {
+          "operationUid": "op_UPN7JLUXYUZ7",
+          "phase": "setup"
+        },
+        {
+          "operationUid": "op_EDRRXKOK26ZL",
+          "phase": "action"
+        },
+        {
+          "operationUid": "op_EDRRXKOK26ZL",
+          "phase": "assertion"
+        }
+      ]
+    },
+    "scn_VQLGIE5JMTBU": {
+      "externalId": "items.gone-after-delete",
+      "primaryOperationUid": "op_7P2UH7UKQRHC",
+      "scenarioType": "business",
+      "steps": [
+        {
+          "operationUid": "op_UPN7JLUXYUZ7",
+          "phase": "setup"
+        },
+        {
+          "operationUid": "op_EDRRXKOK26ZL",
+          "phase": "setup"
+        },
+        {
+          "operationUid": "op_7P2UH7UKQRHC",
+          "phase": "action"
         },
         {
           "operationUid": "op_EDRRXKOK26ZL",

@@ -30,15 +30,15 @@ test.describe('PATCH /items/{itemId} · contract', { tag: '@contract' }, () => {
   });
 
   const invalidBodies = [
+    { title: 'unknown field is rejected (additionalProperties: false)', source: 'ItemPatch.additionalProperties', caseId: 'ata:op_Z4MCICNBZN3S:contract:negative:request.body#:additionalProperties', data: {"name":"Mechanical keyboard v2","price":99.5,"__unexpected_field__":"api-agent"} },
+    { title: '"(body)" has fewer than minProperties 1', source: 'ItemPatch.minProperties', caseId: 'ata:op_Z4MCICNBZN3S:contract:negative:request.body#:minProperties', data: {} },
     { title: '"name" has wrong type (string expected)', source: 'ItemPatch.name.type', caseId: 'ata:op_Z4MCICNBZN3S:contract:negative:request.body#/name:type', data: {"name":12345,"price":99.5} },
+    { title: '"name" is null (not nullable)', source: 'ItemPatch.name.nullable', caseId: 'ata:op_Z4MCICNBZN3S:contract:negative:request.body#/name:nullable', data: {"name":null,"price":99.5} },
     { title: '"name" shorter than minLength 1', source: 'ItemPatch.name.minLength', caseId: 'ata:op_Z4MCICNBZN3S:contract:negative:request.body#/name:minLength', data: {"name":"","price":99.5} },
     { title: '"name" longer than maxLength 100', source: 'ItemPatch.name.maxLength', caseId: 'ata:op_Z4MCICNBZN3S:contract:negative:request.body#/name:maxLength', data: {"name":"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx","price":99.5} },
     { title: '"price" has wrong type (number expected)', source: 'ItemPatch.price.type', caseId: 'ata:op_Z4MCICNBZN3S:contract:negative:request.body#/price:type', data: {"name":"Mechanical keyboard v2","price":"not-a-number"} },
+    { title: '"price" is null (not nullable)', source: 'ItemPatch.price.nullable', caseId: 'ata:op_Z4MCICNBZN3S:contract:negative:request.body#/price:nullable', data: {"name":"Mechanical keyboard v2","price":null} },
     { title: '"price" below minimum 0', source: 'ItemPatch.price.minimum', caseId: 'ata:op_Z4MCICNBZN3S:contract:negative:request.body#/price:minimum', data: {"name":"Mechanical keyboard v2","price":-1} },
-    { title: '"tags" has wrong type (array expected)', source: 'ItemPatch.tags.type', caseId: 'ata:op_Z4MCICNBZN3S:contract:negative:request.body#/tags:type', data: {"name":"Mechanical keyboard v2","price":99.5,"tags":"not-an-array"} },
-    { title: '"tags" has more than maxItems 10', source: 'ItemPatch.tags.maxItems', caseId: 'ata:op_Z4MCICNBZN3S:contract:negative:request.body#/tags:maxItems', data: {"name":"Mechanical keyboard v2","price":99.5,"tags":["x","x","x","x","x","x","x","x","x","x","x"]} },
-    { title: 'unknown field is rejected (additionalProperties: false)', source: 'ItemPatch.additionalProperties', caseId: 'ata:op_Z4MCICNBZN3S:contract:negative:request.body#:additionalProperties', data: {"name":"Mechanical keyboard v2","price":99.5,"unexpectedField":"api-agent"} },
-    { title: 'empty object (minProperties 1)', source: 'ItemPatch.minProperties', caseId: 'ata:op_Z4MCICNBZN3S:contract:negative:request.body#:minProperties', data: {} },
   ];
 
   for (const c of invalidBodies) {

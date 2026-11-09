@@ -16,4 +16,9 @@ test.describe('GET /me · functional', { tag: '@functional' }, () => {
     const res = await publicApi.me.getMe();
     expectStatus(res, ['401'], 'get', '/me');
   });
+
+  test('returns documented 401 for invalid credentials', { tag: '@negative', annotation: { type: 'caseId', description: 'ata:op_WRZHS7HTMVON:functional:negative:request.security:invalid-credentials' } }, async ({ publicApi }) => {
+    const res = await publicApi.me.getMe({ headers: {"Authorization":"Bearer api-agent-invalid-token"} });
+    expectStatus(res, ['401'], 'get', '/me');
+  });
 });

@@ -159,6 +159,10 @@ export function buildRegistry(i: BuildInput): Registry {
     if (active.has(uid) || e.status === 'retired') continue;
     reg.operations[uid] = { ...e, status: 'retired', retiredRevision: i.spec.revision, retiredSpecHash: i.spec.hash, lastValidatedGeneratorVersion: i.generatorVersion };
   }
+  // Cases this run generates are active (a retired one the generator produces again is reactivated: it is the
+  // same rule on the same subject); every other case stays as a tombstone, never deleted, never reused.
+  const current = new Set(i.cases.map((c) => c.caseId));
+  for (const [id, c] of Object.entries(reg.cases)) if (!current.has(id) && c.status !== 'retired') reg.cases[id] = { ...c, status: 'retired' };
   for (const c of i.cases) {
     const { caseId: id, ...rest } = c;
     reg.cases[id] = { ...rest };

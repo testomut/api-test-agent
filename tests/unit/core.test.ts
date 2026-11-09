@@ -127,7 +127,8 @@ describe('safety helpers', () => {
 });
 
 import { operationFolder } from '../../src/generate/templates.js';
-import { bodyCases, documentedRejections, queryCases } from '../../src/generate/negative.js';
+import { bodyCases, documentedRejections } from '../../src/generate/negative.js';
+import { paramCasesDetailed } from '../../src/generate/param-cases.js';
 
 describe('test layout', () => {
   it('puts each operation in <resource>/<method>[-by-id]', () => {
@@ -150,7 +151,8 @@ describe('negative cases', () => {
   });
 
   it('derives query cases from parameter bounds', () => {
-    expect(queryCases(op('GET /items')).map((c) => c.query)).toEqual([{ limit: 'abc' }, { limit: 0 }, { limit: 101 }]);
+    const r = paramCasesDetailed(demo.doc, op('GET /items'), { allowPath: true, allowOthers: true });
+    expect(r.cases.map((c) => c.request?.params)).toEqual([{ limit: 'not-a-number' }, { limit: 0 }, { limit: 101 }]);
   });
 
   it('breaks exclusive bounds, minItems and query minLength, one rule per case', () => {
@@ -172,9 +174,9 @@ describe('negative cases', () => {
         { name: 'q', in: 'query', required: false, schema: { type: 'string', minLength: 3 } },
       ],
     } as any;
-    const q = queryCases(search);
-    expect(q.find((c) => c.source === 'query.page.exclusiveMinimum')?.query).toEqual({ page: 0 });
-    expect(q.find((c) => c.source === 'query.q.minLength')?.query).toEqual({ q: 'xx' });
+    const q = paramCasesDetailed(demo.doc, search, { allowPath: true, allowOthers: true }).cases;
+    expect(q.find((c) => c.source === 'query.page.exclusiveMinimum')?.request?.params).toEqual({ page: 0 });
+    expect(q.find((c) => c.source === 'query.q.minLength')?.request?.params).toEqual({ q: 'xx' });
   });
 
   it('only uses rejections the spec documents', () => {
@@ -394,7 +396,7 @@ describe('unique values for operations that document 409', () => {
     expect(helper).toContain('POST /items documents 409 (conflict): name get a unique suffix');
     expect(helper).toContain('export const newCreatePayload = () => unique(createPayload, {"name":100});');
     expect(helper).toContain('data: unknown = newCreatePayload()');
-    expect(await readFileP(joinP(dir, 'items/post/functional.spec.ts'), 'utf8')).toContain('{ data: resource.newCreatePayload() }');
+    expect(await readFileP(joinP(dir, 'items/post/functional.spec.ts'), 'utf8')).toContain('const payload = resource.newCreatePayload();');
     const scenario = await readFileP(joinP(dir, 'items/patch-by-id/scenarios.spec.ts'), 'utf8');
     expect(scenario).toMatch(/const payload = resource\.newUpdatePayload\(\);[\s\S]*toMatchObject\(payload\);/);
 
@@ -402,7 +404,7 @@ describe('unique values for operations that document 409', () => {
     await generate({ ...demo, doc: d } as any, buildCatalog(d), { outDir: py, version: 'test', lang: 'python' });
     const pyHelper = await readFileP(joinP(py, '_support/items_resource.py'), 'utf8');
     expect(pyHelper).toContain('UNIQUE_CREATE = {\n    "name": 100,\n}');
-    expect(await readFileP(joinP(py, 'items/post/test_functional.py'), 'utf8')).toContain('json=items.new_create_payload()');
+    expect(await readFileP(joinP(py, 'items/post/test_functional.py'), 'utf8')).toContain('payload = items.new_create_payload()');
   });
 });
 
@@ -488,7 +490,7 @@ describe('deps "fill": values from existing data', () => {
     expect(helper).toContain("payload['name'] = readPointer(await source0.json(), '/status');");
     expect(helper).toContain('unique(createPayload, {})'); // name is filled, not suffixed, despite the documented 409
     expect(helper).toContain('data ??= await newCreatePayload(api);');
-    expect(await readFileP(joinP(dir, 'items/post/functional.spec.ts'), 'utf8')).toContain('{ data: await resource.newCreatePayload(api) }');
+    expect(await readFileP(joinP(dir, 'items/post/functional.spec.ts'), 'utf8')).toContain('const payload = await resource.newCreatePayload(api);');
 
     const py = await mkdtemp(joinP(tmpdir(), 'ata-fill-py-'));
     await generate(spec, buildCatalog(d), { outDir: py, version: 'test', lang: 'python', deps: deps({ name: { from: 'getHealth', pointer: '/status' } }) });

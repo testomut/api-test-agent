@@ -1,0 +1,161 @@
+# Synthetic spec covering as many schema keywords and parameter types as possible (docs/SUPPORT_MATRIX.md).
+# Every example is valid, so the sampled payload is valid and each negative case breaks exactly one rule.
+openapi: 3.1.0
+info:
+  title: Kitchen sink
+  version: '1.0'
+security:
+  - bearer: []
+paths:
+  /orders:
+    get:
+      operationId: listOrders
+      parameters:
+        - { name: status, in: query, schema: { type: string, enum: [new, paid] } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 50, multipleOf: 1 } }
+        - { name: code, in: query, schema: { type: string, pattern: '^[A-Z]{3}$' } }
+        - { name: since, in: query, schema: { type: string, format: date } }
+        - { name: tags, in: query, style: form, explode: false, schema: { type: array, items: { type: string }, maxItems: 3, example: [a, b] } }
+        - { name: ids, in: query, schema: { type: array, items: { type: integer }, uniqueItems: true, example: [1, 2] } }
+        - { name: X-Request-Id, in: header, required: true, schema: { type: string, format: uuid, example: 00000000-0000-4000-8000-000000000001 } }
+        - { name: session, in: cookie, schema: { type: string, minLength: 8 } }
+      responses:
+        '200':
+          description: ok
+          headers:
+            X-Total-Count: { required: true, schema: { type: integer, minimum: 0 } }
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/Order' } }
+        '400': { description: invalid }
+        '401': { description: no or invalid token }
+        '403': { description: not allowed }
+        '429': { description: slow down }
+    post:
+      operationId: createOrder
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/OrderInput' }
+      responses:
+        '201':
+          description: created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Order' }
+          links:
+            GetOrder: { operationId: getOrder, parameters: { orderId: '$response.body#/id' } }
+            DeleteOrder: { operationId: deleteOrder, parameters: { orderId: '$response.body#/id' } }
+            UpdateOrder: { operationId: updateOrder, parameters: { orderId: '$response.body#/id' } }
+        '400': { description: invalid }
+        '409': { description: duplicate }
+        '415': { description: unsupported media type }
+  /orders/{orderId}:
+    parameters:
+      - { name: orderId, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      operationId: getOrder
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Order' }
+        '400': { description: invalid id }
+        '404': { description: missing }
+    put:
+      operationId: updateOrder
+      parameters:
+        - { name: If-Match, in: header, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/OrderInput' }
+      responses:
+        '200':
+          description: updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Order' }
+        '404': { description: missing }
+        '412': { description: etag mismatch }
+        '415': { description: unsupported media type }
+        '418': { description: teapot }
+    delete:
+      operationId: deleteOrder
+      responses:
+        '204': { description: deleted }
+        '404': { description: missing }
+  /orders/{orderId}/cancel:
+    parameters:
+      - { name: orderId, in: path, required: true, schema: { type: string, format: uuid, example: 00000000-0000-4000-8000-000000000009 } }
+    post:
+      operationId: cancelOrder
+      responses:
+        '202': { description: accepted }
+        '405': { description: method not allowed }
+components:
+  securitySchemes:
+    bearer: { type: http, scheme: bearer }
+  schemas:
+    OrderInput:
+      type: object
+      additionalProperties: false
+      required: [customer, items, total]
+      properties:
+        customer:
+          type: object
+          required: [name, email]
+          properties:
+            name: { type: string, minLength: 2, maxLength: 40, example: Ada }
+            email: { type: string, format: email, example: ada@example.com }
+            code: { type: string, pattern: '^[A-Z]{3}$', example: ABC }
+            address:
+              type: object
+              maxProperties: 3
+              properties:
+                city: { type: string, maxLength: 20 }
+                zip: { type: string }
+              example: { city: Paris, zip: '75001' }
+        items:
+          type: array
+          minItems: 1
+          maxItems: 3
+          uniqueItems: true
+          items:
+            type: object
+            required: [sku, qty]
+            properties:
+              sku: { type: string }
+              qty: { type: integer, minimum: 1, maximum: 10 }
+              price: { type: number, exclusiveMinimum: 0, exclusiveMaximum: 1000, multipleOf: 0.5 }
+          example: [{ sku: SKU-1, qty: 2, price: 9.5 }]
+        total: { type: number, minimum: 0, example: 19 }
+        status: { type: string, enum: [new, paid], example: new }
+        priority: { type: integer, enum: [1, 2, 3], example: 1 }
+        gift: { type: boolean, enum: [false], example: false }
+        kind: { const: order, example: order }
+        note: { type: string, example: hi }
+        comment: { type: [string, 'null'], example: null }
+        tags: { type: array, items: { type: string, maxLength: 5 }, maxItems: 2, example: [a] }
+        meta:
+          type: object
+          minProperties: 1
+          properties:
+            a: { type: string }
+            b: { type: string }
+          example: { a: x, b: y }
+        payment:
+          oneOf:
+            - { type: object, required: [card], properties: { card: { type: string } } }
+            - { type: object, required: [iban], properties: { iban: { type: string } } }
+          example: { card: '4111' }
+    Order:
+      allOf:
+        - $ref: '#/components/schemas/OrderInput'
+        - type: object
+          required: [id]
+          properties:
+            id: { type: string, format: uuid, readOnly: true }
