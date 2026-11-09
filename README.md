@@ -132,6 +132,21 @@ Generated files are overwritten when the spec changes; put hand-written cases in
 
 `generate --draft-pr` commits the tests and the report on a new branch and opens a GitHub Draft PR. It never pushes to the default branch or merges.
 
+## What is covered, and what is not
+
+Coverage is reported, never implied. The full keyword-by-keyword table is in [docs/SUPPORT_MATRIX.md](docs/SUPPORT_MATRIX.md); every check that could not be generated is in `coverage-gaps.json` with a machine code and its exact location.
+
+**Derived from the spec alone (deterministic):**
+- request bodies, recursively (`request.body#/items/*/sku`): required, type, null, enum, const, lengths, pattern, format, bounds, multipleOf, array and object size, uniqueItems, additionalProperties; one broken rule per case;
+- query, header, cookie and path parameters, arrays in their documented style;
+- documented successes, documented enum values and valid limits of query parameters (one test and one case ID each);
+- responses: status, Content-Type, headers, JSON / text schema, no body where none is documented, writeOnly;
+- documented errors with a safe trigger: 400 / 422, 401 (missing and invalid credentials), 404, 405 (GET only), 412, 415.
+
+**Needs your confirmation (deps or scenarios file):** CRUD chains and cleanup, 409 conflicts (`conflictOn`), fields a create returns as sent (`echoes`), values taken from existing data (`fill`), and every business flow (`--scenarios`): state transitions, parent → child, login / refresh, list / search / pagination.
+
+**Never generated (reported as gaps):** 403 without a reviewed role setup, 429, a 405 that would need an unsafe method, oneOf / anyOf branches other than the one sent, rules that cannot be broken without breaking another, media types other than JSON / text, and anything the spec does not state.
+
 ## Options
 
 | Option | Default | |

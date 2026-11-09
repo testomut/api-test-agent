@@ -146,11 +146,15 @@ CRUD flows come from confirmed dependencies (OpenAPI links or the deps file). Bu
 
 ## Reporting and CI
 
-| Item | State | Stage |
-|---|---|---|
-| `coverage-gaps.json` per operation | 🟡 | counts + free-text reasons, no machine codes, no potential / dropped counts | 10 |
+| Item | State | Notes | Stage |
+|---|---|---|---|
+| `coverage-gaps.json` | ✅ | summary (operations, generated tests per suite, gaps by code); per operation: gaps with code and location, per-suite generated count and missing code, positive-blocked code, body cases potential / generated / dropped, unchecked statuses (with the reason code), unchecked request media types, unchecked security alternatives | 10 ✔ |
+| machine codes | ✅ | `MISSING_VALID_SAMPLE`, `MISSING_RESOURCE_SOURCE`, `MISSING_CLEANUP`, `MISSING_RESPONSE_SCHEMA`, `UNSUPPORTED_SCHEMA_KEYWORD`, `UNSUPPORTED_MEDIA_TYPE`, `UNCONFIRMED_BUSINESS_RULE`, `UNCOVERED_VARIANT`, `CANNOT_ISOLATE_RULE`, `CASE_LIMIT_REACHED`, `UNREACHABLE_RESPONSE_STATUS`, `UNSAFE_LIVE_CHECK`, `DEPRECATED_OPERATION`, `NO_DOCUMENTED_REJECTION` (`src/generate/coverage.ts`) | 10 ✔ |
 | unique case ID per physical test | ✅ | checked on the real run: Playwright JSON report annotations, pytest collection (`API_AGENT_CASES_OUT`) | 2 ✔ |
+| cases no longer generated | ✅ | tombstones (`status: retired`), reactivated when generated again | 2 ✔ |
 | CI: registry and manifest validation | ✅ | `registry validate --spec --require-spec`, `manifest validate`, TypeScript and Python | 2 ✔ |
-| CI: no duplicate case IDs, every test registered | ✅ | plus: TypeScript and Python generate the same active cases | 2 ✔ |
-| cases no longer generated | ✅ | become tombstones (`status: retired`), reactivated when generated again | 2 ✔ |
-| CI: expected coverage gaps | ❌ | | 10 |
+| CI: no duplicate case IDs, every test registered | ✅ | | 2 ✔ |
+| CI: TypeScript / Python parity | ✅ | the same active cases for the demo API and for the synthetic fixture | 9 ✔ |
+| CI: the synthetic fixture compiles | ✅ | `tests/fixtures/coverage/kitchen-sink.yaml` generated in both languages: `tsc`, `py_compile`, valid registry | 6 ✔ |
+| CI: expected coverage gaps | ✅ | demo API (`demo-api/expected-gaps.json`) in CI; the synthetic fixture in unit tests | 10 ✔ |
+| README | ✅ | "What is covered, and what is not": spec-derived vs needs confirmation vs never generated | 10 ✔ |

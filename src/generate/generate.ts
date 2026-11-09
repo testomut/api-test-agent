@@ -15,6 +15,7 @@ import { isUrl } from '../change/network.js';
 import { bodyCasesDetailed, compositionGaps, type CoverageGap } from './body-cases.js';
 import { paramCasesDetailed, sendable } from './param-cases.js';
 import { errorPlan } from './error-cases.js';
+import { positiveCode, uncheckedRequest, uncheckedStatuses } from './coverage.js';
 import type { ResolvedScenario } from '../scenarios/dsl.js';
 import { bodyCases, documentedRejections, nonexistentIdExpr, type NegCase } from './negative.js';
 import { CONTRACT_ASSERT, SUITE_TYPES, TS_FILES, operationFolder, queryVariants, renderContract, renderFunctional, renderResourceHelpers, renderScenarios, scenarioCases, suiteCounts, type ChainPlan, type Meta, type SuiteInput, type SuiteType } from './templates.js';
@@ -80,6 +81,16 @@ export interface Coverage {
   gaps: CoverageGap[];
   /** Body negative cases found / generated / dropped by the limit. */
   bodyCases?: { potential: number; generated: number; dropped: number };
+  /** Machine code of positiveBlocked. */
+  positiveBlockedCode: string | null;
+  /** Per suite: generated tests, and the code when the suite is empty. */
+  suites: Record<SuiteType, { generated: number; missingCode: string | null }>;
+  /** Documented statuses no generated test exercises. */
+  uncheckedStatuses: { status: string; code: string }[];
+  /** Request media types never sent (the suite sends JSON). */
+  uncheckedRequestContentTypes: string[];
+  /** Security alternatives beyond the one the suite uses. */
+  uncheckedSecurityAlternatives: string[][];
 }
 
 function jsonBodySchema(spec: LoadedSpec, op: Operation): any {
@@ -341,7 +352,27 @@ export async function generate(spec: LoadedSpec, ops: Operation[], o: GenerateOp
         return [];
       }),
     );
-    coverage.push({ operation: op.key, counts, positiveBlocked: posReason ?? null, negativeGaps: why, lifecycle: plan ? plan.chain.name : null, gaps: [...bodyGaps, ...errors.gaps, ...variantGaps, ...responseGaps], ...(bodyStats ? { bodyCases: bodyStats } : {}) });
+    const pCode = positiveCode(posReason);
+    const req = uncheckedRequest(op);
+    const scn = scenarioCases(input);
+    coverage.push({
+      operation: op.key,
+      counts,
+      positiveBlocked: posReason ?? null,
+      positiveBlockedCode: pCode,
+      negativeGaps: why,
+      lifecycle: plan ? plan.chain.name : null,
+      gaps: [...bodyGaps, ...errors.gaps, ...variantGaps, ...responseGaps],
+      ...(bodyStats ? { bodyCases: bodyStats } : {}),
+      suites: {
+        functional: { generated: counts.functional, missingCode: counts.functional ? null : pCode ?? 'NO_DOCUMENTED_REJECTION' },
+        contract: { generated: counts.contract, missingCode: counts.contract ? null : pCode ?? 'NO_DOCUMENTED_REJECTION' },
+        scenario: { generated: counts.scenario, missingCode: counts.scenario ? null : plan ? pCode ?? 'UNCONFIRMED_BUSINESS_RULE' : 'UNCONFIRMED_BUSINESS_RULE' },
+      },
+      uncheckedStatuses: uncheckedStatuses(op, { positive: input.positive, notFound: !!notFound, unauthorized, validation: rej.validation, invalidInput: bCases.length + qCases.length > 0, errors, deleteTwice: scn.deleteTwice }),
+      uncheckedRequestContentTypes: req.contentTypes,
+      uncheckedSecurityAlternatives: req.securityAlternatives,
+    });
     const render: Record<SuiteType, (s: SuiteInput, m: Meta) => string> = py
       ? { functional: renderPyFunctional, contract: renderPyContract, scenario: renderPyScenarios }
       : { functional: renderFunctional, contract: renderContract, scenario: renderScenarios };

@@ -55,7 +55,7 @@
     },
     "_support/openapi.snapshot.meta.json": {
       "ownership": "generated",
-      "sha256": "c5b5b8d76c04ba62de4fc8ad968de49c06290fa5438da3ef05f405f534f5de32"
+      "sha256": "c8e6f04b65d4ea77613ad771f2dfcf820450ae83bb19be1c3870d174bd1d2f1f"
     },
     "_support/openapi.snapshot.ts": {
       "ownership": "generated",
@@ -371,7 +371,7 @@
   "schemaVersion": 1,
   "spec": {
     "hash": "d7b3b546ce170690",
-    "revision": "7f59010131f3bf9c27829bdc7e056c17a38dc803",
+    "revision": "91b54559edf4b02cafec7503f06277ea1ce7a21f",
     "source": "demo-api/openapi.yaml"
   }
 }

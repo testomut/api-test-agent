@@ -11,6 +11,7 @@ import { runSchemathesis } from './audit/schemathesis.js';
 import { resolveAuth } from './audit/auth.js';
 import { buildReport, writeReport, type AuditReport } from './report/report.js';
 import { cleanupSummary, generate, runGenerated, scenarioFindings } from './generate/generate.js';
+import { summarize } from './generate/coverage.js';
 import { openDraftPr } from './pr.js';
 import type { Finding, Operation } from './types.js';
 import { classifyTarget, loadConfig } from './config.js';
@@ -285,7 +286,10 @@ common(program.command('generate').description('audit, then generate Playwright 
     });
     const files = await writeReport(report, o.out);
     const coverageFile = join(o.out, 'coverage-gaps.json');
-    await writeFile(coverageFile, JSON.stringify({ spec: location, hash: r.spec.hash, operations: gen.coverage }, null, 2) + '\n');
+    const byCode = summarize(gen.coverage);
+    const generated = Object.fromEntries((['functional', 'contract', 'scenario'] as const).map((k) => [k, gen.coverage.reduce((n, c) => n + c.counts[k], 0)]));
+    await writeFile(coverageFile, JSON.stringify({ spec: location, hash: r.spec.hash, summary: { operations: gen.coverage.length, generated, gapsByCode: byCode }, operations: gen.coverage }, null, 2) + '\n');
+    if (Object.keys(byCode).length) log(`Coverage gaps: ${Object.entries(byCode).map(([k, n]) => `${k} ${n}`).join(', ')} (${coverageFile})`);
     log(`Report: ${files.md}`);
     log(`Coverage and gaps per operation: ${coverageFile}`);
     if (o.draftPr) {
