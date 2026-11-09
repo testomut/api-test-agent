@@ -1,0 +1,352 @@
+{
+  "caseRegistryHash": "37bb92bb8ccf1d6d2643ea93e47adf3d78bf2df717b5c0f8bf6923f42ab643c1",
+  "files": {
+    "_support/api/generated/AdminApiBase.ts": {
+      "ownership": "generated",
+      "sha256": "9d3991d7bfe9705669dfb8449efb287b0e7d3063084400d7c7bbaf03cf4b5124"
+    },
+    "_support/api/generated/ApiBase.ts": {
+      "ownership": "generated",
+      "sha256": "59ee050ef616361d538dbb49b4ab9e66416e17411d1d610aa238682659787da1"
+    },
+    "_support/api/generated/AuthApiBase.ts": {
+      "ownership": "generated",
+      "sha256": "b2c901294cbb5ef08a4ba5a5b5773532d409828dc113b707ae3824f12a7cd279"
+    },
+    "_support/api/generated/HealthApiBase.ts": {
+      "ownership": "generated",
+      "sha256": "e672ebf37066e4d7e1b558a3a48eb87549a3b6e9bb10ba0794915723f02e98cc"
+    },
+    "_support/api/generated/ItemsApiBase.ts": {
+      "ownership": "generated",
+      "sha256": "9a0057a86ea421153efc33f2990370b2b73ee6c82cf430b0303a04d4b9eaa9e8"
+    },
+    "_support/api/generated/MeApiBase.ts": {
+      "ownership": "generated",
+      "sha256": "ff93c2ff82f21389b6760a50b64a039f437cf6865bbd9fd660d30d1fdbf29299"
+    },
+    "_support/api/generated/ReportsApiBase.ts": {
+      "ownership": "generated",
+      "sha256": "c0a586ddc42cdf32d30044c686b69c4e68b348978c2ddefa4d0441105b354b5c"
+    },
+    "_support/api/generated/StatsApiBase.ts": {
+      "ownership": "generated",
+      "sha256": "495edf7677509961693e6cb2dd2bebd7b80287e2f1e1fbfc9a0be37b34802057"
+    },
+    "_support/api/generated/apis.ts": {
+      "ownership": "generated",
+      "sha256": "712356b1156d49e5593a0fd8e5808b162b4228c2110ee9228735134b69ad1839"
+    },
+    "_support/contract-assert.ts": {
+      "ownership": "generated",
+      "sha256": "fbbd168c9255903b3c1499dd88f007806846b2e14e3c42e7b01e17361ba60d78"
+    },
+    "_support/contract.ts": {
+      "ownership": "generated",
+      "sha256": "8593fa68484c84f12c84803c30ef474dc1718750ef102647014c7e99e0b166aa"
+    },
+    "_support/fixtures.ts": {
+      "ownership": "generated",
+      "sha256": "d3c7a80c6e5b936e23474e6f0f5e9fa0bba5174649eaaff74517f7694b252c0e"
+    },
+    "_support/items.resource.ts": {
+      "ownership": "generated",
+      "sha256": "c01d91f600c833cd6d0776efc2e5d4ef2381f366325da4e1085eaedd3dab5439"
+    },
+    "_support/openapi.snapshot.meta.json": {
+      "ownership": "generated",
+      "sha256": "d76615ab812db149bbc2fa0f3c6c54fcd33dd32425f30a112183076446a41a2c"
+    },
+    "_support/openapi.snapshot.ts": {
+      "ownership": "generated",
+      "sha256": "1f3c0ee264edc0d6855f78844556586e151caa4d3af88fb400ef69cd1778f361"
+    },
+    "health/get/contract.spec.ts": {
+      "caseIds": [
+        "ata:op_OT5MMXZVBZK4:contract:positive:response.body#:schema"
+      ],
+      "operationUids": [
+        "op_OT5MMXZVBZK4"
+      ],
+      "ownership": "generated",
+      "sha256": "65765faca0baf8f39ec433dc75c6a9da51ba1c64ca0f3551ab20468604fd3fe8",
+      "suiteType": "contract"
+    },
+    "health/get/functional.spec.ts": {
+      "caseIds": [
+        "ata:op_OT5MMXZVBZK4:functional:positive:operation:documented-success"
+      ],
+      "operationUids": [
+        "op_OT5MMXZVBZK4"
+      ],
+      "ownership": "generated",
+      "sha256": "f30432f4d18eb886d0fba252bc7faf926a048784d5f452c411ae2cbdc647b80c",
+      "suiteType": "functional"
+    },
+    "items/delete-by-id/contract.spec.ts": {
+      "caseIds": [
+        "ata:op_EDRRXKOK26ZL:contract:positive:response.body#:schema",
+        "ata:op_EDRRXKOK26ZL:contract:positive:response.status#/404:documented"
+      ],
+      "operationUids": [
+        "op_EDRRXKOK26ZL",
+        "op_UPN7JLUXYUZ7"
+      ],
+      "ownership": "generated",
+      "sha256": "8fe5d6a0c20e08c655890970e0e5fbe2ba95433a08c265830d32dc644898382b",
+      "suiteType": "contract"
+    },
+    "items/delete-by-id/functional.spec.ts": {
+      "caseIds": [
+        "ata:op_EDRRXKOK26ZL:functional:positive:operation:documented-success",
+        "ata:op_EDRRXKOK26ZL:functional:negative:request.path#/itemId:not-found"
+      ],
+      "operationUids": [
+        "op_EDRRXKOK26ZL",
+        "op_UPN7JLUXYUZ7"
+      ],
+      "ownership": "generated",
+      "sha256": "5a896d15a495f9ce8b14eaac862e1484823ea367ed2f34f7d61c54032fba70f5",
+      "suiteType": "functional"
+    },
+    "items/delete-by-id/scenarios.spec.ts": {
+      "caseIds": [
+        "ata:scn_4EG5AXFZY2YS:scenario:positive:lifecycle:crud"
+      ],
+      "operationUids": [
+        "op_EDRRXKOK26ZL",
+        "op_UPN7JLUXYUZ7",
+        "op_7P2UH7UKQRHC"
+      ],
+      "ownership": "generated",
+      "sha256": "8174a9a3169561d39f2447242bb94b64ee05dbac34f71b0e7f212fe6836ad41c",
+      "suiteType": "scenario"
+    },
+    "items/get-by-id/contract.spec.ts": {
+      "caseIds": [
+        "ata:op_7P2UH7UKQRHC:contract:positive:response.body#:schema",
+        "ata:op_7P2UH7UKQRHC:contract:positive:response.status#/404:documented"
+      ],
+      "operationUids": [
+        "op_7P2UH7UKQRHC",
+        "op_UPN7JLUXYUZ7",
+        "op_EDRRXKOK26ZL"
+      ],
+      "ownership": "generated",
+      "sha256": "e1807167f342fa652f1709b7bfd436861d3118419af136e8c6b97a71f06d0a7e",
+      "suiteType": "contract"
+    },
+    "items/get-by-id/functional.spec.ts": {
+      "caseIds": [
+        "ata:op_7P2UH7UKQRHC:functional:positive:operation:documented-success",
+        "ata:op_7P2UH7UKQRHC:functional:negative:request.path#/itemId:not-found"
+      ],
+      "operationUids": [
+        "op_7P2UH7UKQRHC",
+        "op_UPN7JLUXYUZ7",
+        "op_EDRRXKOK26ZL"
+      ],
+      "ownership": "generated",
+      "sha256": "2896edace4ecdb2a4980d912b9f3115ad1612169d902d2ea609947bd200b6af0",
+      "suiteType": "functional"
+    },
+    "items/get/contract.spec.ts": {
+      "caseIds": [
+        "ata:op_4PIO72ZI3SIY:contract:positive:response.body#:schema",
+        "ata:op_4PIO72ZI3SIY:contract:negative:request.query#/limit:type",
+        "ata:op_4PIO72ZI3SIY:contract:negative:request.query#/limit:minimum",
+        "ata:op_4PIO72ZI3SIY:contract:negative:request.query#/limit:maximum"
+      ],
+      "operationUids": [
+        "op_4PIO72ZI3SIY"
+      ],
+      "ownership": "generated",
+      "sha256": "19cb5063a2ea8c0448d9edb782404e52f9bc249144628963b1a3616ef388e402",
+      "suiteType": "contract"
+    },
+    "items/get/functional.spec.ts": {
+      "caseIds": [
+        "ata:op_4PIO72ZI3SIY:functional:positive:operation:documented-success"
+      ],
+      "operationUids": [
+        "op_4PIO72ZI3SIY"
+      ],
+      "ownership": "generated",
+      "sha256": "107a7657f2b7af3b2f0393ad86507cc5645d16e0d09812b30afedb849edf7d99",
+      "suiteType": "functional"
+    },
+    "items/patch-by-id/contract.spec.ts": {
+      "caseIds": [
+        "ata:op_Z4MCICNBZN3S:contract:positive:response.body#:schema",
+        "ata:op_Z4MCICNBZN3S:contract:positive:response.status#/404:documented",
+        "ata:op_Z4MCICNBZN3S:contract:negative:request.body#/name:type",
+        "ata:op_Z4MCICNBZN3S:contract:negative:request.body#/name:minLength",
+        "ata:op_Z4MCICNBZN3S:contract:negative:request.body#/name:maxLength",
+        "ata:op_Z4MCICNBZN3S:contract:negative:request.body#/price:type",
+        "ata:op_Z4MCICNBZN3S:contract:negative:request.body#/price:minimum",
+        "ata:op_Z4MCICNBZN3S:contract:negative:request.body#/tags:type",
+        "ata:op_Z4MCICNBZN3S:contract:negative:request.body#/tags:maxItems",
+        "ata:op_Z4MCICNBZN3S:contract:negative:request.body#:additionalProperties",
+        "ata:op_Z4MCICNBZN3S:contract:negative:request.body#:minProperties"
+      ],
+      "operationUids": [
+        "op_Z4MCICNBZN3S",
+        "op_UPN7JLUXYUZ7",
+        "op_EDRRXKOK26ZL"
+      ],
+      "ownership": "generated",
+      "sha256": "8c0b79701cc998ccd4afd0f16c274536cb7fad84af02ef5fbe2189c35bdf4a5b",
+      "suiteType": "contract"
+    },
+    "items/patch-by-id/functional.spec.ts": {
+      "caseIds": [
+        "ata:op_Z4MCICNBZN3S:functional:positive:operation:documented-success",
+        "ata:op_Z4MCICNBZN3S:functional:negative:request.path#/itemId:not-found"
+      ],
+      "operationUids": [
+        "op_Z4MCICNBZN3S",
+        "op_UPN7JLUXYUZ7",
+        "op_EDRRXKOK26ZL"
+      ],
+      "ownership": "generated",
+      "sha256": "64a6a8c5582b15c66ee78440cecb5a9d2307da16b34f832ba2639f1786b8c993",
+      "suiteType": "functional"
+    },
+    "items/patch-by-id/scenarios.spec.ts": {
+      "caseIds": [
+        "ata:scn_I6MIGZS3ULNR:scenario:positive:lifecycle:crud"
+      ],
+      "operationUids": [
+        "op_Z4MCICNBZN3S",
+        "op_UPN7JLUXYUZ7",
+        "op_7P2UH7UKQRHC",
+        "op_EDRRXKOK26ZL"
+      ],
+      "ownership": "generated",
+      "sha256": "1207d3037a8aef0fb2800aac74627da9237a466c5b00bfda7e88ddf6f54497c1",
+      "suiteType": "scenario"
+    },
+    "items/post/contract.spec.ts": {
+      "caseIds": [
+        "ata:op_UPN7JLUXYUZ7:contract:positive:response.body#:schema",
+        "ata:op_UPN7JLUXYUZ7:contract:negative:request.body#/name:required",
+        "ata:op_UPN7JLUXYUZ7:contract:negative:request.body#/price:required",
+        "ata:op_UPN7JLUXYUZ7:contract:negative:request.body#/name:type",
+        "ata:op_UPN7JLUXYUZ7:contract:negative:request.body#/name:minLength",
+        "ata:op_UPN7JLUXYUZ7:contract:negative:request.body#/name:maxLength",
+        "ata:op_UPN7JLUXYUZ7:contract:negative:request.body#/price:type",
+        "ata:op_UPN7JLUXYUZ7:contract:negative:request.body#/price:minimum",
+        "ata:op_UPN7JLUXYUZ7:contract:negative:request.body#/tags:type",
+        "ata:op_UPN7JLUXYUZ7:contract:negative:request.body#/tags:maxItems",
+        "ata:op_UPN7JLUXYUZ7:contract:negative:request.body#:additionalProperties"
+      ],
+      "operationUids": [
+        "op_UPN7JLUXYUZ7",
+        "op_EDRRXKOK26ZL"
+      ],
+      "ownership": "generated",
+      "sha256": "373f0a7807196e97caf331181e6cbac8867e14ade0e9a1074f63eb1359b9967b",
+      "suiteType": "contract"
+    },
+    "items/post/functional.spec.ts": {
+      "caseIds": [
+        "ata:op_UPN7JLUXYUZ7:functional:positive:operation:documented-success"
+      ],
+      "operationUids": [
+        "op_UPN7JLUXYUZ7",
+        "op_EDRRXKOK26ZL"
+      ],
+      "ownership": "generated",
+      "sha256": "e1ceb3800a680333b4a45c29980c36d1245b705c8da20fb3dc3de0ae2fef5def",
+      "suiteType": "functional"
+    },
+    "items/post/scenarios.spec.ts": {
+      "caseIds": [
+        "ata:scn_7MN4FYBHZCZQ:scenario:positive:lifecycle:crud"
+      ],
+      "operationUids": [
+        "op_UPN7JLUXYUZ7",
+        "op_7P2UH7UKQRHC",
+        "op_EDRRXKOK26ZL"
+      ],
+      "ownership": "generated",
+      "sha256": "a3680e8d6151885865fe216d4fee755f2cf1205c6613e952ac17909c0a3dbe93",
+      "suiteType": "scenario"
+    },
+    "me/get/contract.spec.ts": {
+      "caseIds": [
+        "ata:op_WRZHS7HTMVON:contract:positive:response.body#:schema",
+        "ata:op_WRZHS7HTMVON:contract:positive:response.status#/401:documented"
+      ],
+      "operationUids": [
+        "op_WRZHS7HTMVON"
+      ],
+      "ownership": "generated",
+      "sha256": "cacac949cd563defbe6abcd233b4a99a91f27ce4337c48a5a0f7237319a09b7c",
+      "suiteType": "contract"
+    },
+    "me/get/functional.spec.ts": {
+      "caseIds": [
+        "ata:op_WRZHS7HTMVON:functional:positive:operation:documented-success",
+        "ata:op_WRZHS7HTMVON:functional:negative:request.security:unauthorized"
+      ],
+      "operationUids": [
+        "op_WRZHS7HTMVON"
+      ],
+      "ownership": "generated",
+      "sha256": "7889879405c221505474de9f4e3048b77dc1be70ab2b1399ade88fd629ce018d",
+      "suiteType": "functional"
+    },
+    "reports/get-by-id/contract.spec.ts": {
+      "caseIds": [
+        "ata:op_FXHMYSJVVHAU:contract:positive:response.status#/404:documented"
+      ],
+      "operationUids": [
+        "op_FXHMYSJVVHAU"
+      ],
+      "ownership": "generated",
+      "sha256": "75f4126e6abd11e33bc7a1c0285a3c5759ab170b8d738bb08ea36e2b9fc78631",
+      "suiteType": "contract"
+    },
+    "reports/get-by-id/functional.spec.ts": {
+      "caseIds": [
+        "ata:op_FXHMYSJVVHAU:functional:negative:request.path#/reportId:not-found"
+      ],
+      "operationUids": [
+        "op_FXHMYSJVVHAU"
+      ],
+      "ownership": "generated",
+      "sha256": "0faedcfacae787a47f1c1b37fab90552c6bb0c7b1b28b393599de4317349141a",
+      "suiteType": "functional"
+    },
+    "stats/get/contract.spec.ts": {
+      "caseIds": [
+        "ata:op_VSDJU55WRH4A:contract:positive:response.body#:schema"
+      ],
+      "operationUids": [
+        "op_VSDJU55WRH4A"
+      ],
+      "ownership": "generated",
+      "sha256": "9afb3a16d40c20bf004eb743eb84104e5734808ce07d5b0266c00bb3434df1fb",
+      "suiteType": "contract"
+    },
+    "stats/get/functional.spec.ts": {
+      "caseIds": [
+        "ata:op_VSDJU55WRH4A:functional:positive:operation:documented-success"
+      ],
+      "operationUids": [
+        "op_VSDJU55WRH4A"
+      ],
+      "ownership": "generated",
+      "sha256": "3b9b688b54897d7adebd396cc86a63a25d3206eed390362ef26e3a88d8cfaf0f",
+      "suiteType": "functional"
+    }
+  },
+  "generatorVersion": "0.1.3",
+  "schemaVersion": 1,
+  "spec": {
+    "hash": "d7b3b546ce170690",
+    "revision": "8ee4d7f0ebae3dc6c359ad03e9879676cc689ac7",
+    "source": "demo-api/openapi.yaml"
+  }
+}

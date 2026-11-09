@@ -9,7 +9,7 @@ import { readPointer } from '../../_support/contract-assert.js';
 import * as resource from '../../_support/items.resource.js';
 
 test.describe('POST /items · scenarios', { tag: '@scenario' }, () => {
-  test('the created resource can be retrieved by getItem', { tag: '@positive' }, async ({ api }) => {
+  test('the created resource can be retrieved by getItem', { tag: '@positive', annotation: { type: 'caseId', description: 'ata:scn_7MN4FYBHZCZQ:scenario:positive:lifecycle:crud' } }, async ({ api }) => {
     const { id } = await resource.create(api);
     try {
       const read = await api.items.getItem(id);

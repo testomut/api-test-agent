@@ -120,6 +120,8 @@ Non-interactive (CI, scripts): `npx @testomut/api-test-agent init --yes --base-u
 | `generate --draft-pr` | new git branch | pushes the branch | Opens a GitHub Draft PR for review. Never touches the default branch. |
 | `adapt` | yes, after showing the plan and your confirmation | no | Moves existing API tests into the layout and converts uncovered Postman requests (see §5a). `--dry-run`, `--yes`, `--only moves|postman`. |
 | `diff --head <spec>` | only `--out` (default `reports/api-agent/diff/`) | no (a URL needs `--allow-network`) | Semantic diff of two specs: `changes.json` (and `changes.md` with `--format markdown`), a compatibility verdict per change from [oasdiff](https://github.com/oasdiff/oasdiff). See §4a. |
+| `registry validate [path]` | no | no (a URL `--spec` needs `--allow-network`) | Checks `_support/cases.json`: syntax always, active entries against `--spec` too. Exit 1 on an invalid entry. See §4b. |
+| `manifest validate` | no | no | Compares generated files with the hashes in `_support/generation-manifest.json`. Exit 1 on a modified or missing generated file. |
 
 `[spec]` defaults to `API_SPEC_URL`, `--base-url` to `API_BASE_URL`, `--tests-dir` to `API_TESTS_DIR`.
 
@@ -136,12 +138,31 @@ npx api-test-agent diff --head https://host/openapi.json --base snapshot.json --
 - **Engine:** compatibility verdicts (`breaking: yes | no | unknown`) come from [oasdiff](https://github.com/oasdiff/oasdiff) `1.34.1`, found through `OASDIFF_BIN` or `PATH`; it is not bundled. Another version stops with exit code 2 unless `--allow-engine-version-mismatch`. A change the engine says nothing about stays `unknown`.
 - **Identity:** each operation gets `operationUid = op_ + base32(sha256(METHOD + " " + normalizedPath))[0:12]`; path parameter names are not part of it (`/brands/{id}` and `/brands/{brandId}` are the same operation, reported as `parameter-renamed`). Moves and renames are detected with the documented rules and thresholds; a link below 0.90, or without a clear lead, is marked `review`.
 - **No noise:** formatting, key order, descriptions, `$ref` layout, inline ↔ component, equivalent `allOf` and 3.0 `nullable` ↔ 3.1 `type: [x, null]` give no changes. Example / default changes are listed separately (non-breaking, but the generator uses them as payloads).
-- **Baseline:** `--base`, else the Git merge base. The suite's snapshot is not used yet (it has no metadata): without a baseline the result is `BLOCKED: BASE_SPEC_MISSING`.
+- **Baseline:** `--base`, else the Git merge base, else the suite's snapshot (`_support/openapi.snapshot.ts` / `openapi_snapshot.json`) when `openapi.snapshot.meta.json` is next to it (written by `generate`). Without a baseline the result is `BLOCKED: BASE_SPEC_MISSING`.
 - **Network:** off by default. `--allow-network` is needed for any URL; localhost, private and link-local addresses (including cloud metadata) are denied unless named in `--allow-host`.
 - **Exit codes:** 0 the policy passed, 1 a `--fail-on` policy triggered, 2 configuration or runtime error. `--fail-on breaking | blocked | unknown` can be repeated and combined; default `blocked`; `never` stands alone.
 - **Output:** `changes.json` (schema: [`schemas/changes.schema.json`](../schemas/changes.schema.json)), plus `changes.md` with `--format markdown`.
 
-Not in this step: which tests a change affects (`plan`), case IDs, updating tests.
+Not in this step: which tests a change affects (`plan`), updating tests.
+
+## 4b. Stable case IDs
+
+Every generated test carries a case ID that survives regeneration and spec edits that do not change what it checks:
+
+```text
+ata:<subjectUid>:<suiteType>:<polarity>:<location>:<rule>
+ata:op_4PIO72ZI3SIY:contract:negative:request.query#/limit:maximum
+ata:scn_…:scenario:positive:lifecycle:crud
+```
+
+- **Where:** Playwright `{ tag: '@negative', annotation: { type: 'caseId', description: '…' } }` (visible in the HTML / JSON report); pytest `@pytest.mark.api_case_id("…")` (registered in `conftest.py`), on `pytest.param` for parametrized cases.
+- **Subjects:** `operationUid = op_ + base32(sha256(METHOD + " " + normalizedPath))[0:12]` (path parameter names are not part of it); CRUD scenarios get `scenarioUid = scn_ + base32(sha256("type=crud;steps=<phase>:<uid>>…"))[0:12]`.
+- **Rules:** a versioned vocabulary (v1): `documented-success`, `not-found`, `unauthorized`, `schema`, `documented`, the schema constraints (`maxLength`, `required`, …), `crud`. The constraint *value* is never part of the ID, so `maxLength 50 → 100` keeps the case.
+- **`_support/cases.json`** is the registry: operations, cases and scenario definitions (steps with phases, roles). It is never rebuilt from the spec: existing UIDs are kept (an `x-api-test-agent-id` or the same method + normalized path wins over the hash), removed operations become tombstones (`status: "retired"`), history is never deleted. Canonical JSON: sorted keys, 2 spaces, LF.
+- **`_support/generation-manifest.json`** lists every generated file with its canonical hash (SHA-256 of the UTF-8 content with LF line endings), suite type, case IDs and operations. API object subclasses (`_support/api/<Name>Api.ts`) are `hand-written`. Written last.
+- **`_support/openapi.snapshot.meta.json`**: `generatorVersion`, `specHash`, `source`, `capturedRevision` — makes the snapshot a `diff` baseline.
+
+Not yet: three-way `registry merge`, `--id-aliases` / `--apply-registry`, `plan`, `--apply-generated`.
 
 ## 5. What `run` does, step by step
 

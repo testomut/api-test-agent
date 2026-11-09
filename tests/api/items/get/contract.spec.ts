@@ -11,19 +11,19 @@ import { expectContract, expectRejected } from '../../_support/contract-assert.j
 const rejection = ["400"]; // documented in the spec
 
 test.describe('GET /items · contract', { tag: '@contract' }, () => {
-  test('success response matches the documented contract', { tag: '@positive' }, async ({ publicApi }) => {
+  test('success response matches the documented contract', { tag: '@positive', annotation: { type: 'caseId', description: 'ata:op_4PIO72ZI3SIY:contract:positive:response.body#:schema' } }, async ({ publicApi }) => {
     const res = await publicApi.items.listItems();
     await expectContract(res, 'get', '/items');
   });
 
   const invalidQueries = [
-    { title: 'query "limit" is not a number', source: 'query.limit.type', params: {"limit":"abc"} },
-    { title: 'query "limit" below minimum 1', source: 'query.limit.minimum', params: {"limit":0} },
-    { title: 'query "limit" above maximum 100', source: 'query.limit.maximum', params: {"limit":101} },
+    { title: 'query "limit" is not a number', source: 'query.limit.type', caseId: 'ata:op_4PIO72ZI3SIY:contract:negative:request.query#/limit:type', params: {"limit":"abc"} },
+    { title: 'query "limit" below minimum 1', source: 'query.limit.minimum', caseId: 'ata:op_4PIO72ZI3SIY:contract:negative:request.query#/limit:minimum', params: {"limit":0} },
+    { title: 'query "limit" above maximum 100', source: 'query.limit.maximum', caseId: 'ata:op_4PIO72ZI3SIY:contract:negative:request.query#/limit:maximum', params: {"limit":101} },
   ];
 
   for (const c of invalidQueries) {
-    test(`rejects invalid query: ${c.title}`, { tag: '@negative' }, async ({ publicApi }) => {
+    test(`rejects invalid query: ${c.title}`, { tag: '@negative', annotation: { type: 'caseId', description: c.caseId } }, async ({ publicApi }) => {
       const res = await publicApi.items.listItems({ params: c.params });
       await expectRejected(res, rejection, 'get', '/items');
     });

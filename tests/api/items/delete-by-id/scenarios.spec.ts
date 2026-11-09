@@ -8,7 +8,7 @@ import { test, expect } from '../../_support/fixtures.js';
 import * as resource from '../../_support/items.resource.js';
 
 test.describe('DELETE /items/{itemId} · scenarios', { tag: '@scenario' }, () => {
-  test('the deleted resource is no longer returned by getItem', { tag: '@positive' }, async ({ api }) => {
+  test('the deleted resource is no longer returned by getItem', { tag: '@positive', annotation: { type: 'caseId', description: 'ata:scn_4EG5AXFZY2YS:scenario:positive:lifecycle:crud' } }, async ({ api }) => {
     const { id } = await resource.create(api);
     try {
       const res = await api.items.deleteItem(id);

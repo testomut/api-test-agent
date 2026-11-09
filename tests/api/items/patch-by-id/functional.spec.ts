@@ -10,7 +10,7 @@ import { expectStatus } from '../../_support/contract-assert.js';
 import * as resource from '../../_support/items.resource.js';
 
 test.describe('PATCH /items/{itemId} · functional', { tag: '@functional' }, () => {
-  test('applies the documented example update', { tag: '@positive' }, async ({ api }) => {
+  test('applies the documented example update', { tag: '@positive', annotation: { type: 'caseId', description: 'ata:op_Z4MCICNBZN3S:functional:positive:operation:documented-success' } }, async ({ api }) => {
     const { id } = await resource.create(api);
     try {
       const res = await api.items.updateItem(id, { data: resource.newUpdatePayload() });
@@ -20,7 +20,7 @@ test.describe('PATCH /items/{itemId} · functional', { tag: '@functional' }, () 
     }
   });
 
-  test('returns documented 404 for an id that does not exist', { tag: '@negative' }, async ({ api }) => {
+  test('returns documented 404 for an id that does not exist', { tag: '@negative', annotation: { type: 'caseId', description: 'ata:op_Z4MCICNBZN3S:functional:negative:request.path#/itemId:not-found' } }, async ({ api }) => {
     const missingId = String(randomUUID());
     const res = await api.items.updateItem(missingId, { data: resource.newUpdatePayload() });
     expectStatus(res, ['404'], 'patch', '/items/{itemId}');

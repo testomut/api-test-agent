@@ -12,6 +12,20 @@ export interface NegCase {
   source: string;
   data?: unknown;
   query?: Record<string, unknown>;
+  /** What the case breaks, for its case ID: a top-level body field (null = the body root) or a query parameter, and the rule. */
+  target?: { in: 'body' | 'query'; field: string | null; rule: string };
+}
+
+/** Derives the target from the source ("<schema>.<field>.<rule>", "<schema>.<rule>", "query.<name>.<rule>"). */
+function withTargets(cases: NegCase[], prefix: string, where: 'body' | 'query'): NegCase[] {
+  return cases.map((c) => {
+    const rest = c.source.startsWith(prefix + '.') ? c.source.slice(prefix.length + 1) : c.source;
+    const dot = rest.lastIndexOf('.');
+    const rule = dot < 0 ? rest : rest.slice(dot + 1);
+    let field = dot < 0 ? null : rest.slice(0, dot);
+    if (where === 'body' && field === null && rule === 'required') field = c.title.match(/missing required field "(.*)"$/)?.[1] ?? null;
+    return { ...c, target: { in: where, field, rule } };
+  });
 }
 
 const MAX_CASES = 20;
@@ -104,7 +118,7 @@ export function bodyCases(doc: OpenApiDoc, rawSchema: any, base: Record<string, 
   if (typeof schema.minProperties === 'number' && schema.minProperties > 0) {
     cases.push({ title: `empty object (minProperties ${schema.minProperties})`, source: `${schemaName}.minProperties`, data: {} });
   }
-  return cases.slice(0, MAX_CASES);
+  return withTargets(cases.slice(0, MAX_CASES), schemaName, 'body');
 }
 
 /** Query cases: break one documented query-parameter constraint per case. */
@@ -136,7 +150,7 @@ export function queryCases(op: Operation): NegCase[] {
     if (t === 'string' && Array.isArray(s.enum) && s.enum.length) cases.push({ title: `query "${p.name}" not in enum`, source: `${at}.enum`, query: withValue('__not_in_enum__') });
     if (t === 'string' && typeof s.maxLength === 'number') cases.push({ title: `query "${p.name}" longer than maxLength ${s.maxLength}`, source: `${at}.maxLength`, query: withValue('x'.repeat(s.maxLength + 1)) });
   }
-  return cases.slice(0, MAX_CASES);
+  return withTargets(cases.slice(0, MAX_CASES), 'query', 'query');
 }
 
 /** A runtime expression (TypeScript source) for an id that should not exist, matching the param's schema. */

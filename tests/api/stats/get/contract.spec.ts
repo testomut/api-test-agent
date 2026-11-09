@@ -9,7 +9,7 @@ import { test } from '../../_support/fixtures.js';
 import { expectContract } from '../../_support/contract-assert.js';
 
 test.describe('GET /stats · contract', { tag: '@contract' }, () => {
-  test('success response matches the documented contract', { tag: '@positive' }, async ({ publicApi }) => {
+  test('success response matches the documented contract', { tag: '@positive', annotation: { type: 'caseId', description: 'ata:op_VSDJU55WRH4A:contract:positive:response.body#:schema' } }, async ({ publicApi }) => {
     const res = await publicApi.stats.getStats();
     await expectContract(res, 'get', '/stats');
   });

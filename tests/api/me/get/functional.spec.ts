@@ -7,12 +7,12 @@ import { test, expect } from '../../_support/fixtures.js';
 import { expectStatus } from '../../_support/contract-assert.js';
 
 test.describe('GET /me · functional', { tag: '@functional' }, () => {
-  test('returns the documented success status', { tag: '@positive' }, async ({ api }) => {
+  test('returns the documented success status', { tag: '@positive', annotation: { type: 'caseId', description: 'ata:op_WRZHS7HTMVON:functional:positive:operation:documented-success' } }, async ({ api }) => {
     const res = await api.me.getMe();
     expect(res.status(), 'documented success status of getMe').toBe(200);
   });
 
-  test('returns documented 401 without credentials', { tag: '@negative' }, async ({ publicApi }) => {
+  test('returns documented 401 without credentials', { tag: '@negative', annotation: { type: 'caseId', description: 'ata:op_WRZHS7HTMVON:functional:negative:request.security:unauthorized' } }, async ({ publicApi }) => {
     const res = await publicApi.me.getMe();
     expectStatus(res, ['401'], 'get', '/me');
   });

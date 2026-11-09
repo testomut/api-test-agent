@@ -2,6 +2,7 @@ import type { Operation } from '../types.js';
 import type { CrudChain } from './graph.js';
 import type { NegCase } from './negative.js';
 import { apiCall, type ApiRef } from './api-objects.js';
+import type { SuiteCaseIds } from '../cases/assign.js';
 
 /** Payloads and assumptions for one confirmed resource chain. */
 export interface ChainPlan {
@@ -200,6 +201,8 @@ export interface SuiteInput {
   queryCases: NegCase[];
   notFound?: { idExpr: string; param: string };
   unauthorized: boolean;
+  /** Stable case IDs of this operation's tests (Playwright annotation caseId, pytest marker api_case_id). */
+  ids?: SuiteCaseIds;
 }
 
 export type Role = 'create' | 'read' | 'update' | 'delete';
@@ -232,8 +235,11 @@ export function suiteCounts(s: SuiteInput): Record<SuiteType, number> {
   };
 }
 
-const POS = `{ tag: '@positive' }`;
-const NEG = `{ tag: '@negative' }`;
+/** Test options: the polarity tag and, when known, the stable case ID as a Playwright annotation. */
+export const testOptions = (polarity: 'positive' | 'negative', id?: string) =>
+  id ? `{ tag: '@${polarity}', annotation: { type: 'caseId', description: ${q(id)} } }` : `{ tag: '@${polarity}' }`;
+const POS = testOptions('positive');
+const NEG = testOptions('negative');
 
 function suiteHeader(suite: SuiteType, s: SuiteInput, meta: Meta, extra: string[]): string[] {
   const chain = s.plan?.chain;
@@ -248,8 +254,9 @@ function suiteHeader(suite: SuiteType, s: SuiteInput, meta: Meta, extra: string[
  * The successful call of the operation with its precondition and cleanup.
  * `assert` receives the response variable and returns the assertion lines (functional or contract).
  */
-function positiveTest(s: SuiteInput, title: string, assert: (indent: string) => string[]): string[] {
+function positiveTest(s: SuiteInput, title: string, assert: (indent: string) => string[], id?: string): string[] {
   const { op, refs, plan } = s;
+  const POS = testOptions('positive', id);
   const chain = plan?.chain;
   const role = roleOf(op, plan);
   const ref = refs.get(op)!;
@@ -340,7 +347,7 @@ export function renderFunctional(s: SuiteInput, meta: Meta): string {
         if (role === 'create') a.push(`${i}const id = readPointer(await res.json().catch(() => undefined), ${q(chain!.idPointer)});`, `${i}expect(String(id ?? ''), 'identifier at $response.body#${chain!.idPointer}').not.toBe('');`);
         if (role === 'read') a.push(`${i}expect(String(readPointer(await res.json().catch(() => undefined), ${q(chain!.idPointer)})), 'same resource').toBe(id);`);
         return a;
-      }),
+      }, s.ids?.functional.success),
       '',
     );
   }
@@ -350,7 +357,7 @@ export function renderFunctional(s: SuiteInput, meta: Meta): string {
     for (const variant of queryVariants(op)) {
       const params = { ...base, [variant.name]: variant.value };
       L.push(
-        `  test(${q(`accepts documented ${variant.name}=${String(variant.value)}`)}, ${POS}, async ({ ${fx} }) => {`,
+        `  test(${q(`accepts documented ${variant.name}=${String(variant.value)}`)}, ${testOptions('positive', s.ids?.functional.success)}, async ({ ${fx} }) => {`,
         `    const res = await ${apiCall(ref, fx, pathArgs(op, ref), `{ params: ${JSON.stringify(params)} }`)};`,
         `    ${expectSuccess(op)}`,
         `  });`,
@@ -359,14 +366,18 @@ export function renderFunctional(s: SuiteInput, meta: Meta): string {
     }
   }
   if (s.notFound) {
-    L.push(`  test('returns documented 404 for an id that does not exist', ${NEG}, async ({ ${fx} }) => {`, ...notFoundCall(s, fx), `    expectStatus(res, ['404'], '${op.method}', ${q(op.path)});`, `  });`, '');
+    L.push(`  test('returns documented 404 for an id that does not exist', ${testOptions('negative', s.ids?.functional.notFound)}, async ({ ${fx} }) => {`, ...notFoundCall(s, fx), `    expectStatus(res, ['404'], '${op.method}', ${q(op.path)});`, `  });`, '');
   }
   if (s.unauthorized) {
     // publicApi sends no credentials at all (not even the project's static token).
-    L.push(`  test('returns documented 401 without credentials', ${NEG}, async ({ publicApi }) => {`, anonymousCall(s), `    expectStatus(res, ['401'], '${op.method}', ${q(op.path)});`, `  });`, '');
+    L.push(`  test('returns documented 401 without credentials', ${testOptions('negative', s.ids?.functional.unauthorized)}, async ({ publicApi }) => {`, anonymousCall(s), `    expectStatus(res, ['401'], '${op.method}', ${q(op.path)});`, `  });`, '');
   }
   return close(L);
 }
+
+const caseField = (id?: string) => (id ? `caseId: ${q(id)}, ` : '');
+/** A data-driven test: the case ID comes from the row when every row has one. */
+const loopOptions = (ids?: string[]) => (ids?.length && ids.every(Boolean) ? `{ tag: '@negative', annotation: { type: 'caseId', description: c.caseId } }` : NEG);
 
 /** contract.spec.ts: responses match OpenAPI (documented status, content type, schema); invalid requests are rejected as documented. */
 export function renderContract(s: SuiteInput, meta: Meta): string {
@@ -387,15 +398,15 @@ export function renderContract(s: SuiteInput, meta: Meta): string {
   L.push('', `test.describe('${op.key} · contract', { tag: '@contract' }, () => {`);
 
   const contract = (i: string, v = 'res') => [`${i}await expectContract(${v}, '${op.method}', ${q(op.path)});`];
-  if (s.positive) L.push(...positiveTest(s, 'success response matches the documented contract', (i) => contract(i)), '');
-  if (s.notFound) L.push(`  test('response for a missing id matches the documented contract', ${POS}, async ({ ${fx} }) => {`, ...notFoundCall(s, fx), ...contract('    '), `  });`, '');
-  if (s.unauthorized) L.push(`  test('response without credentials matches the documented contract', ${POS}, async ({ publicApi }) => {`, anonymousCall(s), ...contract('    '), `  });`, '');
+  if (s.positive) L.push(...positiveTest(s, 'success response matches the documented contract', (i) => contract(i), s.ids?.contract.success), '');
+  if (s.notFound) L.push(`  test('response for a missing id matches the documented contract', ${testOptions('positive', s.ids?.contract.notFound)}, async ({ ${fx} }) => {`, ...notFoundCall(s, fx), ...contract('    '), `  });`, '');
+  if (s.unauthorized) L.push(`  test('response without credentials matches the documented contract', ${testOptions('positive', s.ids?.contract.unauthorized)}, async ({ publicApi }) => {`, anonymousCall(s), ...contract('    '), `  });`, '');
 
   const send = (indent: string, options: string) => `${indent}const res = await ${apiCall(ref, fx, pathArgs(op, ref, chain?.param, 'id'), options)};`;
   if (s.bodyCases.length) {
     L.push(`  const invalidBodies = [`);
-    for (const c of s.bodyCases) L.push(`    { title: ${q(c.title)}, source: ${q(c.source)}, data: ${JSON.stringify(c.data)} },`);
-    L.push(`  ];`, '', `  for (const c of invalidBodies) {`, `    test(\`rejects invalid body: \${c.title}\`, ${NEG}, async ({ ${fx} }) => {`);
+    s.bodyCases.forEach((c, n) => L.push(`    { title: ${q(c.title)}, source: ${q(c.source)}, ${caseField(s.ids?.contract.body[n])}data: ${JSON.stringify(c.data)} },`));
+    L.push(`  ];`, '', `  for (const c of invalidBodies) {`, `    test(\`rejects invalid body: \${c.title}\`, ${loopOptions(s.ids?.contract.body)}, async ({ ${fx} }) => {`);
     if (needsExisting) {
       L.push(`      const { id } = await resource.create(${fx});`, `      try {`, send('        ', '{ data: c.data }'));
       L.push(`        await expectRejected(res, rejection, '${op.method}', ${q(op.path)});`, `      } finally {`, `        await resource.remove(${fx}, id);`, `      }`);
@@ -408,8 +419,8 @@ export function renderContract(s: SuiteInput, meta: Meta): string {
   }
   if (s.queryCases.length) {
     L.push(`  const invalidQueries = [`);
-    for (const c of s.queryCases) L.push(`    { title: ${q(c.title)}, source: ${q(c.source)}, params: ${JSON.stringify(c.query)} },`);
-    L.push(`  ];`, '', `  for (const c of invalidQueries) {`, `    test(\`rejects invalid query: \${c.title}\`, ${NEG}, async ({ ${fx} }) => {`);
+    s.queryCases.forEach((c, n) => L.push(`    { title: ${q(c.title)}, source: ${q(c.source)}, ${caseField(s.ids?.contract.query[n])}params: ${JSON.stringify(c.query)} },`));
+    L.push(`  ];`, '', `  for (const c of invalidQueries) {`, `    test(\`rejects invalid query: \${c.title}\`, ${loopOptions(s.ids?.contract.query)}, async ({ ${fx} }) => {`);
     L.push(`      const res = await ${apiCall(ref, fx, pathArgs(op, ref), '{ params: c.params }')};`, `      await expectRejected(res, rejection, '${op.method}', ${q(op.path)});`, `    });`, `  }`, '');
   }
   return close(L);
@@ -431,7 +442,7 @@ export function renderScenarios(s: SuiteInput, meta: Meta): string {
   L.push(...imports(s, ['expect', ...(sc.createRead ? ['readPointer'] : [])], true, false), '', `test.describe('${op.key} · scenarios', { tag: '@scenario' }, () => {`);
   if (sc.createRead) {
     L.push(
-      `  test('the created resource can be retrieved by ${r.operationId ?? r.key}', ${POS}, async ({ api }) => {`,
+      `  test('the created resource can be retrieved by ${r.operationId ?? r.key}', ${testOptions('positive', s.ids?.scenario.createRead)}, async ({ api }) => {`,
       `    const { id } = await resource.create(api);`,
       `    try {`,
       `      const read = await ${call(r)};`,
@@ -447,7 +458,7 @@ export function renderScenarios(s: SuiteInput, meta: Meta): string {
   }
   if (sc.updateRead) {
     L.push(
-      `  test('the update is visible through ${r.operationId ?? r.key}', ${POS}, async ({ api }) => {`,
+      `  test('the update is visible through ${r.operationId ?? r.key}', ${testOptions('positive', s.ids?.scenario.updateRead)}, async ({ api }) => {`,
       `    const { id } = await resource.create(api);`,
       `    try {`,
       `      const payload = resource.newUpdatePayload();`,
@@ -466,7 +477,7 @@ export function renderScenarios(s: SuiteInput, meta: Meta): string {
   }
   if (sc.deleteGone) {
     L.push(
-      `  test('the deleted resource is no longer returned by ${r.operationId ?? r.key}', ${POS}, async ({ api }) => {`,
+      `  test('the deleted resource is no longer returned by ${r.operationId ?? r.key}', ${testOptions('positive', s.ids?.scenario.deleteGone)}, async ({ api }) => {`,
       `    const { id } = await resource.create(api);`,
       `    try {`,
       `      const res = await ${call(op)};`,

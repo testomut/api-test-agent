@@ -1,0 +1,583 @@
+{
+  "caseRuleVocabularyVersion": 1,
+  "cases": {
+    "ata:op_4PIO72ZI3SIY:contract:negative:request.query#/limit:maximum": {
+      "location": "request.query#/limit",
+      "polarity": "negative",
+      "rule": "maximum",
+      "subjectUid": "op_4PIO72ZI3SIY",
+      "suiteType": "contract"
+    },
+    "ata:op_4PIO72ZI3SIY:contract:negative:request.query#/limit:minimum": {
+      "location": "request.query#/limit",
+      "polarity": "negative",
+      "rule": "minimum",
+      "subjectUid": "op_4PIO72ZI3SIY",
+      "suiteType": "contract"
+    },
+    "ata:op_4PIO72ZI3SIY:contract:negative:request.query#/limit:type": {
+      "location": "request.query#/limit",
+      "polarity": "negative",
+      "rule": "type",
+      "subjectUid": "op_4PIO72ZI3SIY",
+      "suiteType": "contract"
+    },
+    "ata:op_4PIO72ZI3SIY:contract:positive:response.body#:schema": {
+      "covers": [
+        "contract:positive:response.content-type#/application~1json:documented",
+        "contract:positive:response.status#/200:documented"
+      ],
+      "location": "response.body#",
+      "polarity": "positive",
+      "rule": "schema",
+      "subjectUid": "op_4PIO72ZI3SIY",
+      "suiteType": "contract"
+    },
+    "ata:op_4PIO72ZI3SIY:functional:positive:operation:documented-success": {
+      "location": "operation",
+      "polarity": "positive",
+      "rule": "documented-success",
+      "subjectUid": "op_4PIO72ZI3SIY",
+      "suiteType": "functional"
+    },
+    "ata:op_7P2UH7UKQRHC:contract:positive:response.body#:schema": {
+      "covers": [
+        "contract:positive:response.content-type#/application~1json:documented",
+        "contract:positive:response.status#/200:documented"
+      ],
+      "location": "response.body#",
+      "polarity": "positive",
+      "relatedOperationUids": [
+        "op_EDRRXKOK26ZL",
+        "op_UPN7JLUXYUZ7"
+      ],
+      "rule": "schema",
+      "subjectUid": "op_7P2UH7UKQRHC",
+      "suiteType": "contract"
+    },
+    "ata:op_7P2UH7UKQRHC:contract:positive:response.status#/404:documented": {
+      "location": "response.status#/404",
+      "polarity": "positive",
+      "rule": "documented",
+      "subjectUid": "op_7P2UH7UKQRHC",
+      "suiteType": "contract"
+    },
+    "ata:op_7P2UH7UKQRHC:functional:negative:request.path#/itemId:not-found": {
+      "location": "request.path#/itemId",
+      "polarity": "negative",
+      "rule": "not-found",
+      "subjectUid": "op_7P2UH7UKQRHC",
+      "suiteType": "functional"
+    },
+    "ata:op_7P2UH7UKQRHC:functional:positive:operation:documented-success": {
+      "location": "operation",
+      "polarity": "positive",
+      "relatedOperationUids": [
+        "op_EDRRXKOK26ZL",
+        "op_UPN7JLUXYUZ7"
+      ],
+      "rule": "documented-success",
+      "subjectUid": "op_7P2UH7UKQRHC",
+      "suiteType": "functional"
+    },
+    "ata:op_EDRRXKOK26ZL:contract:positive:response.body#:schema": {
+      "covers": [
+        "contract:positive:response.status#/204:documented"
+      ],
+      "location": "response.body#",
+      "polarity": "positive",
+      "relatedOperationUids": [
+        "op_UPN7JLUXYUZ7"
+      ],
+      "rule": "schema",
+      "subjectUid": "op_EDRRXKOK26ZL",
+      "suiteType": "contract"
+    },
+    "ata:op_EDRRXKOK26ZL:contract:positive:response.status#/404:documented": {
+      "location": "response.status#/404",
+      "polarity": "positive",
+      "rule": "documented",
+      "subjectUid": "op_EDRRXKOK26ZL",
+      "suiteType": "contract"
+    },
+    "ata:op_EDRRXKOK26ZL:functional:negative:request.path#/itemId:not-found": {
+      "location": "request.path#/itemId",
+      "polarity": "negative",
+      "rule": "not-found",
+      "subjectUid": "op_EDRRXKOK26ZL",
+      "suiteType": "functional"
+    },
+    "ata:op_EDRRXKOK26ZL:functional:positive:operation:documented-success": {
+      "location": "operation",
+      "polarity": "positive",
+      "relatedOperationUids": [
+        "op_UPN7JLUXYUZ7"
+      ],
+      "rule": "documented-success",
+      "subjectUid": "op_EDRRXKOK26ZL",
+      "suiteType": "functional"
+    },
+    "ata:op_FXHMYSJVVHAU:contract:positive:response.status#/404:documented": {
+      "location": "response.status#/404",
+      "polarity": "positive",
+      "rule": "documented",
+      "subjectUid": "op_FXHMYSJVVHAU",
+      "suiteType": "contract"
+    },
+    "ata:op_FXHMYSJVVHAU:functional:negative:request.path#/reportId:not-found": {
+      "location": "request.path#/reportId",
+      "polarity": "negative",
+      "rule": "not-found",
+      "subjectUid": "op_FXHMYSJVVHAU",
+      "suiteType": "functional"
+    },
+    "ata:op_OT5MMXZVBZK4:contract:positive:response.body#:schema": {
+      "covers": [
+        "contract:positive:response.content-type#/application~1json:documented",
+        "contract:positive:response.status#/200:documented"
+      ],
+      "location": "response.body#",
+      "polarity": "positive",
+      "rule": "schema",
+      "subjectUid": "op_OT5MMXZVBZK4",
+      "suiteType": "contract"
+    },
+    "ata:op_OT5MMXZVBZK4:functional:positive:operation:documented-success": {
+      "location": "operation",
+      "polarity": "positive",
+      "rule": "documented-success",
+      "subjectUid": "op_OT5MMXZVBZK4",
+      "suiteType": "functional"
+    },
+    "ata:op_UPN7JLUXYUZ7:contract:negative:request.body#/name:maxLength": {
+      "location": "request.body#/name",
+      "polarity": "negative",
+      "rule": "maxLength",
+      "subjectUid": "op_UPN7JLUXYUZ7",
+      "suiteType": "contract"
+    },
+    "ata:op_UPN7JLUXYUZ7:contract:negative:request.body#/name:minLength": {
+      "location": "request.body#/name",
+      "polarity": "negative",
+      "rule": "minLength",
+      "subjectUid": "op_UPN7JLUXYUZ7",
+      "suiteType": "contract"
+    },
+    "ata:op_UPN7JLUXYUZ7:contract:negative:request.body#/name:required": {
+      "location": "request.body#/name",
+      "polarity": "negative",
+      "rule": "required",
+      "subjectUid": "op_UPN7JLUXYUZ7",
+      "suiteType": "contract"
+    },
+    "ata:op_UPN7JLUXYUZ7:contract:negative:request.body#/name:type": {
+      "location": "request.body#/name",
+      "polarity": "negative",
+      "rule": "type",
+      "subjectUid": "op_UPN7JLUXYUZ7",
+      "suiteType": "contract"
+    },
+    "ata:op_UPN7JLUXYUZ7:contract:negative:request.body#/price:minimum": {
+      "location": "request.body#/price",
+      "polarity": "negative",
+      "rule": "minimum",
+      "subjectUid": "op_UPN7JLUXYUZ7",
+      "suiteType": "contract"
+    },
+    "ata:op_UPN7JLUXYUZ7:contract:negative:request.body#/price:required": {
+      "location": "request.body#/price",
+      "polarity": "negative",
+      "rule": "required",
+      "subjectUid": "op_UPN7JLUXYUZ7",
+      "suiteType": "contract"
+    },
+    "ata:op_UPN7JLUXYUZ7:contract:negative:request.body#/price:type": {
+      "location": "request.body#/price",
+      "polarity": "negative",
+      "rule": "type",
+      "subjectUid": "op_UPN7JLUXYUZ7",
+      "suiteType": "contract"
+    },
+    "ata:op_UPN7JLUXYUZ7:contract:negative:request.body#/tags:maxItems": {
+      "location": "request.body#/tags",
+      "polarity": "negative",
+      "rule": "maxItems",
+      "subjectUid": "op_UPN7JLUXYUZ7",
+      "suiteType": "contract"
+    },
+    "ata:op_UPN7JLUXYUZ7:contract:negative:request.body#/tags:type": {
+      "location": "request.body#/tags",
+      "polarity": "negative",
+      "rule": "type",
+      "subjectUid": "op_UPN7JLUXYUZ7",
+      "suiteType": "contract"
+    },
+    "ata:op_UPN7JLUXYUZ7:contract:negative:request.body#:additionalProperties": {
+      "location": "request.body#",
+      "polarity": "negative",
+      "rule": "additionalProperties",
+      "subjectUid": "op_UPN7JLUXYUZ7",
+      "suiteType": "contract"
+    },
+    "ata:op_UPN7JLUXYUZ7:contract:positive:response.body#:schema": {
+      "covers": [
+        "contract:positive:response.content-type#/application~1json:documented",
+        "contract:positive:response.status#/201:documented"
+      ],
+      "location": "response.body#",
+      "polarity": "positive",
+      "relatedOperationUids": [
+        "op_EDRRXKOK26ZL"
+      ],
+      "rule": "schema",
+      "subjectUid": "op_UPN7JLUXYUZ7",
+      "suiteType": "contract"
+    },
+    "ata:op_UPN7JLUXYUZ7:functional:positive:operation:documented-success": {
+      "location": "operation",
+      "polarity": "positive",
+      "relatedOperationUids": [
+        "op_EDRRXKOK26ZL"
+      ],
+      "rule": "documented-success",
+      "subjectUid": "op_UPN7JLUXYUZ7",
+      "suiteType": "functional"
+    },
+    "ata:op_VSDJU55WRH4A:contract:positive:response.body#:schema": {
+      "covers": [
+        "contract:positive:response.content-type#/application~1json:documented",
+        "contract:positive:response.status#/200:documented"
+      ],
+      "location": "response.body#",
+      "polarity": "positive",
+      "rule": "schema",
+      "subjectUid": "op_VSDJU55WRH4A",
+      "suiteType": "contract"
+    },
+    "ata:op_VSDJU55WRH4A:functional:positive:operation:documented-success": {
+      "location": "operation",
+      "polarity": "positive",
+      "rule": "documented-success",
+      "subjectUid": "op_VSDJU55WRH4A",
+      "suiteType": "functional"
+    },
+    "ata:op_WRZHS7HTMVON:contract:positive:response.body#:schema": {
+      "covers": [
+        "contract:positive:response.content-type#/application~1json:documented",
+        "contract:positive:response.status#/200:documented"
+      ],
+      "location": "response.body#",
+      "polarity": "positive",
+      "rule": "schema",
+      "subjectUid": "op_WRZHS7HTMVON",
+      "suiteType": "contract"
+    },
+    "ata:op_WRZHS7HTMVON:contract:positive:response.status#/401:documented": {
+      "location": "response.status#/401",
+      "polarity": "positive",
+      "rule": "documented",
+      "subjectUid": "op_WRZHS7HTMVON",
+      "suiteType": "contract"
+    },
+    "ata:op_WRZHS7HTMVON:functional:negative:request.security:unauthorized": {
+      "location": "request.security",
+      "polarity": "negative",
+      "rule": "unauthorized",
+      "subjectUid": "op_WRZHS7HTMVON",
+      "suiteType": "functional"
+    },
+    "ata:op_WRZHS7HTMVON:functional:positive:operation:documented-success": {
+      "location": "operation",
+      "polarity": "positive",
+      "rule": "documented-success",
+      "subjectUid": "op_WRZHS7HTMVON",
+      "suiteType": "functional"
+    },
+    "ata:op_Z4MCICNBZN3S:contract:negative:request.body#/name:maxLength": {
+      "location": "request.body#/name",
+      "polarity": "negative",
+      "rule": "maxLength",
+      "subjectUid": "op_Z4MCICNBZN3S",
+      "suiteType": "contract"
+    },
+    "ata:op_Z4MCICNBZN3S:contract:negative:request.body#/name:minLength": {
+      "location": "request.body#/name",
+      "polarity": "negative",
+      "rule": "minLength",
+      "subjectUid": "op_Z4MCICNBZN3S",
+      "suiteType": "contract"
+    },
+    "ata:op_Z4MCICNBZN3S:contract:negative:request.body#/name:type": {
+      "location": "request.body#/name",
+      "polarity": "negative",
+      "rule": "type",
+      "subjectUid": "op_Z4MCICNBZN3S",
+      "suiteType": "contract"
+    },
+    "ata:op_Z4MCICNBZN3S:contract:negative:request.body#/price:minimum": {
+      "location": "request.body#/price",
+      "polarity": "negative",
+      "rule": "minimum",
+      "subjectUid": "op_Z4MCICNBZN3S",
+      "suiteType": "contract"
+    },
+    "ata:op_Z4MCICNBZN3S:contract:negative:request.body#/price:type": {
+      "location": "request.body#/price",
+      "polarity": "negative",
+      "rule": "type",
+      "subjectUid": "op_Z4MCICNBZN3S",
+      "suiteType": "contract"
+    },
+    "ata:op_Z4MCICNBZN3S:contract:negative:request.body#/tags:maxItems": {
+      "location": "request.body#/tags",
+      "polarity": "negative",
+      "rule": "maxItems",
+      "subjectUid": "op_Z4MCICNBZN3S",
+      "suiteType": "contract"
+    },
+    "ata:op_Z4MCICNBZN3S:contract:negative:request.body#/tags:type": {
+      "location": "request.body#/tags",
+      "polarity": "negative",
+      "rule": "type",
+      "subjectUid": "op_Z4MCICNBZN3S",
+      "suiteType": "contract"
+    },
+    "ata:op_Z4MCICNBZN3S:contract:negative:request.body#:additionalProperties": {
+      "location": "request.body#",
+      "polarity": "negative",
+      "rule": "additionalProperties",
+      "subjectUid": "op_Z4MCICNBZN3S",
+      "suiteType": "contract"
+    },
+    "ata:op_Z4MCICNBZN3S:contract:negative:request.body#:minProperties": {
+      "location": "request.body#",
+      "polarity": "negative",
+      "rule": "minProperties",
+      "subjectUid": "op_Z4MCICNBZN3S",
+      "suiteType": "contract"
+    },
+    "ata:op_Z4MCICNBZN3S:contract:positive:response.body#:schema": {
+      "covers": [
+        "contract:positive:response.content-type#/application~1json:documented",
+        "contract:positive:response.status#/200:documented"
+      ],
+      "location": "response.body#",
+      "polarity": "positive",
+      "relatedOperationUids": [
+        "op_EDRRXKOK26ZL",
+        "op_UPN7JLUXYUZ7"
+      ],
+      "rule": "schema",
+      "subjectUid": "op_Z4MCICNBZN3S",
+      "suiteType": "contract"
+    },
+    "ata:op_Z4MCICNBZN3S:contract:positive:response.status#/404:documented": {
+      "location": "response.status#/404",
+      "polarity": "positive",
+      "rule": "documented",
+      "subjectUid": "op_Z4MCICNBZN3S",
+      "suiteType": "contract"
+    },
+    "ata:op_Z4MCICNBZN3S:functional:negative:request.path#/itemId:not-found": {
+      "location": "request.path#/itemId",
+      "polarity": "negative",
+      "rule": "not-found",
+      "subjectUid": "op_Z4MCICNBZN3S",
+      "suiteType": "functional"
+    },
+    "ata:op_Z4MCICNBZN3S:functional:positive:operation:documented-success": {
+      "location": "operation",
+      "polarity": "positive",
+      "relatedOperationUids": [
+        "op_EDRRXKOK26ZL",
+        "op_UPN7JLUXYUZ7"
+      ],
+      "rule": "documented-success",
+      "subjectUid": "op_Z4MCICNBZN3S",
+      "suiteType": "functional"
+    },
+    "ata:scn_4EG5AXFZY2YS:scenario:positive:lifecycle:crud": {
+      "location": "lifecycle",
+      "polarity": "positive",
+      "relatedOperationUids": [
+        "op_7P2UH7UKQRHC",
+        "op_UPN7JLUXYUZ7"
+      ],
+      "rule": "crud",
+      "subjectUid": "scn_4EG5AXFZY2YS",
+      "suiteType": "scenario"
+    },
+    "ata:scn_7MN4FYBHZCZQ:scenario:positive:lifecycle:crud": {
+      "location": "lifecycle",
+      "polarity": "positive",
+      "relatedOperationUids": [
+        "op_7P2UH7UKQRHC",
+        "op_EDRRXKOK26ZL"
+      ],
+      "rule": "crud",
+      "subjectUid": "scn_7MN4FYBHZCZQ",
+      "suiteType": "scenario"
+    },
+    "ata:scn_I6MIGZS3ULNR:scenario:positive:lifecycle:crud": {
+      "location": "lifecycle",
+      "polarity": "positive",
+      "relatedOperationUids": [
+        "op_7P2UH7UKQRHC",
+        "op_EDRRXKOK26ZL",
+        "op_UPN7JLUXYUZ7"
+      ],
+      "rule": "crud",
+      "subjectUid": "scn_I6MIGZS3ULNR",
+      "suiteType": "scenario"
+    }
+  },
+  "externalIdAliases": {},
+  "externalScenarioIdAliases": {},
+  "operations": {
+    "op_4PIO72ZI3SIY": {
+      "method": "GET",
+      "normalizedPath": "/items",
+      "operationId": "listItems",
+      "path": "/items"
+    },
+    "op_7P2UH7UKQRHC": {
+      "method": "GET",
+      "normalizedPath": "/items/{}",
+      "operationId": "getItem",
+      "path": "/items/{itemId}"
+    },
+    "op_EDRRXKOK26ZL": {
+      "method": "DELETE",
+      "normalizedPath": "/items/{}",
+      "operationId": "deleteItem",
+      "path": "/items/{itemId}"
+    },
+    "op_FXHMYSJVVHAU": {
+      "method": "GET",
+      "normalizedPath": "/reports/{}",
+      "operationId": "getReport",
+      "path": "/reports/{reportId}"
+    },
+    "op_JC5NCCUJJTEG": {
+      "method": "POST",
+      "normalizedPath": "/auth/login",
+      "operationId": "login",
+      "path": "/auth/login"
+    },
+    "op_OT5MMXZVBZK4": {
+      "method": "GET",
+      "normalizedPath": "/health",
+      "operationId": "getHealth",
+      "path": "/health"
+    },
+    "op_T4Y76MGAEDN5": {
+      "method": "POST",
+      "normalizedPath": "/admin/reset",
+      "operationId": "resetInventory",
+      "path": "/admin/reset"
+    },
+    "op_UPN7JLUXYUZ7": {
+      "method": "POST",
+      "normalizedPath": "/items",
+      "operationId": "createItem",
+      "path": "/items"
+    },
+    "op_VSDJU55WRH4A": {
+      "method": "GET",
+      "normalizedPath": "/stats",
+      "operationId": "getStats",
+      "path": "/stats"
+    },
+    "op_WRZHS7HTMVON": {
+      "method": "GET",
+      "normalizedPath": "/me",
+      "operationId": "getMe",
+      "path": "/me"
+    },
+    "op_Z4MCICNBZN3S": {
+      "method": "PATCH",
+      "normalizedPath": "/items/{}",
+      "operationId": "updateItem",
+      "path": "/items/{itemId}"
+    }
+  },
+  "scenarios": {
+    "scn_4EG5AXFZY2YS": {
+      "primaryOperationUid": "op_EDRRXKOK26ZL",
+      "roles": {
+        "create": "op_UPN7JLUXYUZ7",
+        "read": "op_7P2UH7UKQRHC",
+        "update": null,
+        "delete": "op_EDRRXKOK26ZL"
+      },
+      "scenarioType": "crud",
+      "steps": [
+        {
+          "operationUid": "op_UPN7JLUXYUZ7",
+          "phase": "setup"
+        },
+        {
+          "operationUid": "op_EDRRXKOK26ZL",
+          "phase": "action"
+        },
+        {
+          "operationUid": "op_7P2UH7UKQRHC",
+          "phase": "assertion"
+        }
+      ]
+    },
+    "scn_7MN4FYBHZCZQ": {
+      "primaryOperationUid": "op_UPN7JLUXYUZ7",
+      "roles": {
+        "create": "op_UPN7JLUXYUZ7",
+        "read": "op_7P2UH7UKQRHC",
+        "update": null,
+        "delete": "op_EDRRXKOK26ZL"
+      },
+      "scenarioType": "crud",
+      "steps": [
+        {
+          "operationUid": "op_UPN7JLUXYUZ7",
+          "phase": "action"
+        },
+        {
+          "operationUid": "op_7P2UH7UKQRHC",
+          "phase": "assertion"
+        },
+        {
+          "operationUid": "op_EDRRXKOK26ZL",
+          "phase": "cleanup"
+        }
+      ]
+    },
+    "scn_I6MIGZS3ULNR": {
+      "primaryOperationUid": "op_Z4MCICNBZN3S",
+      "roles": {
+        "create": "op_UPN7JLUXYUZ7",
+        "read": "op_7P2UH7UKQRHC",
+        "update": "op_Z4MCICNBZN3S",
+        "delete": "op_EDRRXKOK26ZL"
+      },
+      "scenarioType": "crud",
+      "steps": [
+        {
+          "operationUid": "op_UPN7JLUXYUZ7",
+          "phase": "setup"
+        },
+        {
+          "operationUid": "op_Z4MCICNBZN3S",
+          "phase": "action"
+        },
+        {
+          "operationUid": "op_7P2UH7UKQRHC",
+          "phase": "assertion"
+        },
+        {
+          "operationUid": "op_EDRRXKOK26ZL",
+          "phase": "cleanup"
+        }
+      ]
+    }
+  },
+  "schemaVersion": 1
+}

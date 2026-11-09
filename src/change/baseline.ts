@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import { dirname, join, relative, resolve } from 'node:path';
 import { isUrl, readSource, type NetworkOptions } from './network.js';
 import type { BaseSource, BlockedResult } from './types.js';
@@ -60,9 +61,17 @@ export async function resolveBaseline(
   } else tried.push('merge base: the head spec is not a local file');
   // 3. CI artifact: no artifact store is configured in this version.
   tried.push('CI artifact: none configured');
-  // 4. Snapshot: usable only with metadata, which arrives with case IDs (implementation step 3).
+  // 4. Snapshot written by `generate`: usable only with its metadata.
   const snap = o.testsDir ? [join(o.testsDir, '_support', 'openapi.snapshot.ts'), join(o.testsDir, '_support', 'openapi_snapshot.json')].find((f) => existsSync(f)) : undefined;
-  tried.push(snap ? `snapshot: ${snap.replace(/\\/g, '/')} has no metadata (generatorVersion, specHash, source, capturedRevision)` : 'snapshot: none found');
+  const metaFile = o.testsDir ? join(o.testsDir, '_support', 'openapi.snapshot.meta.json') : undefined;
+  if (snap && metaFile && existsSync(metaFile)) {
+    const meta = JSON.parse(await readFile(metaFile, 'utf8'));
+    const text = await readFile(snap, 'utf8');
+    // TypeScript: `export const spec: any = {…};` holds the spec as JSON; Python: the JSON file itself.
+    const raw = snap.endsWith('.ts') ? text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1) : text;
+    if (meta?.specHash && meta?.capturedRevision) return { baseline: { raw, revision: String(meta.capturedRevision), source: 'snapshot' }, blocked: [] };
+    tried.push(`snapshot: ${metaFile.replace(/\\/g, '/')} lacks specHash / capturedRevision`);
+  } else tried.push(snap ? `snapshot: ${snap.replace(/\\/g, '/')} has no metadata (regenerate the suite to write openapi.snapshot.meta.json)` : 'snapshot: none found');
   return {
     blocked: [{ code: 'BASE_SPEC_MISSING', reason: `No baseline spec to compare with. Tried: ${tried.join('; ')}. Pass --base <file>.` }],
   };

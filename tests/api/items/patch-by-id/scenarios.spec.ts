@@ -9,7 +9,7 @@ import { test, expect } from '../../_support/fixtures.js';
 import * as resource from '../../_support/items.resource.js';
 
 test.describe('PATCH /items/{itemId} · scenarios', { tag: '@scenario' }, () => {
-  test('the update is visible through getItem', { tag: '@positive' }, async ({ api }) => {
+  test('the update is visible through getItem', { tag: '@positive', annotation: { type: 'caseId', description: 'ata:scn_I6MIGZS3ULNR:scenario:positive:lifecycle:crud' } }, async ({ api }) => {
     const { id } = await resource.create(api);
     try {
       const payload = resource.newUpdatePayload();

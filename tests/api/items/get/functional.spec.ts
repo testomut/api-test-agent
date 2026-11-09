@@ -7,7 +7,7 @@
 import { test, expect } from '../../_support/fixtures.js';
 
 test.describe('GET /items · functional', { tag: '@functional' }, () => {
-  test('returns the documented success status', { tag: '@positive' }, async ({ publicApi }) => {
+  test('returns the documented success status', { tag: '@positive', annotation: { type: 'caseId', description: 'ata:op_4PIO72ZI3SIY:functional:positive:operation:documented-success' } }, async ({ publicApi }) => {
     const res = await publicApi.items.listItems();
     expect(res.status(), 'documented success status of listItems').toBe(200);
   });
