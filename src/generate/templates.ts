@@ -147,6 +147,13 @@ export function renderPositive({ op, plan, helpers }: PositiveInput, meta: Meta)
       `      const body = await expectContract(res, '${op.method}', ${q(op.path)});`,
       `      id = String(readPointer(body, ${q(chain!.idPointer)}) ?? '');`,
       `      expect(id, 'identifier at $response.body#${chain!.idPointer}').not.toBe('');`,
+      ...(chain!.read ? [
+        `      // Confirm that the newly created resource can be retrieved by its returned identifier.`,
+        `      const read = await request.${chain!.read.method}(${pathExpr(chain!.read, chain!.param)});`,
+        `      ${expectSuccess(chain!.read, 'read')}`,
+        `      const stored = await expectContract(read, '${chain!.read.method}', ${q(chain!.read.path)});`,
+        `      expect(String(readPointer(stored, ${q(chain!.idPointer)})), 'created resource is readable by its id').toBe(id);`,
+      ] : []),
       `    } finally {`,
       `      if (id) await resource.remove(request, id);`,
       `    }`,
