@@ -252,7 +252,10 @@ common(program.command('generate').description('audit, then generate Playwright 
       },
     });
     const files = await writeReport(report, o.out);
+    const coverageFile = join(o.out, 'coverage-gaps.json');
+    await writeFile(coverageFile, JSON.stringify({ spec: location, hash: r.spec.hash, operations: gen.coverage }, null, 2) + '\n');
     log(`Report: ${files.md}`);
+    log(`Coverage and gaps per operation: ${coverageFile}`);
     if (o.draftPr) {
       if (!gen.files.length) log('No tests generated: Draft PR skipped.');
       else log(`Draft PR: ${await openDraftPr({ files: [...gen.files, ...gen.removed, files.md], title: `test(api): generated contract and CRUD tests for ${report.spec.title ?? location}`, bodyFile: files.md, hash: r.spec.hash })}`);

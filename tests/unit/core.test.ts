@@ -153,6 +153,30 @@ describe('negative cases', () => {
     expect(queryCases(op('GET /items')).map((c) => c.query)).toEqual([{ limit: 'abc' }, { limit: 0 }, { limit: 101 }]);
   });
 
+  it('breaks exclusive bounds, minItems and query minLength, one rule per case', () => {
+    const schema = {
+      type: 'object',
+      properties: {
+        qty: { type: 'integer', exclusiveMinimum: 0, exclusiveMaximum: 10 },
+        tags: { type: 'array', items: { type: 'string' }, minItems: 1 },
+      },
+    };
+    const body = bodyCases(demo.doc, schema, { qty: 5, tags: ['a'] }, 'Order');
+    expect(body.find((c) => c.source === 'Order.qty.exclusiveMinimum')?.data).toEqual({ qty: 0, tags: ['a'] });
+    expect(body.find((c) => c.source === 'Order.qty.exclusiveMaximum')?.data).toEqual({ qty: 10, tags: ['a'] });
+    expect(body.find((c) => c.source === 'Order.tags.minItems')?.data).toEqual({ qty: 5, tags: [] });
+    const search = {
+      ...op('GET /items'),
+      params: [
+        { name: 'page', in: 'query', required: false, schema: { type: 'integer', exclusiveMinimum: 0 } },
+        { name: 'q', in: 'query', required: false, schema: { type: 'string', minLength: 3 } },
+      ],
+    } as any;
+    const q = queryCases(search);
+    expect(q.find((c) => c.source === 'query.page.exclusiveMinimum')?.query).toEqual({ page: 0 });
+    expect(q.find((c) => c.source === 'query.q.minLength')?.query).toEqual({ q: 'xx' });
+  });
+
   it('only uses rejections the spec documents', () => {
     expect(documentedRejections(op('GET /health'))).toEqual({ validation: [], notFound: false, unauthorized: false });
     expect(documentedRejections(op('POST /items')).validation).toEqual(['400']);
@@ -201,10 +225,46 @@ describe('three-file suite layout', () => {
     const { dir, r } = await tsDir();
     for (const f of ['items/post/functional.spec.ts', 'items/post/contract.spec.ts', 'items/get/functional.spec.ts', 'items/patch-by-id/scenarios.spec.ts', 'items/delete-by-id/scenarios.spec.ts']) expect(existsSync(joinP(dir, f)), f).toBe(true);
     expect(r.files.some((f) => /(positive|negative)\.spec\.ts$/.test(f))).toBe(false);
-    // No empty files: a plain read has no multi-request flow, a create is never the primary of one.
+    // No empty files: a plain read has no multi-request flow of its own.
     expect(existsSync(joinP(dir, 'items/get-by-id/scenarios.spec.ts'))).toBe(false);
-    expect(existsSync(joinP(dir, 'items/post/scenarios.spec.ts'))).toBe(false);
     expect(r.scenarios.find((s) => s.name === 'items/patch-by-id/scenarios')).toMatchObject({ kind: 'scenario', status: 'NOT_RUN' });
+  });
+
+  it('create → read lives under the create operation, in TypeScript and Python', async () => {
+    const { read } = await tsDir();
+    expect(await read('items/post/scenarios.spec.ts')).toMatch(/the created resource can be retrieved by getItem', \{ tag: '@positive' \}[\s\S]*api\.items\.getItem\(id\)[\s\S]*resource\.remove\(api, id\)/);
+    const dir = await mkdtemp(joinP(tmpdir(), 'ata-3f-py-'));
+    await generate(demo, ops, { outDir: dir, version: 'test', lang: 'python' });
+    const py = await readFileP(joinP(dir, 'items/post/test_scenarios.py'), 'utf8');
+    expect(py).toContain('def test_created_resource_can_be_read(api, created_items):');
+    expect(py).toMatch(/assert str\(read_pointer\(read\.json\(\), "\/id"\)\) == created_items/);
+  });
+
+  it('checks the update result only in scenarios (marked ASSUMPTION), not again in functional', async () => {
+    const { read } = await tsDir();
+    expect(await read('items/patch-by-id/functional.spec.ts')).not.toContain('getItem');
+    expect(await read('items/patch-by-id/scenarios.spec.ts')).toContain('ASSUMPTION');
+  });
+
+  it('returns coverage per operation and writes nothing but tests into the tests folder', async () => {
+    const { dir, r } = await tsDir();
+    expect(existsSync(joinP(dir, 'coverage-gaps.json'))).toBe(false);
+    expect(r.files.some((f) => f.endsWith('.json'))).toBe(false);
+    expect(r.coverage.find((c) => c.operation === 'POST /items')).toMatchObject({ counts: { scenario: 1 }, positiveBlocked: null });
+    expect(r.coverage.find((c) => c.operation === 'POST /admin/reset')?.positiveBlocked).toMatch(/no confirmed precondition/);
+  });
+
+  it('adds GET cases only for values the schema enumerates', async () => {
+    const { queryVariants } = await import('../../src/generate/templates.js');
+    const list = {
+      ...op('GET /items'),
+      params: [
+        { name: 'sort', in: 'query', required: false, schema: { type: 'string', enum: ['asc', 'desc'] } },
+        { name: 'q', in: 'query', required: false, schema: { type: 'string' } },
+      ],
+    } as any;
+    expect(queryVariants(list)).toEqual([{ name: 'sort', value: 'asc' }, { name: 'sort', value: 'desc' }]);
+    expect(queryVariants({ ...list, method: 'post' })).toEqual([]);
   });
 
   it('puts checks in the right suite and tags polarity', async () => {

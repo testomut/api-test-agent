@@ -44,6 +44,16 @@ export interface GenerateResult {
   /** Generated files of earlier runs that this run no longer produces (incl. the old positive/negative layout). */
   removed: string[];
   scenarios: Scenario[];
+  /** Per-operation coverage and gaps; the CLI writes it next to the report, never into the tests folder. */
+  coverage: Coverage[];
+}
+
+export interface Coverage {
+  operation: string;
+  counts: Record<SuiteType, number>;
+  positiveBlocked: string | null;
+  negativeGaps: string[];
+  lifecycle: string | null;
 }
 
 function jsonBodySchema(spec: LoadedSpec, op: Operation): any {
@@ -97,7 +107,7 @@ export async function generate(spec: LoadedSpec, ops: Operation[], o: GenerateOp
   const files: string[] = [];
   const removed: string[] = [];
   const scenarios: Scenario[] = [];
-  const coverage: Array<{ operation: string; counts: Record<SuiteType, number>; positiveBlocked: string | null; negativeGaps: string[]; lifecycle: string | null }> = [];
+  const coverage: Coverage[] = [];
   const write = async (file: string, content: string) => {
     await mkdir(dirname(file), { recursive: true });
     await writeFile(file, content);
@@ -246,8 +256,6 @@ export async function generate(spec: LoadedSpec, ops: Operation[], o: GenerateOp
     }
   }
 
-  await write(join(out, 'coverage-gaps.json'), JSON.stringify({ spec: meta.spec, hash: meta.hash, operations: coverage }, null, 2) + '\n');
-
   if (files.length && py) {
     // Self-contained support code: the generated suite runs without the agent installed.
     await write(join(support, 'contract.py'), await readFile(fileURLToPath(new URL('../../src/contract/contract.py', import.meta.url)), 'utf8'));
@@ -274,7 +282,7 @@ export async function generate(spec: LoadedSpec, ops: Operation[], o: GenerateOp
     await write(join(apiDir, 'generated', 'apis.ts'), renderApis(groups, o.version));
     await write(join(support, 'openapi.snapshot.ts'), `// Snapshot of ${spec.location} (hash ${spec.hash}). Regenerated with the tests.\nexport const spec: any = ${JSON.stringify(spec.doc, null, 2)};\n`);
   }
-  return { files, removed, scenarios };
+  return { files, removed, scenarios, coverage };
 }
 
 /** A file written by the generator (its first line carries the generated header), never a hand-written one. */

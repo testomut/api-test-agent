@@ -284,12 +284,6 @@ export function renderFunctional(s: SuiteInput, meta: Meta): string {
         const a = [`${i}${expectSuccess(op)}`];
         if (role === 'create') a.push(`${i}const id = readPointer(await res.json().catch(() => undefined), ${q(chain!.idPointer)});`, `${i}expect(String(id ?? ''), 'identifier at $response.body#${chain!.idPointer}').not.toBe('');`);
         if (role === 'read') a.push(`${i}expect(String(readPointer(await res.json().catch(() => undefined), ${q(chain!.idPointer)})), 'same resource').toBe(id);`);
-        if (role === 'update' && chain?.read && plan?.updatePayload && typeof plan.updatePayload === 'object') {
-          const r = chain.read;
-          const rr = s.refs.get(r)!;
-          const readCall = apiCall(rr, 'api', pathArgs(r, rr, chain.param, 'id'));
-          a.push(`${i}const updated = await ${readCall};`, `${i}${expectSuccess(r, 'updated')}`, `${i}expect(await updated.json(), 'updated fields persisted').toMatchObject(resource.updatePayload);`);
-        }
         return a;
       }),
       '',

@@ -412,6 +412,17 @@ export function renderPyScenarios(s: SuiteInput, meta: Meta): string {
   if (sc.updateRead) extra.push(`ASSUMPTION (not in spec, reviewer must confirm): ${plan!.assumptions.find((a) => a.startsWith('after')) ?? 'read after update returns the new values'}`);
   const L = pyHeader('scenario', s, meta, extra);
   const id = `created_${res}`;
+  if (sc.createRead) {
+    L.push(
+      POS,
+      `def test_created_resource_can_be_read(api, ${id}):`,
+      `    read = api.${r.method}(${pathExpr(r, chain.param, id)})`,
+      `    ${assertSuccess(r, 'read')}`,
+      `    assert str(read_pointer(read.json(), ${JSON.stringify(chain.idPointer)})) == ${id}, "created resource id"`,
+      '',
+      '',
+    );
+  }
   if (sc.updateRead) {
     L.push(
       POS,

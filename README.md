@@ -119,7 +119,7 @@ tests/api/
 |---|---|
 | `functional.spec.ts` | the endpoint does its job: the expected success status and result (created id, same resource); documented 404 / 401 as behavior |
 | `contract.spec.ts` | conformance to OpenAPI: the status actually returned is documented, content type and body match the schema; invalid bodies / queries get a documented rejection |
-| `scenarios.spec.ts` | multi-request flows, in the folder of the operation under test (the action, not the setup step): update then read, delete then read 404 |
+| `scenarios.spec.ts` | multi-request flows, in the folder of the operation under test (the action, not the setup step): create then read by the returned id, update then read, delete then read 404 |
 
 **Positive/negative is not a file**: it is a tag on each test (`@positive` / `@negative`; pytest markers `positive` / `negative`), next to the suite tag (`@functional`, `@contract`, `@scenario`). Run one slice with `npx playwright test --grep @negative` or `pytest -m "contract and negative"`. A file is written only when it has at least one case; otherwise the report says why.
 
