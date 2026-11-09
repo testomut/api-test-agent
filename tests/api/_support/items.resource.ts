@@ -4,7 +4,7 @@
 // updatePayload sources: $<ItemPatch>.name: example; $<ItemPatch>.price: example
 // Requests go through the API objects (_support/api): pass the test's `api` fixture.
 import { expect, type APIResponse } from '@playwright/test';
-import { expectContract, readPointer } from './contract-assert.js';
+import { expectContract, readPointer, reportCleanupFailure } from './contract-assert.js';
 import type { Apis } from './api/generated/apis.js';
 
 /** The documented example payloads, unchanged. Requests use newCreatePayload() / newUpdatePayload(). */
@@ -45,9 +45,10 @@ export async function create(api: Apis, data: unknown = newCreatePayload()): Pro
   return { id, body };
 }
 
-/** DELETE /items/{itemId}: best-effort cleanup, never fails the test. */
+/** DELETE /items/{itemId}: best-effort cleanup, never fails the test. A record it cannot remove is reported (404 = already gone). */
 export async function remove(api: Apis, id: string): Promise<void> {
-  await api.items.deleteItem(id).catch(() => undefined);
+  const res = await api.items.deleteItem(id).catch(() => undefined);
+  if (!res || (!res.ok() && res.status() !== 404)) reportCleanupFailure('DELETE /items/{itemId}', id, res ? res.status() : 'no response');
 }
 
 /** Cleanup for negative create cases: if the API wrongly accepted the payload, delete what it created. */

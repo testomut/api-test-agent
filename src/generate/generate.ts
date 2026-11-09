@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, unlink, writeFile } from 'node:fs/promises';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { SAFE_METHODS, type Finding, type Operation, type Status } from '../types.js';
@@ -46,6 +46,14 @@ export interface GenerateResult {
   scenarios: Scenario[];
   /** Per-operation coverage and gaps; the CLI writes it next to the report, never into the tests folder. */
   coverage: Coverage[];
+  /** Test data the generated cleanup could not remove during --run (it stays on the target). */
+  cleanupFailures: CleanupFailure[];
+}
+
+export interface CleanupFailure {
+  operation: string;
+  id: string;
+  status: number | string;
 }
 
 export interface Coverage {
@@ -321,7 +329,7 @@ export async function generate(spec: LoadedSpec, ops: Operation[], o: GenerateOp
     await write(join(apiDir, 'generated', 'apis.ts'), renderApis(groups, o.version));
     await write(join(support, 'openapi.snapshot.ts'), `// Snapshot of ${spec.location} (hash ${spec.hash}). Regenerated with the tests.\nexport const spec: any = ${JSON.stringify(spec.doc, null, 2)};\n`);
   }
-  return { files, removed, scenarios, coverage };
+  return { files, removed, scenarios, coverage, cleanupFailures: [] };
 }
 
 /** A file written by the generator (its first line carries the generated header), never a hand-written one. */
@@ -342,13 +350,13 @@ export function findPython(): string {
 const decodeXml = (s: string) =>
   s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&#(\d+);/g, (_, n) => String.fromCharCode(+n)).replace(/&amp;/g, '&');
 
-async function runPytest(specs: Scenario[], env: { baseUrl: string }, outDir: string): Promise<void> {
+async function runPytest(specs: Scenario[], runEnv: NodeJS.ProcessEnv, outDir: string): Promise<void> {
   const junit = resolve(outDir, 'pytest-junit.xml');
   await mkdir(dirname(junit), { recursive: true });
   const python = findPython();
   const args = ['-m', 'pytest', ...specs.map((s) => posix(relative(process.cwd(), s.file!))), '-q', '-p', 'no:cacheprovider', `--junitxml=${junit}`];
   const output = await new Promise<string>((done) => {
-    const child = spawn(python, args, { env: { ...process.env, API_BASE_URL: env.baseUrl }, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(python, args, { env: runEnv, stdio: ['ignore', 'pipe', 'pipe'] });
     let buf = '';
     child.stdout.on('data', (d) => (buf += d));
     child.stderr.on('data', (d) => (buf += d));
@@ -391,7 +399,31 @@ async function runPytest(specs: Scenario[], env: { baseUrl: string }, outDir: st
 export async function runGenerated(result: GenerateResult, env: { baseUrl: string }, outDir: string, lang: TestLang = 'typescript'): Promise<void> {
   const specs = result.scenarios.filter((s) => s.file);
   if (!specs.length) return;
-  if (lang === 'python') return runPytest(specs, env, outDir);
+  // The generated cleanup appends one JSON line per record it could not remove.
+  const cleanupLog = resolve(outDir, 'cleanup-failures.jsonl');
+  await mkdir(dirname(cleanupLog), { recursive: true });
+  await rm(cleanupLog, { force: true });
+  const runEnv = { ...process.env, API_BASE_URL: env.baseUrl, API_AGENT_CLEANUP_LOG: cleanupLog };
+  await (lang === 'python' ? runPytest(specs, runEnv, outDir) : runPlaywright(specs, runEnv, outDir));
+  result.cleanupFailures = existsSync(cleanupLog)
+    ? (await readFile(cleanupLog, 'utf8')).split('\n').filter((l) => l.trim()).flatMap((l) => {
+        try {
+          return [JSON.parse(l) as CleanupFailure];
+        } catch {
+          return [];
+        }
+      })
+    : [];
+}
+
+/** Groups cleanup failures by operation and status: "DELETE /brands/{brandId} → 403: 13 record(s)". */
+export function cleanupSummary(failures: CleanupFailure[]): string[] {
+  const groups = new Map<string, number>();
+  for (const f of failures) groups.set(`${f.operation} → ${f.status}`, (groups.get(`${f.operation} → ${f.status}`) ?? 0) + 1);
+  return [...groups.entries()].map(([k, n]) => `${k}: ${n} record(s)`);
+}
+
+async function runPlaywright(specs: Scenario[], runEnv: NodeJS.ProcessEnv, outDir: string): Promise<void> {
   const jsonPath = resolve(outDir, 'playwright-results.json');
   await mkdir(dirname(jsonPath), { recursive: true });
   const cli = join(process.cwd(), 'node_modules', '@playwright', 'test', 'cli.js');
@@ -401,7 +433,7 @@ export async function runGenerated(result: GenerateResult, env: { baseUrl: strin
   }
   const args = [cli, 'test', ...specs.map((s) => posix(relative(process.cwd(), s.file!))), '--reporter=json', '--workers=1'];
   const stdout = await new Promise<string>((done) => {
-    const child = spawn(process.execPath, args, { env: { ...process.env, API_BASE_URL: env.baseUrl, PLAYWRIGHT_JSON_OUTPUT_NAME: jsonPath }, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(process.execPath, args, { env: { ...runEnv, PLAYWRIGHT_JSON_OUTPUT_NAME: jsonPath }, stdio: ['ignore', 'pipe', 'pipe'] });
     let buf = '';
     child.stdout.on('data', (d) => (buf += d));
     child.stderr.resume();

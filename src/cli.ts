@@ -10,7 +10,7 @@ import { probe } from './audit/probe.js';
 import { runSchemathesis } from './audit/schemathesis.js';
 import { resolveAuth } from './audit/auth.js';
 import { buildReport, writeReport, type AuditReport } from './report/report.js';
-import { generate, runGenerated, scenarioFindings } from './generate/generate.js';
+import { cleanupSummary, generate, runGenerated, scenarioFindings } from './generate/generate.js';
 import { openDraftPr } from './pr.js';
 import type { Finding, Operation } from './types.js';
 import { classifyTarget, loadConfig } from './config.js';
@@ -237,6 +237,10 @@ common(program.command('generate').description('audit, then generate Playwright 
       log('Running generated tests once (assertions are never changed to pass)…');
       await runGenerated(gen, { baseUrl: o.baseUrl! }, o.out, o.lang);
       for (const s of gen.scenarios.filter((x) => x.file)) log(`  ${s.status.padEnd(9)} ${s.name}`);
+      if (gen.cleanupFailures.length) {
+        log(`WARNING: cleanup could not remove ${gen.cleanupFailures.length} record(s); they stay on ${o.baseUrl}:`);
+        for (const line of cleanupSummary(gen.cleanupFailures)) log(`  LEFT      ${line}`);
+      }
     }
     const report = buildReport({
       mode: 'generate',
@@ -249,6 +253,7 @@ common(program.command('generate').description('audit, then generate Playwright 
       generated: {
         files: gen.files.map((f) => resolve(f).replace(process.cwd() + (process.platform === 'win32' ? '\\' : '/'), '').replace(/\\/g, '/')),
         scenarios: gen.scenarios.map(({ name, status, reason, operations }) => ({ name, status, reason, operations })),
+        cleanupFailures: gen.cleanupFailures,
       },
     });
     const files = await writeReport(report, o.out);
