@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "operationId": "listItems",
+  "query": {
+    "tag": "catalog"
+  },
+  "items": "/items",
+  "id": "/id",
+  "policies": {
+    "/price": "tolerance:0.001",
+    "/createdAt": "ignore"
+  },
+  "default": "exact",
+  "exhaustive": true,
+  "page": {
+    "style": "offset",
+    "offsetParam": "offset",
+    "limitParam": "limit",
+    "maxPages": 20
+  },
+  "expected": [
+    {
+      "id": "00000000-0000-4000-8000-000000000001",
+      "name": "Catalog hammer",
+      "price": 12.5,
+      "tags": [
+        "catalog"
+      ],
+      "createdAt": "2026-11-09T21:13:16.636Z"
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000002",
+      "name": "Catalog screwdriver",
+      "price": 4.25,
+      "tags": [
+        "catalog"
+      ],
+      "createdAt": "2026-11-09T21:13:16.637Z"
+    }
+  ]
+}

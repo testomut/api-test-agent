@@ -2,6 +2,7 @@ import type { Operation } from '../types.js';
 import { requiredRequest } from './param-cases.js';
 import { varsIn, type ResolvedScenario, type ResolvedStep } from '../scenarios/dsl.js';
 import type { CrudChain } from './graph.js';
+import { pyCollectionPrelude, pyCollectionTests, pyFixtureTest, pyLifecycle } from './collection-render.js';
 import { hasFill, queryVariants, roleOf, scenarioCases, uniqueNote, type ChainPlan, type Meta, type SuiteInput, type SuiteType } from './templates.js';
 
 /**
@@ -35,7 +36,7 @@ export function pyLit(v: unknown, indent = 0): string {
   return `{\n${entries.map(([k, x]) => `${pad}    ${str(k)}: ${pyLit(x, indent + 4)},`).join('\n')}\n${pad}}`;
 }
 
-function assertSuccess(op: Operation, v = 'res'): string {
+export function assertSuccess(op: Operation, v = 'res'): string {
   const ok = successCodes(op);
   return ok.length === 1
     ? `assert ${v}.status_code == ${ok[0]}, f"documented success status of ${label(op)} is ${ok[0]}, got {${v}.status_code}"`
@@ -43,7 +44,7 @@ function assertSuccess(op: Operation, v = 'res'): string {
 }
 
 /** Python f-string for the request path; the chain parameter comes from `idVar`. */
-function pathExpr(op: Operation, chainParam?: string, idVar = 'resource_id'): string {
+export function pathExpr(op: Operation, chainParam?: string, idVar = 'resource_id'): string {
   let p = op.path.replace(/^\//, '').replace(/[{}]/g, (c) => c + c); // escape braces for the f-string
   for (const param of op.params.filter((x) => x.in === 'path')) {
     // Inner literals use single quotes: the f-string itself is double-quoted (Python < 3.12 forbids reuse).
@@ -55,7 +56,7 @@ function pathExpr(op: Operation, chainParam?: string, idVar = 'resource_id'): st
 }
 
 /** Keyword arguments with the operation's required query / header / cookie parameters (documented values). */
-function pyRequired(op: Operation, skip: ('params' | 'headers')[] = []): string {
+export function pyRequired(op: Operation, skip: ('params' | 'headers')[] = []): string {
   const r = requiredRequest(op);
   return [
     Object.keys(r.params).length && !skip.includes('params') ? `, params=${pyLit(r.params, 4)}` : '',
@@ -209,14 +210,16 @@ def created_${name}(${name}):
 
 Settings come from .env (API_BASE_URL, API_TOKEN or API_LOGIN...) or the real environment; real variables win.
 Auth: with API_LOGIN (e.g. "POST /users/login") the tests log in and refresh the token before it expires;
-otherwise the static API_TOKEN is used.
+otherwise the static API_TOKEN is used. Test account: API_TEST_ACCOUNT=existing (default) | new | auto.
 """
 import json
 import os
 import pathlib
 import re
+import secrets
 import sys
 import time
+import uuid
 
 import pytest
 import requests
@@ -290,29 +293,68 @@ def base_url():
     return url
 
 
+_LOGIN_VARS = re.compile(r"\\$\\{(\\w+)\\}")
+
+
+def _fill(template, values, name):
+    def sub(match):
+        value = values.get(match.group(1))
+        if not value:
+            raise RuntimeError(f"{name} uses {match.group(0)}, which is not set (.env or environment)")
+        return json.dumps(value)[1:-1]
+
+    return json.loads(_LOGIN_VARS.sub(sub, template))
+
+
+def _login_vars():
+    return list(dict.fromkeys(_LOGIN_VARS.findall(os.environ.get("API_LOGIN_BODY") or "")))
+
+
 class _TokenSource:
-    """Logs in with API_LOGIN / API_LOGIN_BODY and refreshes the token shortly before it expires."""
+    """Logs in with API_LOGIN / API_LOGIN_BODY and refreshes the token shortly before it expires.
+
+    API_TEST_ACCOUNT=existing (default): the account from .env (the \${VAR}s of API_LOGIN_BODY).
+    API_TEST_ACCOUNT=new: one NEW account per test session through API_REGISTER / API_REGISTER_BODY.
+    API_TEST_ACCOUNT=auto: the .env account; only when it is missing or its login is refused (401 / 403 / 422,
+    e.g. the test environment was reset) is ONE new account registered for the session.
+    Generated emails / passwords live in this process's memory only; .env is never changed.
+    """
 
     def __init__(self, base_url):
         self.base_url = base_url.rstrip("/") + "/"
         self.token = None
         self.expires_at = 0.0
+        self.mode = (os.environ.get("API_TEST_ACCOUNT") or "existing").strip().lower()
+        if self.mode not in ("existing", "new", "auto"):
+            raise RuntimeError(f'API_TEST_ACCOUNT must be "existing", "new" or "auto", got "{self.mode}"')
+        self.credentials = {v: os.environ[v] for v in _login_vars() if os.environ.get(v)}
+        self.registered = False
 
-    def get(self):
-        if self.token and time.time() < self.expires_at - 30:
-            return self.token
-        method, path = os.environ["API_LOGIN"].split(None, 1)
-
-        def fill(match):
-            value = os.environ.get(match.group(1))
-            if not value:
-                raise RuntimeError(f"API_LOGIN_BODY uses {match.group(0)}, which is not set (.env or environment)")
-            return json.dumps(value)[1:-1]
-
-        body = json.loads(re.sub(r"\\$\\{(\\w+)\\}", fill, os.environ.get("API_LOGIN_BODY") or "{}"))
-        res = requests.request(method, self.base_url + path.strip().lstrip("/"), json=body, timeout=30)
+    def _register(self, why):
+        method, path = (os.environ.get("API_REGISTER") or "").split(None, 1) if os.environ.get("API_REGISTER") else ("", "")
+        template = os.environ.get("API_REGISTER_BODY")
+        if not method or not template:
+            raise RuntimeError(f"Test account: {why}; registering a new one needs API_REGISTER and API_REGISTER_BODY")
+        unique = f"{int(time.time() * 1000):x}{uuid.uuid4().hex[:6]}"
+        password = f"Qa-{secrets.token_urlsafe(12)}-7x!"
+        creds = {v: password if "pass" in v.lower() else f"api-test-{unique}@example.com" for v in _login_vars()}
+        body = _fill(template, {**os.environ, **creds, "UNIQUE": unique}, "API_REGISTER_BODY")
+        # Never print the request or the response: they contain the password.
+        res = requests.request(method.upper(), self.base_url + path.strip().lstrip("/"), json=body, timeout=30)
         if not res.ok:
-            raise RuntimeError(f"Login failed: {method} {path} answered {res.status_code} (check credentials in .env)")
+            raise RuntimeError(f"Registering a test account failed: {method} {path} answered {res.status_code} (check API_REGISTER_BODY)")
+        label = next((value for key, value in creds.items() if "pass" not in key.lower()), "")
+        print(f"[test-account] {why}: registered new account {label} (stays on the server)")
+        self.credentials = creds
+        self.registered = True
+
+    def _login(self):
+        method, path = os.environ["API_LOGIN"].split(None, 1)
+        body = _fill(os.environ.get("API_LOGIN_BODY") or "{}", {**os.environ, **self.credentials}, "API_LOGIN_BODY")
+        res = requests.request(method.upper(), self.base_url + path.strip().lstrip("/"), json=body, timeout=30)
+        if not res.ok:
+            source = "freshly registered account" if self.registered else "check the test account in .env"
+            raise _LoginRefused(res.status_code, f"Login failed: {method} {path} answered {res.status_code} ({source})")
         data = res.json()
         pointer = os.environ.get("API_TOKEN_POINTER") or "/access_token"
         token = read_pointer(data, pointer)
@@ -322,6 +364,30 @@ class _TokenSource:
         self.token = token
         self.expires_at = time.time() + (float(ttl) if isinstance(ttl, (int, float)) and ttl > 0 else 600)
         return token
+
+    def get(self):
+        if self.token and time.time() < self.expires_at - 30:
+            return self.token
+        if self.mode == "new" and not self.registered:
+            self._register("API_TEST_ACCOUNT=new")
+        elif self.mode == "auto" and not self.registered:
+            missing = [v for v in _login_vars() if v not in self.credentials]
+            if missing:
+                self._register(f"{', '.join(missing)} not set")
+            else:
+                try:
+                    return self._login()
+                except _LoginRefused as e:
+                    if e.status not in (401, 403, 422):
+                        raise
+                    self._register(f"the account from .env is refused ({e.status})")
+        return self._login()
+
+
+class _LoginRefused(RuntimeError):
+    def __init__(self, status, message):
+        super().__init__(message)
+        self.status = status
 
 
 @pytest.fixture(scope="session")
@@ -354,7 +420,7 @@ ${fixtures}`;
 const POS = '@pytest.mark.positive';
 const NEG = '@pytest.mark.negative';
 /** The polarity marker plus, when known, the stable case ID marker (registered in conftest.py). */
-const withId = (mark: string, id?: string) => (id ? `${mark}\n@pytest.mark.api_case_id(${str(id)})` : mark);
+export const withId = (mark: string, id?: string) => (id ? `${mark}\n@pytest.mark.api_case_id(${str(id)})` : mark);
 const paramMarks = (id?: string) => (id ? `, marks=pytest.mark.api_case_id(${str(id)})` : '');
 
 function pyHeader(suite: SuiteType, s: SuiteInput, meta: Meta, extra: string[]): string[] {
@@ -448,6 +514,11 @@ export function renderPyFunctional(s: SuiteInput, meta: Meta): string {
   if (s.notFound) L.push(...pyNotFound(s, 'test_returns_documented_404_for_unknown_id', withId(NEG, s.ids?.functional.notFound), statusIs(op, '404')));
   if (s.unauthorized) L.push(...pyAnonymous(s, 'test_returns_documented_401_without_credentials', withId(NEG, s.ids?.functional.unauthorized), statusIs(op, '401')));
   L.push(...pyErrorTests(s));
+  if (s.collection?.plan.tests.length) {
+    L.splice(L.indexOf(`pytestmark = pytest.mark.functional`), 0, ...pyCollectionPrelude(s, s.collection));
+    L.push(...pyCollectionTests(s, s.collection));
+  }
+  if (s.fixture) L.push(...pyFixtureTest(s, s.fixture));
   return finish(L);
 }
 
@@ -623,6 +694,10 @@ export function renderPyScenarios(s: SuiteInput, meta: Meta): string {
   if (sc.updateRead) extra.push(`ASSUMPTION (not in spec, reviewer must confirm): ${plan!.assumptions.find((a) => a.startsWith('after')) ?? 'read after update returns the new values'}`);
   const L = pyHeader('scenario', s, meta, extra);
   const id = `created_${res}`;
+  if (s.collection?.plan.lifecycle) {
+    L.splice(L.indexOf(`pytestmark = pytest.mark.scenario`), 0, ...pyCollectionPrelude(s, s.collection));
+    L.push(...pyLifecycle(s, s.collection));
+  }
   if (sc.deleteTwice) {
     // A repeated delete of the same resource gets the documented 404.
     L.push(

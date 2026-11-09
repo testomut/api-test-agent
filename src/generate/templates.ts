@@ -7,6 +7,8 @@ import { requiredRequest, type ParamRequest } from './param-cases.js';
 import type { ErrorPlan } from './error-cases.js';
 import { varsIn, type ResolvedScenario, type ResolvedStep } from '../scenarios/dsl.js';
 import { boundaryValues } from './boundaries.js';
+import { tsCollectionImports, tsCollectionPrelude, tsCollectionTests, tsFixtureImport, tsFixtureTest, tsLifecycle, type CollectionInput } from './collection-render.js';
+import type { LoadedFixture } from '../fixtures/fixtures.js';
 
 /** Payloads and assumptions for one confirmed resource chain. */
 export interface ChainPlan {
@@ -50,7 +52,7 @@ const lit = (v: unknown) => JSON.stringify(v, null, 2);
 const label = (op: Operation) => op.operationId ?? op.key;
 const successCodes = (op: Operation) => op.responses.map((r) => r.status).filter((s) => /^2\d\d$/.test(s));
 
-function expectSuccess(op: Operation, v = 'res') {
+export function expectSuccess(op: Operation, v = 'res') {
   const ok = successCodes(op);
   return ok.length === 1
     ? `expect(${v}.status(), 'documented success status of ${label(op)}').toBe(${ok[0]});`
@@ -102,7 +104,7 @@ function header(kind: string, op: Operation, meta: Meta, extra: string[]): strin
 /* ------------------------------------------------------------------ helpers per resource */
 
 /** Arguments for an API object method: path parameters in order; the chain parameter comes from `idVar`. */
-function pathArgs(op: Operation, ref: ApiRef, chainParam?: string, idVar = 'id'): string[] {
+export function pathArgs(op: Operation, ref: ApiRef, chainParam?: string, idVar = 'id'): string[] {
   return ref.pathParams.map((name) => {
     if (name === chainParam) return idVar;
     const p = op.params.find((x) => x.in === 'path' && x.name === name);
@@ -228,6 +230,10 @@ export interface SuiteInput {
   errors?: ErrorPlan;
   /** Reviewed business scenarios whose primary step is this operation (stage 8). */
   business?: ResolvedScenario[];
+  /** A list operation with a reviewed "collection" mapping: deep collection tests and the list lifecycle. */
+  collection?: CollectionInput;
+  /** An approved fixture of this list operation (strategy B). */
+  fixture?: LoadedFixture;
 }
 
 export type Role = 'create' | 'read' | 'update' | 'delete';
@@ -256,10 +262,14 @@ export function suiteCounts(s: SuiteInput): Record<SuiteType, number> {
   const extra = (s.notFound ? 1 : 0) + (s.unauthorized ? 1 : 0);
   const sc = scenarioCases(s);
   const e = s.errors;
-  return {
+  const base = {
     functional: (s.positive ? 1 : 0) + extra + (s.positive && !s.plan ? queryVariants(s.op).length : 0) + (e?.invalidCredentials ? 1 : 0) + (e?.methodNotAllowed ? 1 : 0) + (e?.preconditionFailed && s.plan ? 1 : 0),
     contract: (s.positive ? 1 : 0) + extra + s.bodyCases.length + s.paramCases.length + (e?.unsupportedMediaType && s.plan ? 1 : 0),
-    scenario: (sc.createRead ? 1 : 0) + (sc.updateRead ? 1 : 0) + (sc.deleteGone ? 1 : 0) + (sc.conflict ? 1 : 0) + (sc.deleteTwice ? 1 : 0) + (s.business?.length ?? 0),
+  };
+  return {
+    contract: base.contract,
+    functional: base.functional + (s.collection?.plan.tests.length ?? 0) + (s.fixture ? 1 : 0),
+    scenario: (sc.createRead ? 1 : 0) + (sc.updateRead ? 1 : 0) + (sc.deleteGone ? 1 : 0) + (sc.conflict ? 1 : 0) + (sc.deleteTwice ? 1 : 0) + (s.business?.length ?? 0) + (s.collection?.plan.lifecycle ? 1 : 0),
   };
 }
 
@@ -356,11 +366,12 @@ export function renderFunctional(s: SuiteInput, meta: Meta): string {
   const chain = plan?.chain;
   const role = roleOf(op, plan);
   const fx = chain ? 'api' : apiFixture(op);
-  const usesHelpers = (s.positive && !!role) || notFoundNeedsHelpers(s) || !!(s.errors?.preconditionFailed && plan);
+  const usesHelpers = (s.positive && !!role) || notFoundNeedsHelpers(s) || !!(s.errors?.preconditionFailed && plan) || !!s.collection?.plan.tests.length;
   const errorStatus = !!(s.errors?.invalidCredentials || s.errors?.methodNotAllowed || s.errors?.preconditionFailed);
-  const names = ['expect', ...(s.positive && (role === 'create' || role === 'read') ? ['readPointer'] : []), ...(s.notFound || s.unauthorized || errorStatus ? ['expectStatus'] : [])];
-  const L = suiteHeader('functional', s, meta, ['Checks the behavior of the endpoint: status and result. The response schema is checked in contract.spec.ts.']);
-  L.push(...imports(s, names, usesHelpers), '', `test.describe('${op.key} · functional', { tag: '@functional' }, () => {`);
+  const coll = s.collection?.plan.tests.length ? s.collection : undefined;
+  const names = [...new Set(['expect', ...(s.positive && (role === 'create' || role === 'read') ? ['readPointer'] : []), ...(s.notFound || s.unauthorized || errorStatus ? ['expectStatus'] : []), ...(coll ? tsCollectionImports('functional') : []), ...(s.fixture ? ['itemsOf', 'expectMatchesFixture'] : [])])];
+  const L = suiteHeader('functional', s, meta, ['Checks the behavior of the endpoint: status and result. The response schema is checked in contract.spec.ts.', ...(coll ? ['Collection checks run on records the tests create (controlled datasets) or, where marked read-only, on existing data.'] : [])]);
+  L.push(...imports(s, names, usesHelpers), ...(s.fixture ? [tsFixtureImport(s.fixture)] : []), ...(coll ? ['', ...tsCollectionPrelude(s, coll)] : ['']), `test.describe('${op.key} · functional', { tag: '@functional' }, () => {`);
 
   if (s.positive) {
     const titles: Record<string, string> = {
@@ -406,6 +417,8 @@ export function renderFunctional(s: SuiteInput, meta: Meta): string {
     L.push(`  test('returns documented 401 without credentials', ${testOptions('negative', s.ids?.functional.unauthorized)}, async ({ publicApi }) => {`, anonymousCall(s), `    expectStatus(res, ['401'], '${op.method}', ${q(op.path)});`, `  });`, '');
   }
   L.push(...errorTests(s));
+  if (coll) L.push(...tsCollectionTests(s, coll));
+  if (s.fixture) L.push(...tsFixtureTest(s, s.fixture));
   return close(L);
 }
 
@@ -597,8 +610,10 @@ export function renderScenarios(s: SuiteInput, meta: Meta): string {
   if (business.length) extra.push('Business scenarios come from the reviewed scenarios file: steps, expected statuses and cleanup as written there.');
   if (sc.updateRead) extra.push(`ASSUMPTION (not in spec, reviewer must confirm): ${plan!.assumptions.find((a) => a.startsWith('after')) ?? 'read after update returns the new values'}`);
   const L = suiteHeader('scenario', s, meta, extra);
-  const names = ['expect', ...(sc.createRead || business.length ? ['readPointer'] : []), ...(sc.conflict || sc.deleteTwice || business.length ? ['expectStatus'] : []), ...(business.length ? ['fillVars', 'reportCleanupFailure'] : [])];
-  L.push(...imports(s, names, !!plan, false), '', `test.describe('${op.key} · scenarios', { tag: '@scenario' }, () => {`);
+  const life = s.collection?.plan.lifecycle ? s.collection : undefined;
+  const names = [...new Set(['expect', ...(sc.createRead || business.length ? ['readPointer'] : []), ...(sc.conflict || sc.deleteTwice || business.length ? ['expectStatus'] : []), ...(business.length ? ['fillVars', 'reportCleanupFailure'] : []), ...(life ? tsCollectionImports('scenario') : [])])];
+  L.push(...imports(s, names, !!plan || !!life, false), ...(life ? ['', ...tsCollectionPrelude(s, life)] : ['']), `test.describe('${op.key} · scenarios', { tag: '@scenario' }, () => {`);
+  if (life) L.push(...tsLifecycle(s, life));
   if (sc.deleteTwice) {
     // A repeated delete of the same resource gets the documented 404.
     L.push(
@@ -756,6 +771,135 @@ export function expectStatus(res: APIResponse, documented: string[], method: str
 export async function expectRejected(res: APIResponse, documented: string[], method: string, path: string): Promise<unknown> {
   expectStatus(res, documented, method, path);
   return expectContract(res, method, path);
+}
+
+/* Collection checks (a reviewed "collection" mapping in the deps file). Same semantics in contract.py. */
+
+/** The array a collection response holds ("" = the body itself). */
+export function itemsOf(body: unknown, pointer: string): unknown[] {
+  const v = pointer ? readPointer(body, pointer) : body;
+  expect(Array.isArray(v), 'collection at "' + (pointer || '(body)') + '" is an array').toBe(true);
+  return v as unknown[];
+}
+const idOf = (item: unknown, ptr: string) => String(readPointer(item, ptr));
+
+/** The resource with this id is in the collection; returns it. */
+export function expectContains(items: unknown[], idPtr: string, id: unknown, what = 'resource'): unknown {
+  const found = items.find((i) => idOf(i, idPtr) === String(id));
+  expect(found, what + ' ' + String(id) + ' is in the collection').toBeDefined();
+  return found;
+}
+
+export function expectNotContains(items: unknown[], idPtr: string, id: unknown, what = 'resource'): void {
+  expect(items.some((i) => idOf(i, idPtr) === String(id)), what + ' ' + String(id) + ' is not in the collection').toBe(false);
+}
+
+/** Fields compare by policy: exact, tolerance:<n>; ignore and schema are not compared here (schema: contract suite). */
+export function expectFields(item: unknown, expected: unknown, policies: Record<string, string>): void {
+  for (const [ptr, policy] of Object.entries(policies)) {
+    if (policy === 'ignore' || policy === 'schema') continue;
+    const want = readPointer(expected, ptr);
+    if (want === undefined) continue;
+    const got = readPointer(item, ptr);
+    if (policy.startsWith('tolerance:')) {
+      const t = Number(policy.slice('tolerance:'.length));
+      expect(Math.abs(Number(got) - Number(want)), ptr + ' within ' + t + ' of ' + String(want) + ' (got ' + String(got) + ')').toBeLessThanOrEqual(t);
+    } else expect(got, ptr + ' as sent').toEqual(want);
+  }
+}
+
+/** Every element matches a filter: equals (the field is the value) or contains (the array field holds it). */
+export function expectAllMatch(items: unknown[], ptr: string, match: 'equals' | 'contains', value: unknown): void {
+  const bad = items.filter((i) => {
+    const v = readPointer(i, ptr);
+    return match === 'contains' ? !(Array.isArray(v) && v.map(String).includes(String(value))) : String(v) !== String(value);
+  });
+  expect(bad.length, bad.length + ' element(s) do not match ' + ptr + ' ' + match + ' ' + String(value)).toBe(0);
+}
+
+/** A filtered result holds only resources the unfiltered collection shows (a filter narrows, never adds). */
+export function expectSubsetOf(items: unknown[], base: unknown[], idPtr: string, what: string): void {
+  const known = new Set(base.map((i) => idOf(i, idPtr)));
+  const extra = items.map((i) => idOf(i, idPtr)).filter((id) => !known.has(id));
+  expect(extra, what + ' returns resources the unfiltered collection does not show').toEqual([]);
+}
+
+export function expectUniqueBy(items: unknown[], ptr: string): void {
+  const seen = new Set<string>();
+  const dups = items.map((i) => idOf(i, ptr)).filter((k) => (seen.has(k) ? true : (seen.add(k), false)));
+  expect(dups, 'duplicates by ' + ptr).toEqual([]);
+}
+
+/** Order by plain comparison (code points for strings, numeric for numbers): the API must document this order. */
+export function expectSortedBy(items: unknown[], ptr: string, order: 'asc' | 'desc'): void {
+  for (let i = 1; i < items.length; i++) {
+    const a = readPointer(items[i - 1], ptr) as any;
+    const b = readPointer(items[i], ptr) as any;
+    const ok = order === 'asc' ? !(b < a) : !(b > a);
+    expect(ok, ptr + ' ' + order + ' at position ' + i + ': ' + String(a) + ' then ' + String(b)).toBe(true);
+  }
+}
+
+export function expectPageSize(items: unknown[], max: number): void {
+  expect(items.length, 'page size').toBeLessThanOrEqual(max);
+}
+
+export function expectNoDuplicateAcrossPages(pages: unknown[][], idPtr: string): void {
+  expectUniqueBy(pages.flat(), idPtr);
+}
+
+/** Leaf pointers of a value (objects and arrays walked). */
+function leaves(v: unknown, prefix = ''): string[] {
+  if (v && typeof v === 'object' && Object.keys(v).length) return Object.entries(v as Record<string, unknown>).flatMap(([k, x]) => leaves(x, prefix + '/' + k.replace(/~/g, '~0').replace(/\\//g, '~1')));
+  return [prefix];
+}
+
+/**
+ * Approved fixture (strategy B): every expected element is in the collection, each field compared by its policy
+ * (the longest matching policy pointer, else the default): exact, tolerance:<n>, schema (present), ignore.
+ * exhaustive: the collection holds exactly the expected elements.
+ */
+export function expectMatchesFixture(items: unknown[], f: { id: string; expected: unknown[]; policies?: Record<string, string>; default?: string; exhaustive?: boolean }): void {
+  const policyOf = (leaf: string) => {
+    const hit = Object.keys(f.policies ?? {}).filter((p) => leaf === p || leaf.startsWith(p + '/')).sort((a, b) => b.length - a.length)[0];
+    return hit ? f.policies![hit] : f.default ?? 'exact';
+  };
+  for (const want of f.expected) {
+    const id = readPointer(want, f.id);
+    const got = expectContains(items, f.id, id, 'approved fixture element');
+    for (const leaf of leaves(want)) {
+      const policy = policyOf(leaf);
+      const a = readPointer(got, leaf);
+      const b = readPointer(want, leaf);
+      const at = 'element ' + String(id) + ' ' + leaf;
+      if (policy === 'ignore') continue;
+      if (policy === 'schema') expect(a, at + ' is present').not.toBeUndefined();
+      else if (policy.startsWith('tolerance:')) expect(Math.abs(Number(a) - Number(b)), at + ' within ' + policy.slice(10) + ' of ' + String(b) + ' (got ' + String(a) + ')').toBeLessThanOrEqual(Number(policy.slice(10)));
+      else expect(a, at + ' as approved').toEqual(b);
+    }
+  }
+  if (f.exhaustive) expect(items.length, 'the collection holds exactly the approved elements').toBe(f.expected.length);
+}
+
+/** Bounded polling for documented eventual consistency: returns the last value; never waits past timeoutMs. */
+export async function poll<T>(fn: () => Promise<T>, done: (v: T) => boolean, timeoutMs: number, intervalMs: number): Promise<T> {
+  const end = Date.now() + timeoutMs;
+  let v = await fn();
+  while (!done(v) && Date.now() < end) {
+    await new Promise((r) => setTimeout(r, intervalMs));
+    v = await fn();
+  }
+  return v;
+}
+
+/** A copy of a payload with one field (JSON pointer through objects) set. */
+export function withValue<T>(payload: T, ptr: string, value: unknown): T {
+  const out = structuredClone(payload) as any;
+  const keys = ptr.split('/').slice(1).map((k) => k.replace(/~1/g, '/').replace(/~0/g, '~'));
+  let node = out;
+  for (const k of keys.slice(0, -1)) node = node[k] ??= {};
+  node[keys[keys.length - 1]] = value;
+  return out;
 }
 
 /** Scenario values: "{name}" alone is replaced by the saved value itself, inside a longer string by its text. */

@@ -198,10 +198,12 @@ function checkLocation(o: NormOp, loc: string, rule: string): Finding | undefine
     if (rawValue !== undefined) {
       // accepted-value: the value must be one the spec documents for this parameter.
       const value = String(decodeSegment(rawValue));
+      // sort: the value comes from the reviewed collection mapping; the spec can only rule it out with an enum.
+      if (rule === 'sort' && !Array.isArray(p.schema?.enum) && p.schema?.const === undefined) return undefined;
       const allowed = Array.isArray(p.schema?.enum) ? p.schema.enum.map(String) : p.schema?.const !== undefined ? [String(p.schema.const)] : boundaryValues(p.schema).map(String);
       return allowed.includes(value) ? undefined : bad(`"${value}" is not a documented value or valid limit of ${m[1]} "${name}"`);
     }
-    if (rule !== 'required' && rule !== 'not-found' && !ruleFits(p.schema, rule)) return { code: 'INVALID_CASE_RULE_FOR_SCHEMA', pointer: '', reason: `${o.key}: "${rule}" does not apply to ${m[1]} "${name}"` };
+    if (!['required', 'not-found', 'filter', 'pagination'].includes(rule) && !ruleFits(p.schema, rule)) return { code: 'INVALID_CASE_RULE_FOR_SCHEMA', pointer: '', reason: `${o.key}: "${rule}" does not apply to ${m[1]} "${name}"` };
     return undefined;
   }
   const status = loc.match(/^response\.status#\/(.+)$/);
@@ -231,7 +233,7 @@ function checkLocation(o: NormOp, loc: string, rule: string): Finding | undefine
         last = r.error.code === 'CASE_LOCATION_UNRESOLVED' ? r.error : { ...r.error, reason: `${o.key}: ${r.error.reason}` };
         continue;
       }
-      if (!['schema', 'type', 'required', 'nullable', 'enum', 'const'].includes(rule) && !ruleFits(r.node, rule)) {
+      if (!['schema', 'type', 'required', 'nullable', 'enum', 'const', 'unique'].includes(rule) && !ruleFits(r.node, rule)) {
         last = { code: 'INVALID_CASE_RULE_FOR_SCHEMA', pointer: '', reason: `${o.key}: "${rule}" does not apply to ${body[1]} body ${body[2] || '(root)'}` };
         continue;
       }

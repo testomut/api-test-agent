@@ -1,6 +1,7 @@
 import type { Operation } from '../types.js';
 import { resolvePointer, type OpenApiDoc } from '../spec/loader.js';
 import { operationPointer } from '../spec/catalog.js';
+import type { CollectionConfig } from './collection.js';
 
 /**
  * A CRUD chain: create → read → update → delete for one resource.
@@ -23,6 +24,8 @@ export interface CrudChain {
   conflictOn?: string[];
   /** Create body fields the create response returns unchanged (a reviewed mapping): asserted in the create test. */
   echoes?: string[];
+  /** The reviewed list operation that shows this resource (deps file "collection"), checked in resolveCollection. */
+  collection?: CollectionConfig;
 }
 
 export interface FillRule {
@@ -54,6 +57,8 @@ export interface DepsFile {
     conflictOn?: string[];
     /** Fields the create response returns as sent. */
     echoes?: string[];
+    /** The list operation of this resource and its confirmed semantics (src/generate/collection.ts). */
+    collection?: CollectionConfig;
   }[];
 }
 
@@ -79,6 +84,7 @@ export function findChains(doc: OpenApiDoc, ops: Operation[], deps?: DepsFile): 
       ...(s.fill ? { fill: Object.entries(s.fill).map(([field, f]) => ({ field, fromId: f?.from, from: byId.get(f?.from), pointer: f?.pointer })) } : {}),
       ...(Array.isArray(s.conflictOn) && s.conflictOn.length ? { conflictOn: s.conflictOn.map(String) } : {}),
       ...(Array.isArray(s.echoes) && s.echoes.length ? { echoes: s.echoes.map(String) } : {}),
+      ...(s.collection && typeof s.collection === 'object' ? { collection: s.collection } : {}),
     });
   }
 

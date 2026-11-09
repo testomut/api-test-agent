@@ -17,8 +17,9 @@ describe('test account', () => {
 
   it('accepts only existing/new', () => {
     expect(parseAccountMode(' New ')).toBe('new');
+    expect(parseAccountMode('auto')).toBe('auto');
     expect(parseAccountMode('')).toBeUndefined();
-    expect(() => parseAccountMode('maybe')).toThrow(/existing" or "new/);
+    expect(() => parseAccountMode('maybe')).toThrow(/"existing", "new" or "auto"/);
   });
 
   it('says plainly that "no" registers an account on every run', () => {
@@ -64,5 +65,16 @@ describe('test account', () => {
     const env = { ...base, API_REGISTER: 'POST /r', API_REGISTER_BODY: '{"e":"${SHOP_EMAIL}","p":"${SHOP_PASSWORD}"}' };
     await expect(registerAccount('https://x.test', env)).rejects.toThrow(/answered HTTP 422/);
     expect(env).not.toHaveProperty('SHOP_EMAIL'); // nothing half-applied
+  });
+});
+
+describe('Python suites: test account modes', () => {
+  it('the generated conftest supports existing, new and auto, registering at most once per session', async () => {
+    const { renderConftest } = await import('../../src/generate/python.js');
+    const text = renderConftest([], { spec: 'x', hash: 'h', version: 'test' });
+    expect(text).toContain('if self.mode not in ("existing", "new", "auto")');
+    expect(text).toContain('if e.status not in (401, 403, 422):');
+    expect(text).toContain('self.registered = True');
+    expect(text).toContain(String.raw`_LOGIN_VARS = re.compile(r"\$\{(\w+)\}")`);
   });
 });

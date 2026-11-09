@@ -34,7 +34,7 @@ describe('stage 10: coverage report', () => {
   });
 
   it('the demo API has exactly the expected gaps', async () => {
-    const r = await run('demo-api/openapi.yaml', undefined, 'demo-api/scenarios.json');
+    const r = await run('demo-api/openapi.yaml', 'demo-api/deps.json', 'demo-api/scenarios.json');
     expect(summarize(r.coverage)).toEqual(JSON.parse(await readFile('demo-api/expected-gaps.json', 'utf8')));
   });
 

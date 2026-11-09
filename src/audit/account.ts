@@ -18,8 +18,8 @@
 import { randomBytes } from 'node:crypto';
 import { expandTemplate, loginConfig } from './login.js';
 
-export type AccountMode = 'existing' | 'new';
-export const ACCOUNT_MODES: AccountMode[] = ['existing', 'new'];
+export type AccountMode = 'existing' | 'new' | 'auto';
+export const ACCOUNT_MODES: AccountMode[] = ['existing', 'new', 'auto'];
 
 /** ${VAR} names used by the login body (credentials of the test account). */
 export function loginVars(env: NodeJS.ProcessEnv = process.env): string[] {
@@ -35,8 +35,8 @@ export function missingLoginVars(env: NodeJS.ProcessEnv = process.env): string[]
 export function parseAccountMode(raw: string | undefined): AccountMode | undefined {
   const v = raw?.trim().toLowerCase();
   if (!v) return undefined;
-  if (v === 'existing' || v === 'new') return v;
-  throw new Error(`API_TEST_ACCOUNT / --test-account must be "existing" or "new", got "${raw}".`);
+  if (v === 'existing' || v === 'new' || v === 'auto') return v;
+  throw new Error(`API_TEST_ACCOUNT / --test-account must be "existing", "new" or "auto", got "${raw}".`);
 }
 
 /** Text shown before the question: what each answer means, in particular that "new" registers an account every run. */
@@ -53,7 +53,9 @@ export function accountNotice(env: NodeJS.ProcessEnv = process.env): string {
     '      one per Playwright worker (parallel test process), plus one for --probe/--schemathesis.',
     '      They stay on the server; nothing deletes them.',
     '      Emails and passwords are generated and kept in memory for the run only (not saved to .env).',
-    '  Skip this question next time: API_TEST_ACCOUNT=existing|new in .env (npm run test:api reads it too), or --test-account.',
+    '  auto (API_TEST_ACCOUNT=auto) = the account from .env, and a new one only when it is missing or refused',
+    '      (e.g. the test environment was reset): no registration while the account works.',
+    '  Skip this question next time: API_TEST_ACCOUNT=existing|new|auto in .env (npm run test:api reads it too), or --test-account.',
     '',
   ].join('\n');
 }

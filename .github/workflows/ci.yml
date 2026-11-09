@@ -71,7 +71,7 @@ jobs:
           '
 
       - name: Generate tests (resource/method/functional|contract|scenarios) and run them once
-        run: npx tsx src/cli.ts generate demo-api/openapi.yaml -u http://localhost:3100 --scenarios demo-api/scenarios.json --allow-write --run -o reports/generate --fail-on never
+        run: npx tsx src/cli.ts generate demo-api/openapi.yaml -u http://localhost:3100 --deps demo-api/deps.json --fixtures demo-api/fixtures/approved --scenarios demo-api/scenarios.json --allow-write --run -o reports/generate --fail-on never
 
       - name: Self-check - generated suite fails only on the known defect
         run: |
@@ -103,7 +103,7 @@ jobs:
       - name: Generate Python tests (pytest + requests) and run them once
         run: |
           pip install pytest requests jsonschema
-          npx tsx src/cli.ts generate demo-api/openapi.yaml -u http://localhost:3100 --scenarios demo-api/scenarios.json --allow-write --run --lang python --tests-dir tests/api-python -o reports/generate-python --fail-on never
+          npx tsx src/cli.ts generate demo-api/openapi.yaml -u http://localhost:3100 --deps demo-api/deps.json --fixtures demo-api/fixtures/approved --scenarios demo-api/scenarios.json --allow-write --run --lang python --tests-dir tests/api-python -o reports/generate-python --fail-on never
           node -e '
             const r = require("./reports/generate-python/report.json");
             const bad = r.generated.scenarios.filter(s => s.status === "CONTRACT_MISMATCH" || s.status === "TEST_FAILURE").map(s => s.name);
@@ -121,6 +121,22 @@ jobs:
           '
           npx tsx src/cli.ts registry validate tests/api-python/_support/cases.json --spec demo-api/openapi.yaml --require-spec > /dev/null
           npx tsx src/cli.ts manifest validate --tests-dir tests/api-python
+
+      - name: Fault injection - the collection tests must catch every injected defect (TS and Python)
+        # The demo API runs once per DEMO_FAULT (ignored filter, wrong sort, hidden record, duplicates, wrong field,
+        # overlapping pages) on its own port: clean without a fault, at least one failure with each.
+        run: |
+          npx tsx scripts/mutation-check.ts --lang typescript --port 3200 tests/api/items/get
+          npx tsx scripts/mutation-check.ts --lang python --port 3300 tests/api-python/items/get
+          node -e '
+            for (const l of ["typescript", "python"]) { const r = require("./reports/mutation-" + l + ".json"); console.log(l, r.detected + "/" + r.injected); if (r.detected !== r.injected) process.exit(1); }
+          '
+
+      - name: Maintenance - a spec change is regenerated, validated and summarized (no PR in CI)
+        run: |
+          sed 's/enum: \[name, -name, price, -price\]/enum: [name, -name, price]/' demo-api/openapi.yaml > reports/openapi.changed.yaml
+          npx tsx src/cli.ts maintain reports/openapi.changed.yaml --base demo-api/openapi.yaml --deps demo-api/deps.json --tests-dir tests/api -o reports/maintain
+          grep -q 'sort value "-price" is not documented' reports/maintain/maintenance-summary.md
 
       - name: Analyse the legacy example project (init + run)
         working-directory: examples/legacy-project

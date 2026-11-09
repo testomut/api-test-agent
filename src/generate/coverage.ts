@@ -23,6 +23,7 @@ export const GAP_CODES = [
   'UNSAFE_LIVE_CHECK',
   'DEPRECATED_OPERATION',
   'NO_DOCUMENTED_REJECTION',
+  'INVALID_REVIEWED_CONFIG',
 ] as const;
 
 /** The code behind a positive-blocked reason the generator writes in prose. */

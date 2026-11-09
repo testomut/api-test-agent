@@ -4,6 +4,8 @@ import type { NegCase } from '../generate/negative.js';
 import { bodyPointer, caseId, location, scenarioUid, type CaseParts, type Phase, type ScenarioStep } from './ids.js';
 import type { ErrorPlan } from '../generate/error-cases.js';
 import type { ResolvedScenario } from '../scenarios/dsl.js';
+import type { CollectionPlan } from '../generate/collection-tests.js';
+import { ARRAY } from './ids.js';
 
 /**
  * Case IDs of the tests the generator writes for one operation (docs/OPENAPI_CHANGE_TRIGGER.md, "Stable IDs").
@@ -26,9 +28,9 @@ export interface ScenarioDefinition {
 
 export interface SuiteCaseIds {
   /** `variants`: one case per documented query value, in the order of `AssignInput.queryVariants`. */
-  functional: { success?: string; notFound?: string; unauthorized?: string; variants: string[]; invalidCredentials?: string; methodNotAllowed?: string; preconditionFailed?: string };
+  functional: { collection?: string[]; fixture?: string; success?: string; notFound?: string; unauthorized?: string; variants: string[]; invalidCredentials?: string; methodNotAllowed?: string; preconditionFailed?: string };
   contract: { success?: string; notFound?: string; unauthorized?: string; body: string[]; params: string[]; unsupportedMediaType?: string };
-  scenario: { createRead?: string; updateRead?: string; deleteGone?: string; conflict?: string; deleteTwice?: string; business: string[] };
+  scenario: { lifecycle?: string; createRead?: string; updateRead?: string; deleteGone?: string; conflict?: string; deleteTwice?: string; business: string[] };
   /** Every case of this operation, by suite, with metadata for cases.json. */
   records: Record<'functional' | 'contract' | 'scenario', CaseRecord[]>;
   scenarios: Record<string, ScenarioDefinition>;
@@ -51,6 +53,11 @@ export interface AssignInput {
   errors?: ErrorPlan;
   /** Documented query values the suite sends one by one (functional positive), each its own physical test. */
   queryVariants?: { name: string; value: string | number | boolean }[];
+  /** Deep collection tests of a list operation (one case each) and its list lifecycle. */
+  collection?: CollectionPlan;
+  collectionChain?: CrudChain;
+  /** An approved fixture is compared (strategy B). */
+  fixture?: boolean;
 }
 
 export function assignCaseIds(s: AssignInput, uidOf: (op: Operation) => string): SuiteCaseIds {
@@ -142,6 +149,33 @@ export function assignCaseIds(s: AssignInput, uidOf: (op: Operation) => string):
     if (s.scenarios.updateRead) ids.scenario.updateRead = define([...step(chain.create, 'setup'), ...step(s.op, 'action'), ...step(chain.read, 'assertion'), ...step(chain.delete, 'cleanup')]);
     if (s.scenarios.deleteGone) ids.scenario.deleteGone = define([...step(chain.create, 'setup'), ...step(s.op, 'action'), ...step(chain.read, 'assertion')]);
   }
+  // Collection tests (functional/positive) and the list lifecycle (scenario/positive).
+  const cp = s.collection;
+  if (cp) {
+    const segs = (ptr: string) => ptr.split('/').slice(1).map((x) => x.replace(/~1/g, '/').replace(/~0/g, '~'));
+    const pageParam = cp.c.page?.style === 'offset' ? cp.c.page.offsetParam : cp.c.page?.style === 'page' ? cp.c.page.pageParam : '';
+    ids.functional.collection = cp.tests.map((t) => {
+      const where =
+        t.kind === 'listed' ? { location: location.operation(), rule: 'collection-contains' }
+        : t.kind === 'filter' ? { location: location.query(t.filter!.param), rule: 'filter' }
+        : t.kind === 'sort' ? { location: location.paramValue('query', t.sort!.param, t.sort!.value), rule: 'sort' }
+        : t.kind === 'pagination' ? { location: location.query(pageParam), rule: 'pagination' }
+        : { location: location.responseBody(bodyPointer([...segs(cp.c.items), ARRAY, ...segs(t.unique!)])), rule: 'unique' };
+      return add('functional', { subjectUid: uid, polarity: 'positive', ...where });
+    });
+    const ch = s.collectionChain;
+    if (cp.lifecycle && ch?.update && ch.delete) {
+      const steps: ScenarioStep[] = [
+        { operationUid: uidOf(ch.create), phase: 'setup' }, { operationUid: uid, phase: 'assertion' },
+        { operationUid: uidOf(ch.update), phase: 'action' }, { operationUid: uid, phase: 'assertion' },
+        { operationUid: uidOf(ch.delete), phase: 'action' }, { operationUid: uid, phase: 'assertion' },
+      ];
+      const sUid = scenarioUid('crud', steps);
+      scenarios[sUid] = { scenarioType: 'crud', primaryOperationUid: uid, steps, roles: { create: uidOf(ch.create), read: uid, update: uidOf(ch.update), delete: uidOf(ch.delete) } };
+      ids.scenario.lifecycle = add('scenario', { subjectUid: sUid, polarity: 'positive', location: location.lifecycle(), rule: 'crud' }, { relatedOperationUids: [uidOf(ch.create), uidOf(ch.update), uidOf(ch.delete)] });
+    }
+  }
+  if (s.fixture) ids.functional.fixture = add('functional', { subjectUid: uid, polarity: 'positive', location: location.operation(), rule: 'fixture' });
   // Reviewed business scenarios: identity from the external ID (never from the title or the steps).
   for (const sc of s.business ?? []) {
     const steps = sc.steps.map((st) => ({ operationUid: uidOf(st.op), phase: st.phase }));

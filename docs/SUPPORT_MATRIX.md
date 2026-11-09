@@ -125,9 +125,75 @@ CRUD flows come from confirmed dependencies (OpenAPI links or the deps file). Bu
 | create → duplicate create → 409 | ✅ | deps `conflictOn` | 6 ✔ |
 | update / delete unknown resource → 404 | ✅ | functional `not-found` cases | |
 | business flows (login → request, parent → child, state transitions, negative transitions, idempotency key, …) | ✅ | reviewed scenarios file; strict validation: operations exist, parameters exist, every non-cleanup step names a documented status, every `{var}` is saved earlier, a writing scenario has cleanup, the primary is an action, IDs unique | 8 ✔ |
-| create → list / search / filter, pagination, sort | 🟡 | as a reviewed business scenario; no automatic derivation (list fields and filters are not in the spec) | 8 ✔ |
-| eventual consistency with bounded polling | ❌ | the scenario DSL has no retry / polling step yet | |
+| create → list → update → list → delete → list | ✅ | reviewed deps `collection` mapping (see Collections); bounded polling | C ✔ |
+| create → list / search / filter, pagination, sort | ✅ | reviewed deps `collection` mapping (see Collections); other list shapes as a reviewed business scenario | C ✔ |
+| eventual consistency with bounded polling | 🟡 | collection checks: `consistency.pollTimeoutMs` (≤ 60 s) / `pollIntervalMs`; the scenario DSL has no polling step yet | C ✔ |
 | refresh token → request | 🟡 | as a reviewed scenario with explicit steps | 8 ✔ |
+
+## Collections (`src/generate/collection*.ts`, `src/fixtures/`)
+
+A list operation is tested deeply only from a reviewed `collection` mapping in the deps file (next to the resource's CRUD chain). Nothing is inferred from names: every pointer, query parameter, sort value and paging parameter is checked against the spec, and a mismatch is an `INVALID_REVIEWED_CONFIG` gap instead of tests. A GET collection without a mapping gets an `UNCONFIRMED_BUSINESS_RULE` gap; a single resource with an array field is not a collection.
+
+```json
+"collection": {
+  "operationId": "listItems", "items": "/items", "id": "/id",
+  "fields": { "/name": "exact", "/price": "tolerance:0.001", "/tags": "exact", "/createdAt": "ignore" },
+  "unique": ["/id"],
+  "filters": [{ "param": "tag", "field": "/tags", "match": "contains" }],
+  "sorts": [{ "param": "sort", "value": "-price", "field": "/price", "order": "desc" }],
+  "page": { "style": "offset", "offsetParam": "offset", "limitParam": "limit", "maxPages": 20 },
+  "consistency": { "pollTimeoutMs": 5000, "pollIntervalMs": 250 },
+  "deletedDisappears": true
+}
+```
+
+Page-number paging: `{ "style": "page", "pageParam": "page", "sizeParam": "per_page" }`, or, when the API fixes the size and has no size parameter, `{ "style": "page", "pageParam": "page", "size": 9 }`. `"strategy": "read-only"` forbids creating records for these checks even when a create is confirmed (shared environments). Sort values come from the reviewed mapping; the spec can only rule one out with an `enum`.
+
+Strategy per list operation (recorded in `coverage-gaps.json` → `collection.strategy` / `strategies` / `reasons`):
+
+| Strategy | When | What it checks |
+|---|---|---|
+| A · create & verify | confirmed create + delete; an isolating filter whose field can carry a unique marker | the test creates its own records (marker in the filter field), reads only them, removes them in `finally`; non-trivial datasets: 2 records for a filter (one must be left out), 3 with distinct values created out of order for a sort, page size + 1 for paging |
+| B · approved fixtures | `--fixtures <dir>` holds `<operationId>.json` approved by a person | every approved element is listed, each field by policy (`exact`, `tolerance:<n>`, `schema` = present, `ignore`); `exhaustive` = nothing else |
+| C · read-only | no confirmed create / cleanup, no isolating filter, or `"strategy": "read-only"` | the same properties on existing data; filters with up to 5 values that occur in the list, each result also a subset of the unfiltered list (re-read once, shared data moves); a test without enough data is skipped with the reason |
+| contract-only | no mapping | schema and status only; the gap says what is missing |
+
+| Assertion | State | Notes |
+|---|---|---|
+| created resource is listed (`collection-contains`) with its persisted fields | ✅ | strategy A; field policies |
+| filter returns the match and leaves out the non-match, all results match (`filter`) | ✅ | `equals` / `contains`; enum filters with an isolating marker |
+| a filter only narrows: no resource the unfiltered list does not show (`filter`, read-only) | ✅ | values that occur in the list only: a value that only hidden resources have cannot be reached read-only |
+| range filters (`between=price,10,30`), boolean flags with a default scope (`is_rental`) | ❌ | not mapped yet |
+| sort order (`sort`) | ✅ | one case per documented sort value; plain comparison (code points / numbers): the API must document that order |
+| page size, no duplicates across pages, union holds every record (`pagination`) | ✅ | offset and page/size styles; cursor paging ❌ (not yet) |
+| uniqueness (`unique`) | ✅ | |
+| approved fixture (`fixture`) | ✅ | strategy B |
+| create → list → update → list → delete → list | ✅ | scenario of the list operation; the last step only with `deletedDisappears` |
+| bounded polling | ✅ | only with `consistency`; never longer than `pollTimeoutMs` (≤ 60 s); otherwise one read |
+| fixture capture / refresh | ✅ | `fixtures capture` writes candidates only; `fixtures refresh --draft-pr` proposes a candidate in one Draft PR per operation; approved files are never written by the agent |
+
+Defect detection on a real API: Toolshop's deliberately defective build (`api-with-bugs.practicesoftwaretesting.com`) returns rental products for `by_brand=1` that its product list never shows. The read-only `by_brand` test fails on it (`by_brand=1 returns resources the unfiltered collection does not show: 27, 28, 29`) and passes on the regular build, in TypeScript and Python. `by_category=12` has the same defect but only rentals carry that category, so a read-only test cannot reach it.
+
+Defect detection on the demo API (`scripts/mutation-check.ts`, TypeScript and Python identical):
+
+| Injected defect (`DEMO_FAULT`) | Previous generator (65 tests) | Collection tests |
+|---|---|---|
+| filter ignored | missed | detected |
+| sort reversed | missed | detected |
+| created record hidden from the list | missed | detected |
+| every record listed twice | missed | detected |
+| wrong field value in the list | missed | detected |
+| pages overlap (off-by-one offset) | missed | detected |
+
+## Maintenance (`maintain`, `src/maintain.ts`)
+
+| Step | State | Notes |
+|---|---|---|
+| detect changed operations | ✅ | `diff` (oasdiff); without a baseline or the engine the whole suite is regenerated and the summary says so |
+| regenerate | ✅ | deterministic: unaffected files keep their bytes; files whose only change is the spec hash in the header are listed separately |
+| validate | ✅ | case registry against the head spec, generation manifest; no PR when validation fails |
+| Draft PR | ✅ | one bot branch per suite (`api-agent/maintain-<tests dir>`); an open PR is updated, never duplicated; never merged |
+| summary | ✅ | changed operations, files and cases added / updated / removed / retired, expectations old → new, fixtures, reviewed configuration that no longer matches, coverage gaps before → after, validation |
 
 ## Valid data (`src/generate/sample.ts`)
 
@@ -150,7 +216,7 @@ CRUD flows come from confirmed dependencies (OpenAPI links or the deps file). Bu
 | Item | State | Notes | Stage |
 |---|---|---|---|
 | `coverage-gaps.json` | ✅ | summary (operations, generated tests per suite, gaps by code); per operation: gaps with code and location, per-suite generated count and missing code, positive-blocked code, body cases potential / generated / dropped, unchecked statuses (with the reason code), unchecked request media types, unchecked security alternatives | 10 ✔ |
-| machine codes | ✅ | `MISSING_VALID_SAMPLE`, `MISSING_RESOURCE_SOURCE`, `MISSING_CLEANUP`, `MISSING_RESPONSE_SCHEMA`, `UNSUPPORTED_SCHEMA_KEYWORD`, `UNSUPPORTED_MEDIA_TYPE`, `UNCONFIRMED_BUSINESS_RULE`, `UNCOVERED_VARIANT`, `CANNOT_ISOLATE_RULE`, `CASE_LIMIT_REACHED`, `UNREACHABLE_RESPONSE_STATUS`, `UNSAFE_LIVE_CHECK`, `DEPRECATED_OPERATION`, `NO_DOCUMENTED_REJECTION` (`src/generate/coverage.ts`) | 10 ✔ |
+| machine codes | ✅ | `MISSING_VALID_SAMPLE`, `MISSING_RESOURCE_SOURCE`, `MISSING_CLEANUP`, `MISSING_RESPONSE_SCHEMA`, `UNSUPPORTED_SCHEMA_KEYWORD`, `UNSUPPORTED_MEDIA_TYPE`, `UNCONFIRMED_BUSINESS_RULE`, `UNCOVERED_VARIANT`, `CANNOT_ISOLATE_RULE`, `CASE_LIMIT_REACHED`, `UNREACHABLE_RESPONSE_STATUS`, `UNSAFE_LIVE_CHECK`, `DEPRECATED_OPERATION`, `NO_DOCUMENTED_REJECTION`, `INVALID_REVIEWED_CONFIG` (`src/generate/coverage.ts`) | 10 ✔ |
 | unique case ID per physical test | ✅ | checked on the real run: Playwright JSON report annotations, pytest collection (`API_AGENT_CASES_OUT`) | 2 ✔ |
 | cases no longer generated | ✅ | tombstones (`status: retired`), reactivated when generated again | 2 ✔ |
 | CI: registry and manifest validation | ✅ | `registry validate --spec --require-spec`, `manifest validate`, TypeScript and Python | 2 ✔ |
@@ -158,4 +224,6 @@ CRUD flows come from confirmed dependencies (OpenAPI links or the deps file). Bu
 | CI: TypeScript / Python parity | ✅ | the same active cases for the demo API and for the synthetic fixture | 9 ✔ |
 | CI: the synthetic fixture compiles | ✅ | `tests/fixtures/coverage/kitchen-sink.yaml` generated in both languages: `tsc`, `py_compile`, valid registry | 6 ✔ |
 | CI: expected coverage gaps | ✅ | demo API (`demo-api/expected-gaps.json`) in CI; the synthetic fixture in unit tests | 10 ✔ |
+| CI: fault injection | ✅ | `scripts/mutation-check.ts`: the demo list suite must be clean without a fault and fail under each of 6 `DEMO_FAULT` modes, TypeScript and Python | C ✔ |
+| CI: maintenance | ✅ | `maintain` on a changed demo spec: regenerated, validated, the stale reviewed mapping reported | C ✔ |
 | README | ✅ | "What is covered, and what is not": spec-derived vs needs confirmation vs never generated | 10 ✔ |

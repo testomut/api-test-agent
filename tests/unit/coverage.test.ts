@@ -32,7 +32,7 @@ const idsIn = (text: string) => [...text.matchAll(/(?:description: |caseId: )'([
 describe('stage 2: one case ID per physical test', () => {
   const withSort = () => {
     const d = parse(stringify(demo.doc));
-    d.paths['/items'].get.parameters.push({ name: 'sort', in: 'query', required: false, schema: { type: 'string', enum: ['asc', 'desc', 'asc'] } });
+    d.paths['/items'].get.parameters.push({ name: 'order', in: 'query', required: false, schema: { type: 'string', enum: ['asc', 'desc', 'asc'] } });
     d.paths['/items'].get.parameters.push({ name: 'flag', in: 'query', required: false, schema: { enum: [true, 'true', 1] } });
     return d;
   };
@@ -42,7 +42,7 @@ describe('stage 2: one case ID per physical test', () => {
     const text = await read('items/get/functional.spec.ts');
     const uid = operationUid('GET', '/items');
     for (const v of ['asc', 'desc', 'true', '1']) {
-      const loc = v === 'asc' || v === 'desc' ? `request.query#/sort/${v}` : `request.query#/flag/${v}`;
+      const loc = v === 'asc' || v === 'desc' ? `request.query#/order/${v}` : `request.query#/flag/${v}`;
       expect(text).toContain(`'ata:${uid}:functional:positive:${loc}:accepted-value'`);
     }
     expect(text.match(/accepts documented flag=/g)).toHaveLength(2); // true and "true" are one value
@@ -73,21 +73,21 @@ describe('stage 2: one case ID per physical test', () => {
   it('accepted-value: a value the spec does not document is an invalid location', () => {
     const d = withSort();
     const uid = operationUid('GET', '/items');
-    const id = `ata:${uid}:functional:positive:request.query#/sort/random:accepted-value`;
+    const id = `ata:${uid}:functional:positive:request.query#/order/random:accepted-value`;
     const parsed = parseCaseId(id);
     expect(parsed.ok).toBe(true);
     const reg = { schemaVersion: 1, caseRuleVocabularyVersion: 2, operations: { [uid]: { method: 'GET', path: '/items', normalizedPath: '/items' } }, cases: { [id]: (parsed as any).parts }, scenarios: {}, externalIdAliases: {}, externalScenarioIdAliases: {} };
     expect(validateRegistry(canonicalJson(reg), normalizeSpec(stringify(d), 'x')).errors.map((e) => e.code)).toEqual(['INVALID_CASE_LOCATION']);
-    expect(parseCaseId(`ata:${uid}:functional:positive:request.query#/sort:accepted-value`).ok).toBe(false); // needs a value
-    expect(parseCaseId(`ata:${uid}:contract:negative:request.query#/sort/asc:enum`).ok).toBe(false); // constraint rules: one segment
+    expect(parseCaseId(`ata:${uid}:functional:positive:request.query#/order:accepted-value`).ok).toBe(false); // needs a value
+    expect(parseCaseId(`ata:${uid}:contract:negative:request.query#/order/asc:enum`).ok).toBe(false); // constraint rules: one segment
   });
 
   it('a case the generator no longer produces becomes a tombstone; producing it again reactivates it', async () => {
     const { dir } = await gen(withSort());
     const uid = operationUid('GET', '/items');
-    const id = `ata:${uid}:functional:positive:request.query#/sort/desc:accepted-value`;
+    const id = `ata:${uid}:functional:positive:request.query#/order/desc:accepted-value`;
     const without = withSort();
-    without.paths['/items'].get.parameters.find((p: any) => p.name === 'sort').schema.enum = ['asc'];
+    without.paths['/items'].get.parameters.find((p: any) => p.name === 'order').schema.enum = ['asc'];
     await generate({ ...demo, doc: without } as any, buildCatalog(without), { outDir: dir, version: 'test' });
     const reg1 = JSON.parse(await readFile(join(dir, '_support/cases.json'), 'utf8'));
     expect(reg1.cases[id].status).toBe('retired');
