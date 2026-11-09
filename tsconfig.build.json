@@ -7,5 +7,6 @@
     "sourceMap": false,
     "declaration": false
   },
-  "include": ["src"]
+  "include": ["src"],
+  "exclude": ["src/contract/fixtures.ts"]
 }

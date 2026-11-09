@@ -17,6 +17,9 @@ export const ENV_KEYS = {
   API_LOGIN: 'Optional. For short-lived tokens: the request that returns one, e.g. "POST /users/login". Used instead of a static API_TOKEN.',
   API_LOGIN_BODY: 'Optional. JSON body of the login request; ${VAR} is taken from this file / the environment, e.g. {"email":"${API_USER}","password":"${API_PASSWORD}"}.',
   API_TOKEN_POINTER: 'Optional. Where the token is in the login response (JSON pointer). Default /access_token.',
+  API_TEST_ACCOUNT: 'Optional. With API_LOGIN: "existing" = use the account below; "new" = register a NEW account through API_REGISTER on every run (it stays on the server). Empty = asked before each run.',
+  API_REGISTER: 'Optional. For API_TEST_ACCOUNT=new: the registration request, e.g. "POST /users/register".',
+  API_REGISTER_BODY: 'Optional. JSON body of the registration; use the same ${VAR}s as API_LOGIN_BODY (generated per run) and ${UNIQUE} for other unique fields.',
   API_USER: 'Optional. Login user name / email (for API_LOGIN_BODY or HTTP basic auth).',
   API_PASSWORD: 'Optional. Login password (for API_LOGIN_BODY or HTTP basic auth). Secret.',
 } as const;

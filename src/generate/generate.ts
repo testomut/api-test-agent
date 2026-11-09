@@ -10,6 +10,7 @@ import { findChains, type CrudChain, type DepsFile } from './graph.js';
 import { sampleFromSchema } from './sample.js';
 import { bodyCases, documentedRejections, nonexistentIdExpr, queryCases } from './negative.js';
 import { CONTRACT_ASSERT, operationFolder, renderNegative, renderPositive, renderResourceHelpers, type ChainPlan, type Meta } from './templates.js';
+import { API_BASE, buildApiIndex, renderApiBaseClass, renderApiChildClass, renderApis } from './api-objects.js';
 import { PY_FILES, pyName, renderConftest, renderPyNegative, renderPyPositive, renderPyResource, resourceModule } from './python.js';
 
 const PY_RESERVED = new Set([
@@ -90,6 +91,7 @@ export async function generate(spec: LoadedSpec, ops: Operation[], o: GenerateOp
     if (PY_RESERVED.has(top)) throw new Error(`Python tests folder "${o.outDir}" would become a package named "${top}", which shadows the "${top}" module. Choose another name, e.g. tests/api.`);
   }
   const support = join(out, '_support');
+  const { refs, groups } = buildApiIndex(ops);
   const files: string[] = [];
   const scenarios: Scenario[] = [];
   const write = async (file: string, content: string) => {
@@ -119,7 +121,7 @@ export async function generate(spec: LoadedSpec, ops: Operation[], o: GenerateOp
   }
   const planOf = (op: Operation) => plans.find((p) => [p.chain.create, p.chain.read, p.chain.update, p.chain.delete].includes(op));
   const helperFile = (p: ChainPlan) => (py ? join(support, `${resourceModule(p)}.py`) : join(support, `${operationFolder(p.chain.create).resource}.resource.ts`));
-  for (const p of plans) await write(helperFile(p), py ? renderPyResource(p, meta) : renderResourceHelpers(p, meta));
+  for (const p of plans) await write(helperFile(p), py ? renderPyResource(p, meta) : renderResourceHelpers(p, refs, meta));
   const fileNames = py ? PY_FILES : { positive: 'positive.spec.ts', negative: 'negative.spec.ts' };
   const packages = new Set<string>(); // python: every test folder is a package (__init__.py)
 
@@ -165,7 +167,7 @@ export async function generate(spec: LoadedSpec, ops: Operation[], o: GenerateOp
     if (posReason) scenarios.push({ name: `${name}/positive`, kind: 'positive', status: 'BLOCKED', reason: posReason, operations: [op.key] });
     else {
       const file = join(dir, fileNames.positive);
-      await write(file, py ? renderPyPositive({ op, plan, helpers }, meta) : renderPositive({ op, plan, helpers }, meta));
+      await write(file, py ? renderPyPositive({ op, refs, plan, helpers }, meta) : renderPositive({ op, refs, plan, helpers }, meta));
       packages.add(dir);
       scenarios.push({ name: `${name}/positive`, kind: 'positive', status: 'NOT_RUN', reason: 'Generated; not executed yet.', operations: [op.key], file });
     }
@@ -205,7 +207,7 @@ export async function generate(spec: LoadedSpec, ops: Operation[], o: GenerateOp
 
     if (bCases.length || qCases.length || notFound || unauthorized) {
       const file = join(dir, fileNames.negative);
-      const input = { op, plan, helpers, validation: rej.validation, bodyCases: bCases, queryCases: qCases, notFound, unauthorized };
+      const input = { op, refs, plan, helpers, validation: rej.validation, bodyCases: bCases, queryCases: qCases, notFound, unauthorized };
       await write(file, py ? renderPyNegative(input, meta) : renderNegative(input, meta));
       packages.add(dir);
       const count = bCases.length + qCases.length + (notFound ? 1 : 0) + (unauthorized ? 1 : 0);
@@ -230,6 +232,15 @@ export async function generate(spec: LoadedSpec, ops: Operation[], o: GenerateOp
     await write(join(support, 'contract.ts'), validatorSrc);
     await write(join(support, 'contract-assert.ts'), CONTRACT_ASSERT);
     await write(join(support, 'fixtures.ts'), await readFile(fileURLToPath(new URL('../../src/contract/fixtures.ts', import.meta.url)), 'utf8'));
+    // API objects: generated bases are rewritten; the hand-written subclasses are created once and kept.
+    const apiDir = join(support, 'api');
+    await write(join(apiDir, 'generated', 'ApiBase.ts'), API_BASE(o.version));
+    for (const g of groups) {
+      await write(join(apiDir, 'generated', `${g.className}Base.ts`), renderApiBaseClass(g, refs, o.version));
+      const child = join(apiDir, `${g.className}.ts`);
+      if (!existsSync(child)) await write(child, renderApiChildClass(g));
+    }
+    await write(join(apiDir, 'generated', 'apis.ts'), renderApis(groups, o.version));
     await write(join(support, 'openapi.snapshot.ts'), `// Snapshot of ${spec.location} (hash ${spec.hash}). Regenerated with the tests.\nexport const spec: any = ${JSON.stringify(spec.doc, null, 2)};\n`);
   }
   return { files, scenarios };

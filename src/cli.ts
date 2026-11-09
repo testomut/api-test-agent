@@ -17,7 +17,8 @@ import { classifyTarget, loadConfig } from './config.js';
 import { askAnswers, askYesNo, initProject, skillNotice } from './init.js';
 import { findSpec, run } from './run.js';
 import { applyPlan, buildPlan, gitState } from './adapt.js';
-import { applyLogin } from './audit/login.js';
+import { applyLogin, loginConfig } from './audit/login.js';
+import { accountNotice, ACCOUNT_MODES, checkRegisterConfig, missingLoginVars, parseAccountMode, registerAccount, type AccountMode } from './audit/account.js';
 import { AiRunner, describeAiError, RUNNERS, type RunnerKind } from './ai/runner.js';
 import { proposeDependencies } from './ai/dependencies.js';
 import { analyzeProject } from './discover/analyze.js';
@@ -42,6 +43,7 @@ interface CommonOpts {
   out: string;
   failOn: string;
   schemathesisBin?: string;
+  testAccount?: AccountMode;
 }
 
 function common(cmd: Command) {
@@ -60,7 +62,8 @@ function common(cmd: Command) {
     .option('--seed <n>', 'Schemathesis seed (reproducible runs)', '42')
     .option('-o, --out <dir>', 'output directory for reports', `reports/api-agent/${cmd.name()}`)
     .addOption(new Option('--fail-on <level>', 'exit non-zero on').choices(['mismatch', 'blocked', 'never']).default('mismatch'))
-    .option('--schemathesis-bin <path>', 'path to the schemathesis executable');
+    .option('--schemathesis-bin <path>', 'path to the schemathesis executable')
+    .addOption(new Option('--test-account <mode>', 'with API_LOGIN: use the account from .env (existing) or register a new one on every run (new). Default: API_TEST_ACCOUNT, else asked').choices(ACCOUNT_MODES));
 }
 
 async function load(location: string): Promise<{ spec: LoadedSpec; ops: Operation[] }> {
@@ -84,6 +87,44 @@ async function resolveInputs(specArg: string | undefined, o: CommonOpts): Promis
   return location;
 }
 
+/**
+ * API_LOGIN only: before anything logs in, settle which test account is used (asked when not
+ * preset), register a new one if needed, and log in once so a bad account fails here, not in every test.
+ */
+async function prepareAccount(o: CommonOpts, agentLogin: boolean, suiteRun = false): Promise<void> {
+  if (!loginConfig() || !(agentLogin || suiteRun)) return;
+  if (!o.baseUrl) throw new Error('API_LOGIN is set but there is no --base-url / API_BASE_URL.');
+  let mode = o.testAccount ?? parseAccountMode(process.env.API_TEST_ACCOUNT);
+  if (!mode) {
+    if (process.stdin.isTTY) {
+      process.stderr.write(accountNotice());
+      mode = (await askYesNo('Do you have a test account?', missingLoginVars().length === 0)) ? 'existing' : 'new';
+    } else if (!missingLoginVars().length) {
+      mode = 'existing';
+      log('Test account: existing (credentials from the environment; no terminal to ask, set API_TEST_ACCOUNT to choose).');
+    } else {
+      throw new Error(`No terminal to ask about the test account and ${missingLoginVars().join(', ')} not set: put the account into .env, or set API_TEST_ACCOUNT=new (or --test-account new) to register one on every run.`);
+    }
+  }
+  process.env.API_TEST_ACCOUNT = mode; // the generated suite started by --run reads it too
+  if (mode === 'existing') {
+    const missing = missingLoginVars();
+    if (missing.length) throw new Error(`Test account: put its credentials into .env: ${missing.map((v) => `${v}=...`).join(', ')}. Or use --test-account new to register one on every run.`);
+    log('Test account: existing (from .env).');
+  } else {
+    if (!o.allowWrite) throw new Error('Registering new test accounts writes to the API: add --allow-write (test environments only), or use an existing account.');
+    checkRegisterConfig(); // fail before anything is sent
+    log('Test account: NEW on every run. Accounts stay on the server; nothing deletes them.');
+    if (suiteRun) log('  The generated tests register one account per Playwright worker.');
+    if (agentLogin) {
+      const acc = await registerAccount(o.baseUrl);
+      log(`  Registered ${acc.label} for the agent's own checks. Its password exists only in this run's memory.`);
+    }
+  }
+  // Existing account: log in once now, so wrong credentials fail here instead of in every test.
+  if (agentLogin || mode === 'existing') await applyLogin(o.baseUrl, log);
+}
+
 async function runAudit(location: string, o: CommonOpts) {
   const { spec, ops } = await load(location);
   const lint = await lintSpec(location);
@@ -91,7 +132,6 @@ async function runAudit(location: string, o: CommonOpts) {
 
   const network = o.probe || o.schemathesis;
   if (network && !o.baseUrl) throw new Error('--probe/--schemathesis need --base-url pointing at a test environment.');
-  if (network) await applyLogin(o.baseUrl, log); // short-lived tokens: log in first (API_LOGIN)
   if (o.allowWrite && !network) log('  --allow-write has no effect without --probe or --schemathesis');
   if (o.allowWrite) log('  ⚠ write methods enabled: make sure this is a disposable test environment');
 
@@ -150,6 +190,7 @@ const program = new Command('api-test-agent').version(VERSION).description('Open
 
 common(program.command('audit').description('analyse a spec (and, if allowed, a test environment) without generating tests')).action(async (specArg: string | undefined, o: CommonOpts) => {
   const location = await resolveInputs(specArg, o);
+  await prepareAccount(o, o.probe || o.schemathesis);
   const r = await runAudit(location, o);
   const report = buildReport({
     mode: 'audit',
@@ -181,6 +222,10 @@ common(program.command('generate').description('audit, then generate Playwright 
     o.lang ??= cfg.testsLang;
     log(`Test language: ${o.lang}`);
     if (o.run && (!o.baseUrl || !o.allowWrite)) throw new Error('--run creates and deletes data: it needs --base-url and --allow-write.');
+    await prepareAccount(o, o.probe || o.schemathesis, o.run);
+    if (o.run && o.lang === 'python' && process.env.API_LOGIN && process.env.API_TEST_ACCOUNT === 'new') {
+      throw new Error('A new account per run is supported for TypeScript suites only (for now): use an existing account for Python.');
+    }
     const r = await runAudit(location, o);
     const deps = o.deps ? JSON.parse(await readFile(o.deps, 'utf8')) : undefined;
     if (o.ai) await aiProposals(r.spec.doc, r.ops, o.out, { maxCalls: Number(o.aiMaxCalls), model: o.aiModel, runner: o.aiRunner }, deps);

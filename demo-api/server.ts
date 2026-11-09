@@ -138,14 +138,28 @@ const DEMO_USER = process.env.DEMO_USER ?? 'demo';
 const DEMO_PASSWORD = process.env.DEMO_PASSWORD ?? 'demo-password';
 const TOKEN_TTL_SEC = Number(process.env.DEMO_TOKEN_TTL ?? 300);
 const sessions = new Map<string, { username: string; expiresAt: number }>();
+const accounts = new Map<string, string>([[DEMO_USER, DEMO_PASSWORD]]);
+
+// Self-registration for API_TEST_ACCOUNT=new. Not in the spec on purpose: it is configured
+// through API_REGISTER / API_REGISTER_BODY, like on APIs whose spec omits it.
+route('/auth/register', {
+  POST: async (req, res) => {
+    const body = await readJson(req);
+    const b = body.ok ? (body.value as Record<string, unknown>) : undefined;
+    if (!b || typeof b.username !== 'string' || typeof b.password !== 'string' || b.password.length < 8) return error(res, 422, 'username and password (8+ chars) required');
+    if (accounts.has(b.username)) return error(res, 409, 'Account exists');
+    accounts.set(b.username, b.password);
+    send(res, 201, { username: b.username });
+  },
+});
 
 route('/auth/login', {
   POST: async (req, res) => {
     const body = await readJson(req);
     const b = body.ok ? (body.value as Record<string, unknown>) : undefined;
-    if (!b || b.username !== DEMO_USER || b.password !== DEMO_PASSWORD) return error(res, 401, 'Invalid credentials');
+    if (!b || typeof b.username !== 'string' || accounts.get(b.username) !== b.password) return error(res, 401, 'Invalid credentials');
     const token = randomUUID();
-    sessions.set(token, { username: DEMO_USER, expiresAt: Date.now() + TOKEN_TTL_SEC * 1000 });
+    sessions.set(token, { username: b.username, expiresAt: Date.now() + TOKEN_TTL_SEC * 1000 });
     send(res, 200, { access_token: token, token_type: 'bearer', expires_in: TOKEN_TTL_SEC });
   },
 });

@@ -101,6 +101,7 @@ tests/api/
     delete-by-id/   positive.spec.ts  negative.spec.ts
   health/get/       positive.spec.ts                      (no 4xx documented → no negative file)
   _support/         contract assertions, spec snapshot, items.resource.ts (create / remove helpers)
+    api/            API objects: generated/ItemsApiBase.ts (rewritten) + ItemsApi.ts (yours, never overwritten)
 ```
 
 1. **Positive cases** use only spec-provided values. Operations that need an existing resource get it from a **confirmed** dependency: OpenAPI [`links`](https://spec.openapis.org/oas/v3.1.0#link-object) on the create response, or a reviewed deps file (`--deps deps.json`):
