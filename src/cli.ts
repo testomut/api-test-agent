@@ -18,6 +18,8 @@ import { askAnswers, askYesNo, initProject, skillNotice } from './init.js';
 import { findSpec, run } from './run.js';
 import { applyPlan, buildPlan, gitState } from './adapt.js';
 import { applyLogin, loginConfig } from './audit/login.js';
+import { parseFailOn, runDiff } from './change/diff.js';
+import { SUPPORTED_OASDIFF_VERSION } from './change/oasdiff.js';
 import { accountNotice, ACCOUNT_MODES, checkRegisterConfig, missingLoginVars, parseAccountMode, registerAccount, type AccountMode } from './audit/account.js';
 import { AiRunner, describeAiError, RUNNERS, type RunnerKind } from './ai/runner.js';
 import { proposeDependencies } from './ai/dependencies.js';
@@ -354,6 +356,32 @@ program
     log(`\nSummary: ${a.tests.length} existing API tests · ${postmanRequests} Postman requests · ${a.edges.filter((e) => e.source !== 'candidate').length} dependencies · ${a.testIssues.length + a.postmanIssues.length} issues · ${gaps} operations without a positive test · ${a.proposals.length} proposals`);
     log(`Report: ${resolve(o.out, 'report.md')}`);
     if (r.checks.some((c) => c.status === 'fail')) process.exitCode = 1;
+  });
+
+const collect = (v: string, prev: string[] = []) => [...prev, v];
+program
+  .command('diff')
+  .description('semantic diff of two OpenAPI specs: changes.json with a compatibility verdict per change (static, no API calls; needs oasdiff)')
+  .requiredOption('--head <fileOrUrl>', 'the new spec (e.g. the PR head)')
+  .option('--base <fileOrUrl>', 'the old spec; default: the head file at the Git merge base')
+  .option('-o, --out <dir>', 'report directory', 'reports/api-agent/diff')
+  .addOption(new Option('--format <format>', 'also write changes.md with markdown').choices(['json', 'markdown']).default('json'))
+  .option('--fail-on <policy>', 'breaking | blocked | unknown | never (repeatable; default blocked)', collect, [])
+  .option('--allow-network', 'allow downloading URL specs', false)
+  .option('--allow-host <hostname>', 'only these hosts (repeatable); also lifts the default deny for a host', collect, [])
+  .option('--allow-engine-version-mismatch', `continue with an oasdiff other than ${SUPPORTED_OASDIFF_VERSION}`, false)
+  .option('--tests-dir <dir>', 'generated suite (snapshot baseline)', cfg.testsDir)
+  .action(async (o: { head: string; base?: string; out: string; format: 'json' | 'markdown'; failOn: string[]; allowNetwork: boolean; allowHost: string[]; allowEngineVersionMismatch: boolean; testsDir: string }) => {
+    const failOn = parseFailOn(o.failOn);
+    const r = await runDiff({ ...o, failOn, allowHosts: o.allowHost, log });
+    const s = r.set;
+    log(`Base: ${s.baseRevision || '—'}${s.baseSource ? ` (${s.baseSource})` : ''} · head: ${s.headRevision} · oasdiff ${s.engine.version}`);
+    const count = (k: string) => s.changes.filter((c) => c.breaking === k).length;
+    log(`Changes: ${s.changes.length} (breaking ${count('yes')}, unknown ${count('unknown')}, test-relevant ${s.changes.filter((c) => c.testRelevant).length})`);
+    if (!s.changes.some((c) => c.testRelevant) && !s.blocked.length) log('No test-relevant changes found.');
+    for (const b of s.blocked) log(`  BLOCKED   ${b.code}: ${b.reason}`);
+    for (const f of r.files) log(`Report: ${f}`);
+    process.exitCode = r.exitCode;
   });
 
 program
