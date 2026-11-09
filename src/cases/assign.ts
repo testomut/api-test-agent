@@ -25,7 +25,7 @@ export interface ScenarioDefinition {
 export interface SuiteCaseIds {
   /** `variants`: one case per documented query value, in the order of `AssignInput.queryVariants`. */
   functional: { success?: string; notFound?: string; unauthorized?: string; variants: string[] };
-  contract: { success?: string; notFound?: string; unauthorized?: string; body: string[]; query: string[] };
+  contract: { success?: string; notFound?: string; unauthorized?: string; body: string[]; params: string[] };
   scenario: { createRead?: string; updateRead?: string; deleteGone?: string };
   /** Every case of this operation, by suite, with metadata for cases.json. */
   records: Record<'functional' | 'contract' | 'scenario', CaseRecord[]>;
@@ -39,7 +39,7 @@ export interface AssignInput {
   chain?: CrudChain;
   positive: boolean;
   bodyCases: NegCase[];
-  queryCases: NegCase[];
+  paramCases: NegCase[];
   notFound?: { param: string };
   unauthorized: boolean;
   scenarios: { createRead: boolean; updateRead: boolean; deleteGone: boolean };
@@ -61,7 +61,7 @@ export function assignCaseIds(s: AssignInput, uidOf: (op: Operation) => string):
     return id;
   };
   const ok = successStatus(s.op);
-  const ids: SuiteCaseIds = { functional: { variants: [] }, contract: { body: [], query: [] }, scenario: {}, records, scenarios };
+  const ids: SuiteCaseIds = { functional: { variants: [] }, contract: { body: [], params: [] }, scenario: {}, records, scenarios };
   const rel = related.length ? { relatedOperationUids: related } : {};
 
   if (s.positive) {
@@ -90,9 +90,10 @@ export function assignCaseIds(s: AssignInput, uidOf: (op: Operation) => string):
     const t = c.target;
     ids.contract.body.push(t?.in === 'body' ? add('contract', { subjectUid: uid, polarity: 'negative', location: location.requestBody(bodyPointer(t.path)), rule: t.rule }) : '');
   }
-  for (const c of s.queryCases) {
+  for (const c of s.paramCases) {
     const t = c.target;
-    ids.contract.query.push(t?.in === 'query' && t.field ? add('contract', { subjectUid: uid, polarity: 'negative', location: location.query(t.field), rule: t.rule }) : '');
+    const at = t && t.in !== 'body' && t.field ? { query: location.query, header: location.header, cookie: location.cookie, path: location.path }[t.in](t.field) : undefined;
+    ids.contract.params.push(at ? add('contract', { subjectUid: uid, polarity: 'negative', location: at, rule: t!.rule }) : '');
   }
 
   // CRUD scenarios: steps in order; the operation under test is the action.

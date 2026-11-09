@@ -13,7 +13,8 @@ paths:
         - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 50, multipleOf: 1 } }
         - { name: code, in: query, schema: { type: string, pattern: '^[A-Z]{3}$' } }
         - { name: since, in: query, schema: { type: string, format: date } }
-        - { name: tags, in: query, style: form, explode: false, schema: { type: array, items: { type: string }, maxItems: 3 } }
+        - { name: tags, in: query, style: form, explode: false, schema: { type: array, items: { type: string }, maxItems: 3, example: [a, b] } }
+        - { name: ids, in: query, schema: { type: array, items: { type: integer }, uniqueItems: true, example: [1, 2] } }
         - { name: X-Request-Id, in: header, required: true, schema: { type: string, format: uuid, example: 00000000-0000-4000-8000-000000000001 } }
         - { name: session, in: cookie, schema: { type: string, minLength: 8 } }
       responses:
@@ -55,6 +56,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Order' }
+        '400': { description: invalid id }
         '404': { description: missing }
     delete:
       operationId: deleteOrder

@@ -3,6 +3,7 @@ import type { CrudChain } from './graph.js';
 import type { NegCase } from './negative.js';
 import { apiCall, type ApiRef } from './api-objects.js';
 import type { SuiteCaseIds } from '../cases/assign.js';
+import { requiredRequest, type ParamRequest } from './param-cases.js';
 
 /** Payloads and assumptions for one confirmed resource chain. */
 export interface ChainPlan {
@@ -54,7 +55,21 @@ function expectSuccess(op: Operation, v = 'res') {
 }
 
 function requiredQuery(op: Operation): Record<string, unknown> {
-  return Object.fromEntries(op.params.filter((p) => p.in === 'query' && p.required && p.knownValue !== undefined).map((p) => [p.name, p.knownValue]));
+  return requiredRequest(op).params;
+}
+
+/**
+ * Request options with the operation's required query / header / cookie parameters (documented values) merged in.
+ * `inner` is an options literal such as "{ data: c.data }"; its own params / headers win.
+ */
+export function optionsWith(op: Operation, inner?: string): string | undefined {
+  const req = requiredRequest(op);
+  const body = inner ? inner.trim().replace(/^\{\s*/, '').replace(/\s*\}$/, '') : '';
+  const fields: string[] = [];
+  if (Object.keys(req.params).length && !/\bparams:/.test(body)) fields.push(`params: ${JSON.stringify(req.params)}`);
+  if (Object.keys(req.headers).length && !/\bheaders:/.test(body)) fields.push(`headers: ${JSON.stringify(req.headers)}`);
+  if (body) fields.push(body);
+  return fields.length ? `{ ${fields.join(', ')} }` : undefined;
 }
 
 /** Safe query variations: only values explicitly allowed by the schema. */
@@ -199,7 +214,7 @@ export interface SuiteInput {
   positive: boolean; // a successful call can be sent safely
   validation: string[]; // documented validation rejections: 400 / 422 / 4XX
   bodyCases: NegCase[];
-  queryCases: NegCase[];
+  paramCases: NegCase[];
   notFound?: { idExpr: string; param: string };
   unauthorized: boolean;
   /** Stable case IDs of this operation's tests (Playwright annotation caseId, pytest marker api_case_id). */
@@ -231,7 +246,7 @@ export function suiteCounts(s: SuiteInput): Record<SuiteType, number> {
   const sc = scenarioCases(s);
   return {
     functional: (s.positive ? 1 : 0) + extra + (s.positive && !s.plan ? queryVariants(s.op).length : 0),
-    contract: (s.positive ? 1 : 0) + extra + s.bodyCases.length + s.queryCases.length,
+    contract: (s.positive ? 1 : 0) + extra + s.bodyCases.length + s.paramCases.length,
     scenario: (sc.createRead ? 1 : 0) + (sc.updateRead ? 1 : 0) + (sc.deleteGone ? 1 : 0),
   };
 }
@@ -261,10 +276,9 @@ function positiveTest(s: SuiteInput, title: string, assert: (indent: string) => 
   const chain = plan?.chain;
   const role = roleOf(op, plan);
   const ref = refs.get(op)!;
-  const call = (idVar?: string, options?: string) => apiCall(ref, 'api', pathArgs(op, ref, chain?.param, idVar), options);
+  const call = (idVar?: string, options?: string) => apiCall(ref, 'api', pathArgs(op, ref, chain?.param, idVar), optionsWith(op, options));
   if (!role) {
-    const query = requiredQuery(op);
-    const opts = Object.keys(query).length ? `{ params: ${JSON.stringify(query)} }` : undefined;
+    const opts = optionsWith(op);
     const fx = apiFixture(op);
     return [
       `  test(${q(title)}, ${POS}, async ({ ${fx} }) => {`,
@@ -315,11 +329,11 @@ function notFoundCall(s: SuiteInput, fx: string): string[] {
   const ref = refs.get(op)!;
   const chain = plan?.chain;
   const body = plan?.updatePayload !== undefined && chain?.update === op ? `{ data: resource.newUpdatePayload() }` : undefined;
-  return [`    const missingId = String(${s.notFound!.idExpr});`, `    const res = await ${apiCall(ref, fx, pathArgs(op, ref, chain?.param ?? s.notFound!.param, 'missingId'), body)};`];
+  return [`    const missingId = String(${s.notFound!.idExpr});`, `    const res = await ${apiCall(ref, fx, pathArgs(op, ref, chain?.param ?? s.notFound!.param, 'missingId'), optionsWith(op, body))};`];
 }
 const anonymousCall = (s: SuiteInput) => {
   const ref = s.refs.get(s.op)!;
-  return `    const res = await ${apiCall(ref, 'publicApi', pathArgs(s.op, ref, s.plan?.chain.param, "'unused'"))};`;
+  return `    const res = await ${apiCall(ref, 'publicApi', pathArgs(s.op, ref, s.plan?.chain.param, "'unused'"), optionsWith(s.op))};`;
 };
 const notFoundNeedsHelpers = (s: SuiteInput) => !!s.notFound && s.plan?.updatePayload !== undefined && s.plan.chain.update === s.op;
 
@@ -359,7 +373,7 @@ export function renderFunctional(s: SuiteInput, meta: Meta): string {
       const params = { ...base, [variant.name]: variant.value };
       L.push(
         `  test(${q(`accepts documented ${variant.name}=${String(variant.value)}`)}, ${testOptions('positive', s.ids?.functional.variants[n])}, async ({ ${fx} }) => {`,
-        `    const res = await ${apiCall(ref, fx, pathArgs(op, ref), `{ params: ${JSON.stringify(params)} }`)};`,
+        `    const res = await ${apiCall(ref, fx, pathArgs(op, ref), optionsWith(op, `{ params: ${JSON.stringify(params)} }`))};`,
         `    ${expectSuccess(op)}`,
         `  });`,
         '',
@@ -388,7 +402,7 @@ export function renderContract(s: SuiteInput, meta: Meta): string {
   const ref = s.refs.get(op)!;
   const isCreate = chain?.create === op;
   const needsExisting = !!chain && chain.create !== op && op.params.some((p) => p.in === 'path' && p.name === chain.param);
-  const invalid = s.bodyCases.length + s.queryCases.length > 0;
+  const invalid = s.bodyCases.length + s.paramCases.length > 0;
   const usesHelpers = (s.positive && !!role) || notFoundNeedsHelpers(s) || (s.bodyCases.length > 0 && !!chain && (isCreate || needsExisting));
   // Validation cases go through the same fixture as the positive test (anonymous for public operations).
   const fx = chain ? 'api' : apiFixture(op);
@@ -403,7 +417,7 @@ export function renderContract(s: SuiteInput, meta: Meta): string {
   if (s.notFound) L.push(`  test('response for a missing id matches the documented contract', ${testOptions('positive', s.ids?.contract.notFound)}, async ({ ${fx} }) => {`, ...notFoundCall(s, fx), ...contract('    '), `  });`, '');
   if (s.unauthorized) L.push(`  test('response without credentials matches the documented contract', ${testOptions('positive', s.ids?.contract.unauthorized)}, async ({ publicApi }) => {`, anonymousCall(s), ...contract('    '), `  });`, '');
 
-  const send = (indent: string, options: string) => `${indent}const res = await ${apiCall(ref, fx, pathArgs(op, ref, chain?.param, 'id'), options)};`;
+  const send = (indent: string, options: string) => `${indent}const res = await ${apiCall(ref, fx, pathArgs(op, ref, chain?.param, 'id'), optionsWith(op, options))};`;
   if (s.bodyCases.length) {
     L.push(`  const invalidBodies = [`);
     s.bodyCases.forEach((c, n) => L.push(`    { title: ${q(c.title)}, source: ${q(c.source)}, ${caseField(s.ids?.contract.body[n])}data: ${JSON.stringify(c.data)} },`));
@@ -418,11 +432,20 @@ export function renderContract(s: SuiteInput, meta: Meta): string {
     }
     L.push(`    });`, `  }`, '');
   }
-  if (s.queryCases.length) {
-    L.push(`  const invalidQueries = [`);
-    s.queryCases.forEach((c, n) => L.push(`    { title: ${q(c.title)}, source: ${q(c.source)}, ${caseField(s.ids?.contract.query[n])}params: ${JSON.stringify(c.query)} },`));
-    L.push(`  ];`, '', `  for (const c of invalidQueries) {`, `    test(\`rejects invalid query: \${c.title}\`, ${loopOptions(s.ids?.contract.query)}, async ({ ${fx} }) => {`);
-    L.push(`      const res = await ${apiCall(ref, fx, pathArgs(op, ref), '{ params: c.params }')};`, `      await expectRejected(res, rejection, '${op.method}', ${q(op.path)});`, `    });`, `  }`, '');
+  if (s.paramCases.length) {
+    // Each row is a whole request: the valid required parameters plus the one parameter under test.
+    L.push(`  const invalidParameters: { title: string; source: string; caseId?: string; params?: Record<string, string | number | boolean> | string; headers?: Record<string, string>; path?: Record<string, string> }[] = [`);
+    s.paramCases.forEach((c, n) => {
+      const r: ParamRequest = c.request ?? (c.query ? { params: c.query as ParamRequest['params'] } : {});
+      const fields = [r.params !== undefined ? `params: ${JSON.stringify(r.params)}` : '', r.headers ? `headers: ${JSON.stringify(r.headers)}` : '', r.path ? `path: ${JSON.stringify(r.path)}` : ''].filter(Boolean).join(', ');
+      L.push(`    { title: ${q(c.title)}, source: ${q(c.source)}, ${caseField(s.ids?.contract.params[n])}${fields} },`);
+    });
+    const args = ref.pathParams.map((name) => {
+      const known = op.params.find((x) => x.in === 'path' && x.name === name)?.knownValue;
+      return `c.path?.[${q(name)}] ?? ${known === undefined ? "'unused'" : q(String(known))}`;
+    });
+    L.push(`  ];`, '', `  for (const c of invalidParameters) {`, `    test(\`rejects invalid parameter: \${c.title}\`, ${loopOptions(s.ids?.contract.params)}, async ({ ${fx} }) => {`);
+    L.push(`      const res = await ${apiCall(ref, fx, args, '{ params: c.params, headers: c.headers }')};`, `      await expectRejected(res, rejection, '${op.method}', ${q(op.path)});`, `    });`, `  }`, '');
   }
   return close(L);
 }

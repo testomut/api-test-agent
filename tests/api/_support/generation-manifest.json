@@ -55,7 +55,7 @@
     },
     "_support/openapi.snapshot.meta.json": {
       "ownership": "generated",
-      "sha256": "211c48082b5b8c39231e13220eef773881f49ea29dcc24370e20cfdb5ff743fb"
+      "sha256": "b25f9dfc2d7412b7a7a3ce73d2051f0336f68409ab4ac29faf5d97027fb02d35"
     },
     "_support/openapi.snapshot.ts": {
       "ownership": "generated",
@@ -161,7 +161,7 @@
         "op_4PIO72ZI3SIY"
       ],
       "ownership": "generated",
-      "sha256": "19cb5063a2ea8c0448d9edb782404e52f9bc249144628963b1a3616ef388e402",
+      "sha256": "8f23c22db292e30e950f567f4c3a4f3a2264bb8acef45c9537d78a2d2d4bb236",
       "suiteType": "contract"
     },
     "items/get/functional.spec.ts": {
@@ -353,7 +353,7 @@
   "schemaVersion": 1,
   "spec": {
     "hash": "d7b3b546ce170690",
-    "revision": "ca2c522d318de340e5afdbb31c0fa0a6e85f91ff",
+    "revision": "93b4d144ee116dffa83c091e603b4c385ab916cb",
     "source": "demo-api/openapi.yaml"
   }
 }

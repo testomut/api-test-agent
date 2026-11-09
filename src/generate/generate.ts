@@ -13,7 +13,8 @@ import { buildRegistry, canonicalJson, fileHash, readRegistry, resolveOperationU
 import { headRevision } from '../change/baseline.js';
 import { isUrl } from '../change/network.js';
 import { bodyCasesDetailed, type CoverageGap } from './body-cases.js';
-import { bodyCases, documentedRejections, nonexistentIdExpr, queryCases } from './negative.js';
+import { paramCasesDetailed, sendable } from './param-cases.js';
+import { bodyCases, documentedRejections, nonexistentIdExpr, type NegCase } from './negative.js';
 import { CONTRACT_ASSERT, SUITE_TYPES, TS_FILES, operationFolder, queryVariants, renderContract, renderFunctional, renderResourceHelpers, renderScenarios, scenarioCases, suiteCounts, type ChainPlan, type Meta, type SuiteInput, type SuiteType } from './templates.js';
 import { API_BASE, buildApiIndex, renderApiBaseClass, renderApiChildClass, renderApis } from './api-objects.js';
 import { PY_FILES, pyName, renderConftest, renderPyContract, renderPyFunctional, renderPyResource, renderPyScenarios, resourceModule } from './python.js';
@@ -242,7 +243,8 @@ export async function generate(spec: LoadedSpec, ops: Operation[], o: GenerateOp
     const safe = SAFE_METHODS.includes(op.method);
     const pathParams = op.params.filter((p) => p.in === 'path');
     const unresolvedPath = pathParams.filter((p) => p.knownValue === undefined && p.name !== plan?.chain.param);
-    const unresolvedQuery = op.params.filter((p) => p.in === 'query' && p.required && p.knownValue === undefined);
+    // Required query / header / cookie parameters need a documented value, or no valid request exists.
+    const unresolvedQuery = op.params.filter((p) => p.in !== 'path' && p.required && p.knownValue === undefined && sendable(p));
 
     // --- positive
     let posReason: string | undefined;
@@ -271,7 +273,7 @@ export async function generate(spec: LoadedSpec, ops: Operation[], o: GenerateOp
     let bCases: ReturnType<typeof bodyCases> = [];
     let bodyGaps: CoverageGap[] = [];
     let bodyStats: Coverage['bodyCases'];
-    let qCases: ReturnType<typeof queryCases> = [];
+    let qCases: NegCase[] = [];
     let notFound: { idExpr: string; param: string } | undefined;
     let unauthorized = false;
 
@@ -288,7 +290,11 @@ export async function generate(spec: LoadedSpec, ops: Operation[], o: GenerateOp
           bodyGaps = detailed.gaps;
           bodyStats = { potential: detailed.potential, generated: detailed.cases.length, dropped: detailed.dropped.length };
         }
-        if (!unresolvedPath.length) qCases = queryCases(op);
+        // Path parameters: only where an invalid value cannot reach a request body we cannot build.
+        const allowPath = !op.requestBodyRequired;
+        const pc = paramCasesDetailed(spec.doc, op, { allowPath, allowOthers: !unresolvedPath.length });
+        qCases = pc.cases;
+        bodyGaps = [...bodyGaps, ...pc.gaps];
         if (!bCases.length && !qCases.length) why.push(`${rej.validation.join('/')} is documented but there is no constraint the agent can break safely`);
       } else why.push('no 400/422 documented');
 
@@ -305,10 +311,10 @@ export async function generate(spec: LoadedSpec, ops: Operation[], o: GenerateOp
     }
 
     // --- suites
-    const input: SuiteInput = { op, refs, plan, helpers, positive: !posReason, validation: rej.validation, bodyCases: bCases, queryCases: qCases, notFound, unauthorized };
+    const input: SuiteInput = { op, refs, plan, helpers, positive: !posReason, validation: rej.validation, bodyCases: bCases, paramCases: qCases, notFound, unauthorized };
     const counts = suiteCounts(input);
     const variants = input.positive && !plan && op.method === 'get' ? queryVariants(op) : [];
-    const ids = assignCaseIds({ op, chain: plan?.chain, positive: input.positive, bodyCases: bCases, queryCases: qCases, notFound, unauthorized, scenarios: scenarioCases(input), queryVariants: variants }, uidOf);
+    const ids = assignCaseIds({ op, chain: plan?.chain, positive: input.positive, bodyCases: bCases, paramCases: qCases, notFound, unauthorized, scenarios: scenarioCases(input), queryVariants: variants }, uidOf);
     input.ids = ids;
     // Explicit per-operation coverage and gaps, independent of test execution status.
     coverage.push({ operation: op.key, counts, positiveBlocked: posReason ?? null, negativeGaps: why, lifecycle: plan ? plan.chain.name : null, gaps: bodyGaps, ...(bodyStats ? { bodyCases: bodyStats } : {}) });

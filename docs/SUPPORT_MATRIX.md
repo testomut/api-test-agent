@@ -34,21 +34,26 @@ Recursive from a valid payload; every case breaks exactly one rule (verified wit
 | `readOnly` | ✅ | not sent, no case | 3 ✔ |
 | case limit | ✅ | `--max-cases` (default 60 per operation); potential / generated / dropped in `coverage-gaps.json`, each dropped case as `CASE_LIMIT_REACHED` | 3 ✔ |
 
-## Parameters (`src/generate/negative.ts`, `templates.ts`)
+## Parameters (`src/generate/param-cases.ts`)
 
-| Target | State | Limits | Stage |
+Every case is a valid request (each required query / header / cookie parameter with its documented value) in which exactly one parameter breaks exactly one rule (verified in `tests/unit/param-cases.test.ts` against the parameter schemas). The rules come from the same engine as request bodies. Expected result: a documented 400 / 422 / 4XX.
+
+| Target | State | Limits / gap | Stage |
 |---|---|---|---|
-| query `required` | 🟡 | only when the spec gives a valid value | 4 |
-| query `type` | 🟡 | number, integer, boolean | 4 |
-| query `minimum` / `maximum` / exclusive | ✅ | | |
-| query `minLength` / `maxLength` | ✅ | | |
-| query `enum` (invalid value) | 🟡 | string only | 4 |
-| query `const`, `pattern`, `format`, `multipleOf` | ❌ | | 4 |
-| query arrays, `style` / `explode` | ❌ | | 4 |
-| query boundary-valid values | ❌ | | 4 / 7 |
-| path parameter constraints | ❌ | only unknown id → 404 | 4 |
-| header parameters | ❌ | | 4 |
-| cookie parameters | ❌ | | 4 |
+| required (missing) | ✅ | query, header, cookie; needs the documented value of every required parameter, else `MISSING_VALID_SAMPLE` and no cases | 4 ✔ |
+| `type` | ✅ | number, integer, boolean (a string parameter cannot have a wrong type on the wire) | 4 ✔ |
+| `enum`, `const` | ✅ | | 4 ✔ |
+| `pattern`, `format` | ✅ | as for bodies | 4 ✔ |
+| `minimum` / `maximum` / exclusive / `multipleOf` | ✅ | | 4 ✔ |
+| `minLength` / `maxLength` | ✅ | | 4 ✔ |
+| arrays: `minItems` / `maxItems` / `uniqueItems` | ✅ | query `form` (explode true → repeated keys, false → comma), `spaceDelimited`, `pipeDelimited`; header `simple` | 4 ✔ |
+| array item / object member constraints in parameters | ⛔ | `UNSUPPORTED_SCHEMA_KEYWORD` | 4 ✔ (gap) |
+| `deepObject`, object parameters, array cookies | ⛔ | `UNSUPPORTED_SCHEMA_KEYWORD` | 4 ✔ (gap) |
+| header parameters | ✅ | `Authorization`, `Content-Type`, `Accept` are not parameters (OpenAPI) | 4 ✔ |
+| cookie parameters | ✅ | sent in the `Cookie` header | 4 ✔ |
+| path parameters | ✅ | type, format, pattern, enum, length; on write operations numeric bounds → `UNSAFE_LIVE_CHECK` (an out-of-range id could address a real record); other path parameters need documented values (`MISSING_RESOURCE_SOURCE`); not on operations whose body is required | 4 ✔ |
+| required header / cookie in every generated call | ✅ | positive, 404, 401, body and parameter cases; a required one without a documented value blocks the operation with its reason | 4 ✔ |
+| boundary-valid values | ❌ | | 7 |
 
 ## Functional (`functional.spec.ts`)
 

@@ -1,4 +1,5 @@
 import type { Operation } from '../types.js';
+import { requiredRequest } from './param-cases.js';
 import { hasFill, queryVariants, roleOf, scenarioCases, uniqueNote, type ChainPlan, type Meta, type SuiteInput, type SuiteType } from './templates.js';
 
 /**
@@ -47,6 +48,25 @@ function pathExpr(op: Operation, chainParam?: string, idVar = 'resource_id'): st
     const known = `'${String(param.knownValue).replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`;
     const value = param.name === chainParam ? `{quote(str(${idVar}), safe='')}` : `{quote(${known}, safe='')}`;
     p = p.replace(`{{${param.name}}}`, value);
+  }
+  return `f${str(p)}`;
+}
+
+/** Keyword arguments with the operation's required query / header / cookie parameters (documented values). */
+function pyRequired(op: Operation, skip: ('params' | 'headers')[] = []): string {
+  const r = requiredRequest(op);
+  return [
+    Object.keys(r.params).length && !skip.includes('params') ? `, params=${pyLit(r.params, 4)}` : '',
+    Object.keys(r.headers).length && !skip.includes('headers') ? `, headers=${pyLit(r.headers, 4)}` : '',
+  ].join('');
+}
+
+/** Path whose parameters come from the row's "path" values, else their documented values. */
+function pathFromParts(op: Operation): string {
+  let p = op.path.replace(/^\//, '').replace(/[{}]/g, (c) => c + c);
+  for (const param of op.params.filter((x) => x.in === 'path')) {
+    const known = param.knownValue === undefined ? "'unused'" : `'${String(param.knownValue).replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`;
+    p = p.replace(`{{${param.name}}}`, `{quote(str(path.get('${param.name}', ${known})), safe='')}`);
   }
   return `f${str(p)}`;
 }
@@ -350,16 +370,14 @@ function pyPositive(s: SuiteInput, name: string, assert: (indent: string) => str
   const role = roleOf(op, plan);
   const res = plan ? resourceModule(plan).replace(/_resource$/, '') : '';
   if (!role) {
-    const query = Object.fromEntries(op.params.filter((p) => p.in === 'query' && p.required && p.knownValue !== undefined).map((p) => [p.name, p.knownValue]));
-    const params = Object.keys(query).length ? `, params=${pyLit(query, 4)}` : '';
-    return [POS, `def ${name}(api, contract):`, `    res = api.${op.method}(${pathExpr(op)}${params})`, ...assert('    '), '', ''];
+    return [POS, `def ${name}(api, contract):`, `    res = api.${op.method}(${pathExpr(op)}${pyRequired(op)})`, ...assert('    '), '', ''];
   }
   if (role === 'create') {
-    return [POS, `def ${name}(api, contract, ${res}):`, `    res = api.${op.method}(${pathExpr(op)}, json=${res}.new_create_payload())`, '    try:', ...assert('        '), '    finally:', `        ${res}.remove_if_created(res)`, '', ''];
+    return [POS, `def ${name}(api, contract, ${res}):`, `    res = api.${op.method}(${pathExpr(op)}, json=${res}.new_create_payload()${pyRequired(op)})`, '    try:', ...assert('        '), '    finally:', `        ${res}.remove_if_created(res)`, '', ''];
   }
   const body = role === 'update' ? `, json=${res}.new_update_payload()` : '';
   // created_<res> removes the resource after the test (best effort: a deleted one is already gone).
-  return [POS, `def ${name}(api, contract, ${res}, created_${res}):`, `    res = api.${op.method}(${pathExpr(op, chain!.param, `created_${res}`)}${body})`, ...assert('    '), '', ''];
+  return [POS, `def ${name}(api, contract, ${res}, created_${res}):`, `    res = api.${op.method}(${pathExpr(op, chain!.param, `created_${res}`)}${body}${pyRequired(op)})`, ...assert('    '), '', ''];
 }
 
 const pyNotFoundId = (idExpr: string) => (idExpr === 'randomUUID()' ? 'str(uuid.uuid4())' : /^\d+$/.test(idExpr) ? `str(${idExpr})` : 'f"nonexistent-{uuid.uuid4().hex}"');
@@ -373,7 +391,7 @@ function pyNotFound(s: SuiteInput, name: string, mark: string, assert: string): 
     mark,
     `def ${name}(api, contract${body ? `, ${res}` : ''}):`,
     `    missing_id = ${pyNotFoundId(s.notFound!.idExpr)}`,
-    `    res = api.${op.method}(${pathExpr(op, chain?.param ?? s.notFound!.param, 'missing_id')}${body ? `, json=${res}.new_update_payload()` : ''})`,
+    `    res = api.${op.method}(${pathExpr(op, chain?.param ?? s.notFound!.param, 'missing_id')}${body ? `, json=${res}.new_update_payload()` : ''}${pyRequired(op)})`,
     `    ${assert}`,
     '',
     '',
@@ -381,7 +399,7 @@ function pyNotFound(s: SuiteInput, name: string, mark: string, assert: string): 
 }
 
 function pyAnonymous(s: SuiteInput, name: string, mark: string, assert: string): string[] {
-  return [mark, `def ${name}(anonymous_api, contract):`, `    res = anonymous_api.${s.op.method}(${pathExpr(s.op, s.plan?.chain.param, '"unused"')})`, `    ${assert}`, '', ''];
+  return [mark, `def ${name}(anonymous_api, contract):`, `    res = anonymous_api.${s.op.method}(${pathExpr(s.op, s.plan?.chain.param, '"unused"')}${pyRequired(s.op)})`, `    ${assert}`, '', ''];
 }
 
 const statusIs = (op: Operation, code: string) =>
@@ -415,11 +433,11 @@ export function renderPyFunctional(s: SuiteInput, meta: Meta): string {
   // One physical test (and case ID) per documented query value, as in the TypeScript suite.
   const variants = s.positive && !plan && op.method === 'get' ? queryVariants(op) : [];
   if (variants.length) {
-    const base = Object.fromEntries(op.params.filter((p) => p.in === 'query' && p.required && p.knownValue !== undefined).map((p) => [p.name, p.knownValue]));
+    const base = requiredRequest(op).params;
     L.push('QUERY_VALUES = [');
     variants.forEach((v, n) => L.push(`    pytest.param(${pyLit({ ...base, [v.name]: v.value }, 4)}, id=${str(`${v.name}=${String(v.value)}`)}${paramMarks(s.ids?.functional.variants[n])}),`));
     L.push(']', '', '', POS, '@pytest.mark.parametrize("params", QUERY_VALUES)', 'def test_accepts_documented_query_value(api, params):');
-    L.push(`    res = api.${op.method}(${pathExpr(op)}, params=params)`, `    ${assertSuccess(op)}`, '', '');
+    L.push(`    res = api.${op.method}(${pathExpr(op)}, params=params${pyRequired(op, ['params'])})`, `    ${assertSuccess(op)}`, '', '');
   }
   if (s.notFound) L.push(...pyNotFound(s, 'test_returns_documented_404_for_unknown_id', withId(NEG, s.ids?.functional.notFound), statusIs(op, '404')));
   if (s.unauthorized) L.push(...pyAnonymous(s, 'test_returns_documented_401_without_credentials', withId(NEG, s.ids?.functional.unauthorized), statusIs(op, '401')));
@@ -435,7 +453,7 @@ export function renderPyContract(s: SuiteInput, meta: Meta): string {
   const needsExisting = !!chain && chain.create !== op && op.params.some((p) => p.in === 'path' && p.name === chain.param);
   const expect = `contract.expect(res, ${str(op.method)}, ${str(op.path)})`;
   const L = pyHeader('contract', s, meta, ['Checks conformance to the OpenAPI document: the status actually returned is documented and the body matches its schema.', 'Invalid requests break one documented constraint each and must get a documented rejection.']);
-  if (s.bodyCases.length || s.queryCases.length) L.push(`REJECTION = ${pyLit(s.validation)}  # documented in the spec`, '', '');
+  if (s.bodyCases.length || s.paramCases.length) L.push(`REJECTION = ${pyLit(s.validation)}  # documented in the spec`, '', '');
   if (s.positive) L.push(...pyPositive(s, 'test_success_response_matches_contract', (i) => [`${i}${expect}`], s.ids?.contract.success));
   if (s.notFound) L.push(...pyNotFound(s, 'test_response_for_unknown_id_matches_contract', withId(POS, s.ids?.contract.notFound), expect));
   if (s.unauthorized) L.push(...pyAnonymous(s, 'test_response_without_credentials_matches_contract', withId(POS, s.ids?.contract.unauthorized), expect));
@@ -446,19 +464,25 @@ export function renderPyContract(s: SuiteInput, meta: Meta): string {
     L.push(']', '', '', NEG, '@pytest.mark.parametrize("payload", INVALID_BODIES)');
     if (needsExisting) {
       L.push(`def test_rejects_invalid_body(api, contract, created_${res}, payload):`);
-      L.push(`    res = api.${op.method}(${pathExpr(op, chain!.param, `created_${res}`)}, json=payload)`);
+      L.push(`    res = api.${op.method}(${pathExpr(op, chain!.param, `created_${res}`)}, json=payload${pyRequired(op)})`);
     } else {
       L.push(`def test_rejects_invalid_body(api, contract${isCreate ? `, ${res}` : ''}, payload):`);
-      L.push(`    res = api.${op.method}(${pathExpr(op, chain?.param)}, json=payload)`);
+      L.push(`    res = api.${op.method}(${pathExpr(op, chain?.param)}, json=payload${pyRequired(op)})`);
       if (isCreate) L.push(`    ${res}.remove_if_created(res)`);
     }
     L.push(`    contract.expect_rejected(res, REJECTION, ${str(op.method)}, ${str(op.path)})`, '', '');
   }
-  if (s.queryCases.length) {
-    L.push('INVALID_QUERIES = [');
-    s.queryCases.forEach((c, n) => L.push(`    pytest.param(${pyLit(c.query, 4)}, id=${str(c.title)}${paramMarks(s.ids?.contract.query[n])}),  # ${c.source}`));
-    L.push(']', '', '', NEG, '@pytest.mark.parametrize("params", INVALID_QUERIES)', 'def test_rejects_invalid_query(api, contract, params):');
-    L.push(`    res = api.${op.method}(${pathExpr(op)}, params=params)`, `    contract.expect_rejected(res, REJECTION, ${str(op.method)}, ${str(op.path)})`, '', '');
+  if (s.paramCases.length) {
+    // Each row is a whole request: the valid required parameters plus the one parameter under test.
+    L.push('INVALID_PARAMETERS = [');
+    s.paramCases.forEach((c, n) => {
+      const r = c.request ?? (c.query ? { params: c.query as Record<string, string | number | boolean> } : {});
+      const parts = Object.fromEntries(Object.entries({ params: r.params, headers: r.headers, path: r.path }).filter(([, v]) => v !== undefined));
+      L.push(`    pytest.param(${pyLit(parts, 4)}, id=${str(c.title)}${paramMarks(s.ids?.contract.params[n])}),  # ${c.source}`);
+    });
+    L.push(']', '', '', NEG, '@pytest.mark.parametrize("parts", INVALID_PARAMETERS)', 'def test_rejects_invalid_parameter(api, contract, parts):');
+    L.push('    path = parts.get("path", {})');
+    L.push(`    res = api.${op.method}(${pathFromParts(op)}, params=parts.get("params"), headers=parts.get("headers"))`, `    contract.expect_rejected(res, REJECTION, ${str(op.method)}, ${str(op.path)})`, '', '');
   }
   return finish(L);
 }
