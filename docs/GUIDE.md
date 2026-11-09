@@ -240,7 +240,7 @@ npx @testomut/api-test-agent generate --deps reports/api-agent/generate/ai-deps.
 |---|---|---|
 | `functional.spec.ts` | documented success status with spec-provided data; create returns an id, read returns the created resource | unknown id → 404, no credentials → 401 (status only) |
 | `contract.spec.ts` | the returned status is documented and the body matches the schema: success, missing-id and anonymous responses | missing required field, wrong type, min/max and length bounds, enum, unknown field, minProperties, invalid query params → documented 400/422 |
-| `scenarios.spec.ts` | update → read returns the new values; delete → read gives 404. Lives in the folder of the action (update/delete), never under create | |
+| `scenarios.spec.ts` | create → read by the returned id; update → read returns the new values; delete → read gives 404. Lives in the folder of the operation under test (create, update or delete), never of a setup step | |
 
 A negative case is generated only when the spec documents the rejection (400 / 422 / 4XX, 404, 401). A file is written only when it has at least one case; otherwise the report says why (`BLOCKED` per suite).
 
