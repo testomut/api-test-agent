@@ -1,5 +1,5 @@
 {
-  "caseRegistryHash": "51f82bffa7438b9e1f7595daf8ca206bbf944b446f15c35a87d78b4f3310b879",
+  "caseRegistryHash": "132c3ea625d3120236f76ce24950359b96d5a04047a9aa10b24fe127144680bd",
   "files": {
     "_support/api/generated/AdminApiBase.ts": {
       "ownership": "generated",
@@ -55,7 +55,7 @@
     },
     "_support/openapi.snapshot.meta.json": {
       "ownership": "generated",
-      "sha256": "02321c2de281b2ca60e29bca3a07b8ce21294ad4fe4a77491c43f0b397091cf9"
+      "sha256": "dbc27d1b465c4c9fffd068d92bc28b15bde50e5f192ba77c9e6d8e8fe91c51bb"
     },
     "_support/openapi.snapshot.ts": {
       "ownership": "generated",
@@ -166,13 +166,15 @@
     },
     "items/get/functional.spec.ts": {
       "caseIds": [
-        "ata:op_4PIO72ZI3SIY:functional:positive:operation:documented-success"
+        "ata:op_4PIO72ZI3SIY:functional:positive:operation:documented-success",
+        "ata:op_4PIO72ZI3SIY:functional:positive:request.query#/limit/1:accepted-value",
+        "ata:op_4PIO72ZI3SIY:functional:positive:request.query#/limit/100:accepted-value"
       ],
       "operationUids": [
         "op_4PIO72ZI3SIY"
       ],
       "ownership": "generated",
-      "sha256": "107a7657f2b7af3b2f0393ad86507cc5645d16e0d09812b30afedb849edf7d99",
+      "sha256": "5e1cb6b000284b6bfcf733bea1a1d3a451fc435107ebf490279a09b14ec190ff",
       "suiteType": "functional"
     },
     "items/patch-by-id/contract.spec.ts": {
@@ -252,7 +254,7 @@
         "op_EDRRXKOK26ZL"
       ],
       "ownership": "generated",
-      "sha256": "c14bca7ba83da65165b9631315895ad5e9323a98af6283aaf043697d783c738b",
+      "sha256": "55aa00d7008175ecca10ec2966419c00b4b988eb7e32daec3dc6d6942c68e719",
       "suiteType": "contract"
     },
     "items/post/functional.spec.ts": {
@@ -264,7 +266,7 @@
         "op_EDRRXKOK26ZL"
       ],
       "ownership": "generated",
-      "sha256": "e1ceb3800a680333b4a45c29980c36d1245b705c8da20fb3dc3de0ae2fef5def",
+      "sha256": "12e7382980e8ed311af492b7662241d72acf59e4c321ee91266899029447b9b0",
       "suiteType": "functional"
     },
     "items/post/scenarios.spec.ts": {
@@ -354,7 +356,7 @@
   "schemaVersion": 1,
   "spec": {
     "hash": "d7b3b546ce170690",
-    "revision": "ea9aa19720af422a38924d9284f0e7190b6d5337",
+    "revision": "c0234b4bfb54752c38970fe2107b785bb796dc89",
     "source": "demo-api/openapi.yaml"
   }
 }

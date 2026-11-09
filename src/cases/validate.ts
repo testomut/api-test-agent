@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path';
 import { normalizePath, type NormOp, type NormSpec } from '../change/normalize.js';
 import { CASE_RULE_VOCABULARY_VERSION, parseCaseId } from './ids.js';
 import { canonicalJson, fileHash, type Registry } from './registry.js';
+import { boundaryValues } from '../generate/boundaries.js';
 
 /** `registry validate` / `manifest validate` (docs/OPENAPI_CHANGE_TRIGGER.md, "Registry validation"). */
 
@@ -197,8 +198,8 @@ function checkLocation(o: NormOp, loc: string, rule: string): Finding | undefine
     if (rawValue !== undefined) {
       // accepted-value: the value must be one the spec documents for this parameter.
       const value = String(decodeSegment(rawValue));
-      const allowed = Array.isArray(p.schema?.enum) ? p.schema.enum.map(String) : p.schema?.const !== undefined ? [String(p.schema.const)] : [];
-      return allowed.includes(value) ? undefined : bad(`"${value}" is not a documented value of ${m[1]} "${name}"`);
+      const allowed = Array.isArray(p.schema?.enum) ? p.schema.enum.map(String) : p.schema?.const !== undefined ? [String(p.schema.const)] : boundaryValues(p.schema).map(String);
+      return allowed.includes(value) ? undefined : bad(`"${value}" is not a documented value or valid limit of ${m[1]} "${name}"`);
     }
     if (rule !== 'required' && rule !== 'not-found' && !ruleFits(p.schema, rule)) return { code: 'INVALID_CASE_RULE_FOR_SCHEMA', pointer: '', reason: `${o.key}: "${rule}" does not apply to ${m[1]} "${name}"` };
     return undefined;

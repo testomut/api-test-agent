@@ -284,6 +284,27 @@ export function bodyCasesDetailed(doc: OpenApiDoc, rawSchema: any, base: unknown
   return { cases: kept, gaps, potential, dropped };
 }
 
+/**
+ * oneOf / anyOf in a payload that is sent: one branch is exercised (the example's, or the first), the others are
+ * reported as UNCOVERED_VARIANT, never dropped silently.
+ */
+export function compositionGaps(doc: OpenApiDoc, rawSchema: any, value: unknown, path: PathSeg[] = [], depth = 0): CoverageGap[] {
+  if (depth > 12) return [];
+  const s = merged(doc, rawSchema);
+  if (!s || typeof s !== 'object') return [];
+  const out: CoverageGap[] = [];
+  for (const k of ['oneOf', 'anyOf']) {
+    if (Array.isArray(s[k]) && s[k].length > 1) {
+      out.push({ code: 'UNCOVERED_VARIANT', location: `request.body#${bodyPointer(path)}`, rule: k, reason: `${k}: one of ${s[k].length} branches is sent; ${s[k].length - 1} other(s) are not exercised` });
+    }
+  }
+  if (Array.isArray(value) && s.items && value.length) out.push(...compositionGaps(doc, s.items, value[0], [...path, ARRAY], depth + 1));
+  else if (value && typeof value === 'object' && !Array.isArray(value) && s.properties) {
+    for (const [prop, sub] of Object.entries<any>(s.properties)) if (prop in (value as object)) out.push(...compositionGaps(doc, sub, (value as any)[prop], [...path, prop], depth + 1));
+  }
+  return out;
+}
+
 function isMultipleOf(v: number, m: number): boolean {
   return Math.abs(v / m - Math.round(v / m)) < 1e-9;
 }

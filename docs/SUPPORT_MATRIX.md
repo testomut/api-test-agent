@@ -62,13 +62,14 @@ Every case is a valid request (each required query / header / cookie parameter w
 | documented success status | ✅ | | |
 | create returns an id | ✅ | confirmed chain | |
 | read returns the created resource (same id) | ✅ | | |
-| create response echoes sent fields | ❌ | | 7 |
-| GET with each documented query `enum` value | ✅ | one test and one `accepted-value` case ID per value (`request.query#/<name>/<value>`), TypeScript and Python; values equal as strings are sent once; max 5 per parameter, 15 per operation | 2 ✔ |
-| list contains the created resource | ❌ | | 7 / 8 |
-| filter / search / pagination / sort | ⛔ | need a confirmed mapping (deps / scenario config) | 7 / 8 |
-| boundary-valid values accepted | ❌ | | 7 |
-| optional-field variants | ❌ | | 7 |
-| response examples as requirements | ⛔ | examples are illustrations unless marked | 7 |
+| create response returns sent fields | ✅ | only the fields a reviewed deps file names (`echoes`): the spec does not state it | 7 ✔ |
+| update → read returns the new values | ✅ | scenario, marked ASSUMPTION | |
+| delete → read 404 | ✅ | scenario | |
+| GET with each documented query `enum` value | ✅ | one test and one `accepted-value` case ID per value | 2 ✔ |
+| boundary-valid query values accepted | ✅ | minimum / maximum (inside exclusive bounds, on `multipleOf`), shortest / longest string (no pattern / format, ≤ 64 chars); one test and case ID each | 7 ✔ |
+| list contains the created resource, filter / search / pagination / sort | ⛔ | need a confirmed mapping of list fields and parameters (not in the spec) | 8 (gap) |
+| optional-field variants of a create payload | ❌ | | |
+| response examples as requirements | ⛔ | examples are illustrations, never asserted | |
 
 ## Response contract (`src/contract/validator.ts`, `src/contract/contract.py`)
 
@@ -128,16 +129,17 @@ A case is generated only when the request that triggers the error is safe and th
 
 | Keyword | State | Limits | Stage |
 |---|---|---|---|
-| `example`, `default`, `enum`, `const` | 🟡 | first value only | 7 |
-| `examples` | 🟡 | first only | 7 |
-| `oneOf` / `anyOf` | 🟡 | **first variant chosen silently** | 3 / 7 |
-| `discriminator` | 🟡 | blocked (explicit) | 7 |
-| `pattern` | 🟡 | blocked without an example (explicit) | 7 |
-| `multipleOf` | ❌ | minimum used, may not be a multiple | 7 |
-| formats | 🟡 | uuid, email, date-time, date, uri, url, hostname, ipv4 | 7 |
+| `example`, `default`, `enum`, `const` | 🟡 | first value only | |
+| `examples` | 🟡 | first only | |
+| `oneOf` / `anyOf` | 🟡 | one branch is sent (the example's, else the first); the others are `UNCOVERED_VARIANT` gaps at their location | 7 ✔ (gap) |
+| `discriminator` | 🟡 | blocked with an explicit reason | |
+| `pattern` | 🟡 | blocked without an example (explicit reason) | |
+| `multipleOf` | ✅ | the smallest multiple inside the bounds | 7 ✔ |
+| exclusive bounds | ✅ | 3.1 numeric and 3.0 boolean form, combined with `minimum` | 7 ✔ |
+| formats | 🟡 | uuid, email, date-time, date, uri, url, hostname, ipv4 | |
 | `minItems`, nested objects / arrays | ✅ | | |
-| `uniqueItems` | ❌ | copies one value `minItems` times | 7 |
-| boundary-valid, optional-field, nullable variants | ❌ | | 7 |
+| `uniqueItems` | ✅ | distinct elements (enum values, suffixed strings, stepped numbers); otherwise blocked with the reason | 7 ✔ |
+| unique values on a documented 409 | ✅ | suffix that respects enum / const / format / pattern / maxLength | |
 
 ## Reporting and CI
 

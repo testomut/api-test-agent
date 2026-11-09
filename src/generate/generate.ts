@@ -12,7 +12,7 @@ import { assignCaseIds, type CaseRecord, type ScenarioDefinition } from '../case
 import { buildRegistry, canonicalJson, fileHash, readRegistry, resolveOperationUids } from '../cases/registry.js';
 import { headRevision } from '../change/baseline.js';
 import { isUrl } from '../change/network.js';
-import { bodyCasesDetailed, type CoverageGap } from './body-cases.js';
+import { bodyCasesDetailed, compositionGaps, type CoverageGap } from './body-cases.js';
 import { paramCasesDetailed, sendable } from './param-cases.js';
 import { errorPlan } from './error-cases.js';
 import { bodyCases, documentedRejections, nonexistentIdExpr, type NegCase } from './negative.js';
@@ -324,6 +324,10 @@ export async function generate(spec: LoadedSpec, ops: Operation[], o: GenerateOp
     const ids = assignCaseIds({ op, chain: plan?.chain, positive: input.positive, bodyCases: bCases, paramCases: qCases, notFound, unauthorized, scenarios: scenarioCases(input), queryVariants: variants, errors }, uidOf);
     input.ids = ids;
     // Explicit per-operation coverage and gaps, independent of test execution status.
+    // oneOf / anyOf in a payload that is sent: the other branches are reported (never dropped silently).
+    const payloadSchema = plan && (plan.chain.create === op || plan.chain.update === op) ? jsonBodySchema(spec, op) : undefined;
+    const payloadValue = plan?.chain.create === op ? plan.createPayload : plan?.chain.update === op ? plan.updatePayload : undefined;
+    const variantGaps: CoverageGap[] = payloadSchema && payloadValue !== undefined ? compositionGaps(spec.doc, payloadSchema, payloadValue) : [];
     // Response bodies the validator cannot check: said explicitly, never passed silently.
     const responseGaps: CoverageGap[] = op.responses.flatMap((resp) =>
       resp.contentTypes.flatMap((ct): CoverageGap[] => {
@@ -334,7 +338,7 @@ export async function generate(spec: LoadedSpec, ops: Operation[], o: GenerateOp
         return [];
       }),
     );
-    coverage.push({ operation: op.key, counts, positiveBlocked: posReason ?? null, negativeGaps: why, lifecycle: plan ? plan.chain.name : null, gaps: [...bodyGaps, ...errors.gaps, ...responseGaps], ...(bodyStats ? { bodyCases: bodyStats } : {}) });
+    coverage.push({ operation: op.key, counts, positiveBlocked: posReason ?? null, negativeGaps: why, lifecycle: plan ? plan.chain.name : null, gaps: [...bodyGaps, ...errors.gaps, ...variantGaps, ...responseGaps], ...(bodyStats ? { bodyCases: bodyStats } : {}) });
     const render: Record<SuiteType, (s: SuiteInput, m: Meta) => string> = py
       ? { functional: renderPyFunctional, contract: renderPyContract, scenario: renderPyScenarios }
       : { functional: renderFunctional, contract: renderContract, scenario: renderScenarios };

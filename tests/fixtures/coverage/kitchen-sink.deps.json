@@ -7,7 +7,8 @@
       "read": "getOrder",
       "update": "updateOrder",
       "delete": "deleteOrder",
-      "conflictOn": ["customer"]
+      "conflictOn": ["customer"],
+      "echoes": ["total", "status"]
     }
   ]
 }

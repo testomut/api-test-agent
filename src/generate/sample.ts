@@ -49,7 +49,8 @@ export function sampleFromSchema(doc: OpenApiDoc, schema: any, path = '$', depth
   const alt = schema.oneOf ?? schema.anyOf;
   if (Array.isArray(alt)) {
     if (schema.discriminator) return { ok: false, reason: `${path}: polymorphic body with discriminator, choose the variant explicitly` };
-    return sampleFromSchema(doc, alt[0], `${path}(variant 0)`, depth + 1);
+    // The first variant is used; the others are not silently dropped: the source names how many stay uncovered.
+    return sampleFromSchema(doc, alt[0], `${path}(variant 0 of ${alt.length})`, depth + 1);
   }
 
   const type = Array.isArray(schema.type) ? schema.type.find((t: string) => t !== 'null') : schema.type ?? (schema.properties ? 'object' : undefined);
@@ -80,7 +81,20 @@ export function sampleFromSchema(doc: OpenApiDoc, schema: any, path = '$', depth
       const min = schema.minItems ?? 0;
       if (!min) return { ok: true, value: [], sources: [`${path}: empty array (no minItems)`] };
       const r = sampleFromSchema(doc, schema.items, `${path}[]`, depth + 1);
-      return r.ok ? { ok: true, value: Array.from({ length: min }, () => r.value), sources: r.sources } : r;
+      if (!r.ok) return r;
+      if (!schema.uniqueItems || min < 2) return { ok: true, value: Array.from({ length: min }, () => r.value), sources: r.sources };
+      // uniqueItems: distinct elements, derived only where it cannot break the item's own constraints.
+      const item = schema.items?.$ref ? resolvePointer(doc, schema.items.$ref.slice(1)).node : schema.items;
+      const values: unknown[] = [];
+      if (Array.isArray(item?.enum) && item.enum.length >= min) values.push(...item.enum.slice(0, min));
+      else if (typeof r.value === 'string' && !item?.pattern && !item?.format && !item?.enum && (item?.maxLength ?? Infinity) >= String(r.value).length + 3) {
+        for (let i = 0; i < min; i++) values.push(i ? `${r.value}-${i}` : r.value);
+      } else if (typeof r.value === 'number' && !item?.enum) {
+        const step = typeof item?.multipleOf === 'number' ? item.multipleOf : 1;
+        for (let i = 0; i < min; i++) values.push((r.value as number) + i * step);
+        if (typeof item?.maximum === 'number' && (values[min - 1] as number) > item.maximum) return { ok: false, reason: `${path}: ${min} unique items do not fit under maximum ${item.maximum}` };
+      } else return { ok: false, reason: `${path}: cannot derive ${min} distinct items (uniqueItems)` };
+      return { ok: true, value: values, sources: [...r.sources, `${path}: ${min} distinct items (uniqueItems)`] };
     }
     case 'string': {
       if (schema.format && FORMAT_VALUES[schema.format] !== undefined) return { ok: true, value: FORMAT_VALUES[schema.format], sources: [`${path}: format ${schema.format}`] };
@@ -93,10 +107,17 @@ export function sampleFromSchema(doc: OpenApiDoc, schema: any, path = '$', depth
     }
     case 'integer':
     case 'number': {
-      const lo = schema.minimum ?? (schema.exclusiveMinimum !== undefined ? Number(schema.exclusiveMinimum) + 1 : 1);
-      const hi = schema.maximum ?? Infinity;
-      if (lo > hi) return { ok: false, reason: `${path}: minimum > maximum` };
-      return { ok: true, value: type === 'integer' ? Math.ceil(lo) : lo, sources: [`${path}: minimal number`] };
+      // 3.1: exclusiveMinimum is a number; 3.0: a boolean that makes the minimum itself invalid.
+      const bounds = [
+        ...(typeof schema.minimum === 'number' ? [schema.minimum + (schema.exclusiveMinimum === true ? 1 : 0)] : []),
+        ...(typeof schema.exclusiveMinimum === 'number' ? [schema.exclusiveMinimum + 1] : []),
+      ];
+      let lo = bounds.length ? Math.max(...bounds) : 1;
+      if (type === 'integer') lo = Math.ceil(lo);
+      if (typeof schema.multipleOf === 'number' && schema.multipleOf > 0) lo = Math.ceil(lo / schema.multipleOf - 1e-9) * schema.multipleOf;
+      const hi = typeof schema.exclusiveMaximum === 'number' ? schema.exclusiveMaximum - Number.EPSILON : schema.exclusiveMaximum === true ? schema.maximum - Number.EPSILON : schema.maximum ?? Infinity;
+      if (lo > hi) return { ok: false, reason: `${path}: no ${type} satisfies the bounds${schema.multipleOf ? ` and multipleOf ${schema.multipleOf}` : ''}` };
+      return { ok: true, value: lo, sources: [`${path}: minimal ${type}${schema.multipleOf ? ` (multiple of ${schema.multipleOf})` : ''}`] };
     }
     case 'boolean':
       return { ok: true, value: false, sources: [`${path}: boolean false`] };

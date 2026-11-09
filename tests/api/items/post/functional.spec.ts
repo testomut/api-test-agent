@@ -10,10 +10,12 @@ import * as resource from '../../_support/items.resource.js';
 
 test.describe('POST /items · functional', { tag: '@functional' }, () => {
   test('creates a resource from the documented example payload', { tag: '@positive', annotation: { type: 'caseId', description: 'ata:op_UPN7JLUXYUZ7:functional:positive:operation:documented-success' } }, async ({ api }) => {
-    const res = await api.items.createItem({ data: resource.newCreatePayload() });
+    const payload = resource.newCreatePayload();
+    const res = await api.items.createItem({ data: payload });
     try {
       expect(res.status(), 'documented success status of createItem').toBe(201);
-      const id = readPointer(await res.json().catch(() => undefined), '/id');
+      const created = await res.json().catch(() => undefined);
+      const id = readPointer(created, '/id');
       expect(String(id ?? ''), 'identifier at $response.body#/id').not.toBe('');
     } finally {
       await resource.removeIfCreated(api, res);

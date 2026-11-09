@@ -5,6 +5,7 @@ import { apiCall, type ApiRef } from './api-objects.js';
 import type { SuiteCaseIds } from '../cases/assign.js';
 import { requiredRequest, type ParamRequest } from './param-cases.js';
 import type { ErrorPlan } from './error-cases.js';
+import { boundaryValues } from './boundaries.js';
 
 /** Payloads and assumptions for one confirmed resource chain. */
 export interface ChainPlan {
@@ -73,12 +74,14 @@ export function optionsWith(op: Operation, inner?: string): string | undefined {
   return fields.length ? `{ ${fields.join(', ')} }` : undefined;
 }
 
-/** Safe query variations: only values explicitly allowed by the schema. */
+/** Safe query variations: only values explicitly allowed by the schema (enum values, else the valid limits). */
 export function queryVariants(op: Operation): Array<{ name: string; value: string | number | boolean }> {
   if (op.method !== 'get') return [];
   return op.params.filter((p) => p.in === 'query' && !p.required).flatMap((p) => {
-    const schema = p.schema ?? {};
-    const values = Array.isArray(schema.enum) ? schema.enum : [];
+    const schema: any = p.schema ?? {};
+    const values: unknown[] = Array.isArray(schema.enum) ? [...schema.enum] : [];
+    // Boundary-valid values: the documented limits themselves must be accepted.
+    if (!values.length) values.push(...boundaryValues(schema));
     const kept = values.filter((v): v is string | number | boolean => typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean');
     // One physical test per value, each with its own case ID: values equal as strings would share an ID.
     const unique = kept.filter((v, i) => kept.findIndex((x) => String(x) === String(v)) === i);
@@ -295,7 +298,8 @@ function positiveTest(s: SuiteInput, title: string, assert: (indent: string) => 
   if (role === 'create') {
     return [
       `  test(${q(title)}, ${POS}, async ({ api }) => {`,
-      `    const res = await ${call('id', hasFill(plan) ? '{ data: await resource.newCreatePayload(api) }' : '{ data: resource.newCreatePayload() }')};`,
+      `    const payload = ${hasFill(plan) ? 'await resource.newCreatePayload(api)' : 'resource.newCreatePayload()'};`,
+      `    const res = await ${call('id', '{ data: payload }')};`,
       `    try {`,
       ...assert('      '),
       `    } finally {`,
@@ -365,7 +369,11 @@ export function renderFunctional(s: SuiteInput, meta: Meta): string {
     L.push(
       ...positiveTest(s, titles[role ?? 'none'], (i) => {
         const a = [`${i}${expectSuccess(op)}`];
-        if (role === 'create') a.push(`${i}const id = readPointer(await res.json().catch(() => undefined), ${q(chain!.idPointer)});`, `${i}expect(String(id ?? ''), 'identifier at $response.body#${chain!.idPointer}').not.toBe('');`);
+        if (role === 'create') {
+          a.push(`${i}const created = await res.json().catch(() => undefined);`, `${i}const id = readPointer(created, ${q(chain!.idPointer)});`, `${i}expect(String(id ?? ''), 'identifier at $response.body#${chain!.idPointer}').not.toBe('');`);
+          // Fields a reviewed deps file says the create response returns as sent.
+          for (const field of chain!.echoes ?? []) a.push(`${i}expect(readPointer(created, ${q('/' + field.replace(/~/g, '~0').replace(/\//g, '~1'))}), ${q(`${field} returned as sent`)}).toEqual((payload as Record<string, unknown>)[${q(field)}]);`);
+        }
         if (role === 'read') a.push(`${i}expect(String(readPointer(await res.json().catch(() => undefined), ${q(chain!.idPointer)})), 'same resource').toBe(id);`);
         return a;
       }, s.ids?.functional.success),

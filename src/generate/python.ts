@@ -373,7 +373,7 @@ function pyPositive(s: SuiteInput, name: string, assert: (indent: string) => str
     return [POS, `def ${name}(api, contract):`, `    res = api.${op.method}(${pathExpr(op)}${pyRequired(op)})`, ...assert('    '), '', ''];
   }
   if (role === 'create') {
-    return [POS, `def ${name}(api, contract, ${res}):`, `    res = api.${op.method}(${pathExpr(op)}, json=${res}.new_create_payload()${pyRequired(op)})`, '    try:', ...assert('        '), '    finally:', `        ${res}.remove_if_created(res)`, '', ''];
+    return [POS, `def ${name}(api, contract, ${res}):`, `    payload = ${res}.new_create_payload()`, `    res = api.${op.method}(${pathExpr(op)}, json=payload${pyRequired(op)})`, '    try:', ...assert('        '), '    finally:', `        ${res}.remove_if_created(res)`, '', ''];
   }
   const body = role === 'update' ? `, json=${res}.new_update_payload()` : '';
   // created_<res> removes the resource after the test (best effort: a deleted one is already gone).
@@ -424,7 +424,11 @@ export function renderPyFunctional(s: SuiteInput, meta: Meta): string {
     L.push(
       ...pyPositive(s, names[role ?? 'none'], (i) => {
         const a = [`${i}${assertSuccess(op)}`];
-        if (role === 'create') a.push(`${i}assert read_pointer(res.json(), ${ptr}) not in (None, ""), "identifier at $response.body#${plan!.chain.idPointer}"`);
+        if (role === 'create') {
+          a.push(`${i}assert read_pointer(res.json(), ${ptr}) not in (None, ""), "identifier at $response.body#${plan!.chain.idPointer}"`);
+          // Fields a reviewed deps file says the create response returns as sent.
+          for (const field of plan!.chain.echoes ?? []) a.push(`${i}assert read_pointer(res.json(), ${str('/' + field.replace(/~/g, '~0').replace(/\//g, '~1'))}) == payload[${str(field)}], ${str(`${field} returned as sent`)}`);
+        }
         if (role === 'read') a.push(`${i}assert str(read_pointer(res.json(), ${ptr})) == created_${res}, "same resource"`);
         return a;
       }, s.ids?.functional.success),

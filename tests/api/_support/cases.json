@@ -40,6 +40,20 @@
       "subjectUid": "op_4PIO72ZI3SIY",
       "suiteType": "functional"
     },
+    "ata:op_4PIO72ZI3SIY:functional:positive:request.query#/limit/100:accepted-value": {
+      "location": "request.query#/limit/100",
+      "polarity": "positive",
+      "rule": "accepted-value",
+      "subjectUid": "op_4PIO72ZI3SIY",
+      "suiteType": "functional"
+    },
+    "ata:op_4PIO72ZI3SIY:functional:positive:request.query#/limit/1:accepted-value": {
+      "location": "request.query#/limit/1",
+      "polarity": "positive",
+      "rule": "accepted-value",
+      "subjectUid": "op_4PIO72ZI3SIY",
+      "suiteType": "functional"
+    },
     "ata:op_7P2UH7UKQRHC:contract:positive:response.body#:schema": {
       "covers": [
         "contract:positive:response.content-type#/application~1json:documented",
