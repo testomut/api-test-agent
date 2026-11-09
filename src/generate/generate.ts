@@ -97,6 +97,7 @@ export async function generate(spec: LoadedSpec, ops: Operation[], o: GenerateOp
   const files: string[] = [];
   const removed: string[] = [];
   const scenarios: Scenario[] = [];
+  const coverage: Array<{ operation: string; counts: Record<SuiteType, number>; positiveBlocked: string | null; negativeGaps: string[]; lifecycle: string | null }> = [];
   const write = async (file: string, content: string) => {
     await mkdir(dirname(file), { recursive: true });
     await writeFile(file, content);
@@ -205,11 +206,13 @@ export async function generate(spec: LoadedSpec, ops: Operation[], o: GenerateOp
     // --- suites
     const input: SuiteInput = { op, refs, plan, helpers, positive: !posReason, validation: rej.validation, bodyCases: bCases, queryCases: qCases, notFound, unauthorized };
     const counts = suiteCounts(input);
+    // Explicit per-operation coverage and gaps, independent of test execution status.
+    coverage.push({ operation: op.key, counts, positiveBlocked: posReason ?? null, negativeGaps: why, lifecycle: plan ? plan.chain.name : null });
     const render: Record<SuiteType, (s: SuiteInput, m: Meta) => string> = py
       ? { functional: renderPyFunctional, contract: renderPyContract, scenario: renderPyScenarios }
       : { functional: renderFunctional, contract: renderContract, scenario: renderScenarios };
     const sc = scenarioCases(input);
-    const role = plan ? (plan.chain.update === op ? 'update' : plan.chain.delete === op ? 'delete' : undefined) : undefined;
+    const role = plan ? (plan.chain.create === op ? 'create' : plan.chain.update === op ? 'update' : plan.chain.delete === op ? 'delete' : undefined) : undefined;
     for (const suite of SUITE_TYPES) {
       const label = `${name}/${suite === 'scenario' ? 'scenarios' : suite}`;
       if (counts[suite]) {
@@ -221,7 +224,7 @@ export async function generate(spec: LoadedSpec, ops: Operation[], o: GenerateOp
       }
       // A suite without cases gets no file; the reason is reported instead.
       if (suite === 'scenario') {
-        // Only operations that are the action of a lifecycle flow (update → read, delete → read 404) have scenarios.
+        // Only operations with a confirmed lifecycle flow (create → read, update → read, delete → read 404) have scenarios.
         if (!role) continue;
         const r = plan!.chain.read;
         const reason = posReason ?? (!r ? 'no read operation is linked to verify the result' : role === 'delete' && !sc.deleteGone ? `${r.key} documents no 404 to verify the deletion` : 'no example-backed update payload');
@@ -242,6 +245,8 @@ export async function generate(spec: LoadedSpec, ops: Operation[], o: GenerateOp
       }
     }
   }
+
+  await write(join(out, 'coverage-gaps.json'), JSON.stringify({ spec: meta.spec, hash: meta.hash, operations: coverage }, null, 2) + '\n');
 
   if (files.length && py) {
     // Self-contained support code: the generated suite runs without the agent installed.
