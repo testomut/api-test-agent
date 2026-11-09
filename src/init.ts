@@ -106,7 +106,8 @@ function envBody(values: Partial<Record<EnvKey, string>>, withComments: boolean)
   return lines.join('\n') + '\n';
 }
 
-const PLAYWRIGHT_CONFIG = (testsDir: string) => `import { defineConfig } from '@playwright/test';
+const PLAYWRIGHT_CONFIG = (testsDir: string) => `import { existsSync } from 'node:fs';
+import { defineConfig } from '@playwright/test';
 
 // Settings come from .env (created by api-test-agent init) or from CI environment variables.
 try {
@@ -120,6 +121,8 @@ if (process.env.API_TOKEN) extraHTTPHeaders.authorization = \`Bearer \${process.
 
 export default defineConfig({
   testDir: '${testsDir}',
+  // Settles the test account once per run (API_TEST_ACCOUNT=auto); written by api-test-agent generate.
+  globalSetup: existsSync('${testsDir}/_support/global-setup.ts') ? './${testsDir}/_support/global-setup.ts' : undefined,
   fullyParallel: true,
   retries: 0,
   reporter: [['list'], ['html', { open: 'never' }]],

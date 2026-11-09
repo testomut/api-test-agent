@@ -15,7 +15,9 @@
  *    Generated email/password live in the worker's memory only.
  *  - API_TEST_ACCOUNT=auto: the account from .env; only when it is missing or its login is refused
  *    (401 / 403 / 422, e.g. the test environment was reset) does a worker register a new one, once,
- *    and log in with it. A working account never causes a registration.
+ *    and log in with it. A working account never causes a registration. With _support/global-setup.ts as
+ *    Playwright's globalSetup this is decided ONCE per run in the main process, and every worker (also the
+ *    fresh worker Playwright starts after a failed test) reuses that account: at most one registration per run.
  * The login happens lazily: a test that only uses publicApi never logs in.
  * Without API_LOGIN the static API_TOKEN from playwright.config (or none) is used unchanged.
  */
@@ -84,7 +86,7 @@ async function registerNew(playwright: PlaywrightWorkerArgs['playwright'], baseU
   const reg = splitRequest(process.env.API_REGISTER, 'API_REGISTER');
   const template = process.env.API_REGISTER_BODY;
   if (!template) throw new Error('API_TEST_ACCOUNT=new needs API_REGISTER_BODY (use the same ${VAR}s as API_LOGIN_BODY)');
-  const unique = `${Date.now().toString(36)}w${worker}${randomBytes(3).toString('hex')}`;
+  const unique = `${Date.now().toString(36)}${worker < 0 ? 'r' : `w${worker}`}${randomBytes(3).toString('hex')}`;
   const password = `Qa-${randomBytes(12).toString('base64url')}-7x!`;
   const credentials: Credentials = Object.fromEntries(vars.map((v) => [v, /pass/i.test(v) ? password : `api-test-${unique}@example.com`]));
   const ctx = await playwright.request.newContext({ baseURL, extraHTTPHeaders: { accept: 'application/json' } });
@@ -96,7 +98,7 @@ async function registerNew(playwright: PlaywrightWorkerArgs['playwright'], baseU
     await ctx.dispose();
   }
   const label = Object.entries(credentials).find(([k]) => !/pass/i.test(k))?.[1];
-  console.log(`[test-account] worker ${worker}: registered new account ${label ?? ''} (stays on the server)`);
+  console.log(`[test-account] ${worker < 0 ? 'run' : `worker ${worker}`}: registered new account ${label ?? ''} (stays on the server)`);
   return { mode: 'new', credentials, label };
 }
 
@@ -131,9 +133,14 @@ class TokenSource {
 
   /** auto: one new account for this worker, used for the rest of the run. */
   private async registerInstead(playwright: PlaywrightWorkerArgs['playwright'], baseURL: string | undefined, why: string): Promise<void> {
-    console.log(`[test-account] worker ${this.worker}: ${why}; registering a new account`);
+    console.log(`[test-account] ${this.worker < 0 ? 'run' : `worker ${this.worker}`}: ${why}; registering a new account`);
     this.account = await registerNew(playwright, baseURL, this.worker);
     this.registered = true;
+  }
+
+  /** Credentials in use (after an auto registration: the new account's). */
+  get credentials(): Credentials {
+    return this.account.credentials;
   }
 
   private async login(playwright: PlaywrightWorkerArgs['playwright'], baseURL: string | undefined): Promise<string> {
@@ -189,5 +196,18 @@ export const test = base.extend<{ api: Apis; publicApi: Apis }, { testAccount: T
     await ctx.dispose();
   },
 });
+
+/**
+ * Playwright globalSetup (see global-setup.ts): with API_TEST_ACCOUNT=auto, log in once in the main process and,
+ * only if the .env account is missing or refused, register ONE account for the whole run. Its credentials go into
+ * process.env, which every worker inherits; nothing is written to disk.
+ */
+export async function prepareRunAccount(playwright: PlaywrightWorkerArgs['playwright'], baseURL: string | undefined): Promise<void> {
+  if (!process.env.API_LOGIN || (process.env.API_TEST_ACCOUNT ?? '').trim().toLowerCase() !== 'auto') return;
+  const vars = loginVars();
+  const source = new TokenSource({ mode: 'auto', credentials: Object.fromEntries(vars.filter((v) => process.env[v]).map((v) => [v, process.env[v]!])) }, -1);
+  await source.get(playwright, baseURL);
+  for (const [k, v] of Object.entries(source.credentials)) process.env[k] = v;
+}
 
 export { expect };
