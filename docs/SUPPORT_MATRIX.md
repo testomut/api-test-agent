@@ -6,31 +6,33 @@ Legend: ✅ supported · 🟡 partial (limits listed) · ❌ missing · ⛔ not 
 
 Baseline: `main` at 4c34a85 (audit of 2026-11-09). Each row names the stage of the coverage plan that changes it.
 
-## Request body: negative contract cases (`contract.spec.ts`, `src/generate/negative.ts`)
+## Request body: negative contract cases (`contract.spec.ts`, `src/generate/body-cases.ts`)
 
-| Keyword | State | Limits | Stage |
+Recursive from a valid payload; every case breaks exactly one rule (verified with ajv in `tests/unit/body-cases.test.ts`: one error, the expected keyword, the expected instance path). Locations are JSON pointers at any depth, `*` for array elements (the first element stands for all). A rule that cannot be broken alone is a gap with a code, never a guess.
+
+| Keyword | State | Limits / gap | Stage |
 |---|---|---|---|
-| `required` | 🟡 | top-level properties only | 3 |
-| `type` | 🟡 | top-level only | 3 |
-| `nullable` / `type: [.., null]` (null not allowed) | ❌ | | 3 |
-| `enum` | 🟡 | top-level **string** only | 3 |
-| `const` | ❌ | | 3 |
-| `minLength` / `maxLength` | 🟡 | top-level only | 3 |
-| `pattern` | ❌ | | 3 |
-| `format` | ❌ | | 3 |
-| `minimum` / `maximum` | 🟡 | top-level only | 3 |
-| `exclusiveMinimum` / `exclusiveMaximum` | 🟡 | top-level; numeric (3.1) form only, not 3.0 boolean form | 3 |
-| `multipleOf` | ❌ | | 3 |
-| `minItems` / `maxItems` | 🟡 | top-level only | 3 |
-| `uniqueItems` | ❌ | | 3 |
-| `items` constraints | ❌ | | 3 |
-| `minProperties` | 🟡 | body root only | 3 |
-| `maxProperties` | ❌ | | 3 |
-| `additionalProperties: false` | 🟡 | body root only | 3 |
-| nested objects / arrays (`request.body#/a/b`, `/items/*/sku`) | ❌ | | 3 |
-| `oneOf` / `anyOf` / `allOf` / `not` | ❌ | | 3 |
-| `discriminator` | ❌ | | 3 |
-| case limit | 🟡 | fixed 20 per operation, **silently truncated** | 3 |
+| `required` | ✅ | any depth; a required field without a valid sample → `MISSING_VALID_SAMPLE` | 3 ✔ |
+| `type` | ✅ | any depth; skipped for `enum` / `const` fields (`CANNOT_ISOLATE_RULE`: the enum case covers it) | 3 ✔ |
+| `nullable` / `type: [.., null]` | ✅ | `null` where null is not allowed (rule `nullable`) | 3 ✔ |
+| `enum` | ✅ | string, number, integer, boolean; an enum covering all values → gap | 3 ✔ |
+| `const` | ✅ | scalars | 3 ✔ |
+| `minLength` / `maxLength` | ✅ | gap when `pattern` / `format` / `enum` / `const` would break too | 3 ✔ |
+| `pattern` | ✅ | a simple non-matching string within the length limits; otherwise gap | 3 ✔ |
+| `format` | ✅ | email, uuid, date-time, date, time, uri, url, hostname, ipv4, ipv6; others → `UNSUPPORTED_SCHEMA_KEYWORD` | 3 ✔ |
+| `minimum` / `maximum` | ✅ | step = `multipleOf` when present; gap when the value would break another bound | 3 ✔ |
+| `exclusiveMinimum` / `exclusiveMaximum` | ✅ | 3.1 numeric and 3.0 boolean form | 3 ✔ |
+| `multipleOf` | ✅ | a neighbour of the sample value inside the bounds | 3 ✔ |
+| `minItems` / `maxItems` | ✅ | `maxItems` with `uniqueItems` → gap (repeating breaks uniqueness) | 3 ✔ |
+| `uniqueItems` | ✅ | duplicate first element; gap when it would exceed `maxItems` | 3 ✔ |
+| `items` constraints | ✅ | recursive through the first element; an empty sample array → gap | 3 ✔ |
+| `minProperties` / `maxProperties` | ✅ | drops optional properties only / adds extra ones; gap when required or `additionalProperties: false` would break | 3 ✔ |
+| `additionalProperties: false` | ✅ | any depth | 3 ✔ |
+| nested objects / arrays | ✅ | `request.body#/customer/address/city`, `request.body#/items/*/price`, depth ≤ 12 | 3 ✔ |
+| `allOf` | ✅ | object parts merged | 3 ✔ |
+| `oneOf` / `anyOf` / `not` / `discriminator` | ⛔ | `UNSUPPORTED_SCHEMA_KEYWORD` at that location: a broken value may still match another branch | 3 ✔ (gap) |
+| `readOnly` | ✅ | not sent, no case | 3 ✔ |
+| case limit | ✅ | `--max-cases` (default 60 per operation); potential / generated / dropped in `coverage-gaps.json`, each dropped case as `CASE_LIMIT_REACHED` | 3 ✔ |
 
 ## Parameters (`src/generate/negative.ts`, `templates.ts`)
 

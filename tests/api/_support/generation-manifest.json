@@ -1,5 +1,5 @@
 {
-  "caseRegistryHash": "351fb71f8b54ff5394019b8e29ae73c62398b2f91669315594bbbccb061cb8ec",
+  "caseRegistryHash": "8b7eb6331738126984b0de2b2ae737f245b0f9fcd294de32cb8e5d1a91e976c8",
   "files": {
     "_support/api/generated/AdminApiBase.ts": {
       "ownership": "generated",
@@ -55,7 +55,7 @@
     },
     "_support/openapi.snapshot.meta.json": {
       "ownership": "generated",
-      "sha256": "96f6872343f76e0718b009caafc62f280eded6df36ad52cbff911ff9b42edbcf"
+      "sha256": "211c48082b5b8c39231e13220eef773881f49ea29dcc24370e20cfdb5ff743fb"
     },
     "_support/openapi.snapshot.ts": {
       "ownership": "generated",
@@ -179,15 +179,15 @@
       "caseIds": [
         "ata:op_Z4MCICNBZN3S:contract:positive:response.body#:schema",
         "ata:op_Z4MCICNBZN3S:contract:positive:response.status#/404:documented",
+        "ata:op_Z4MCICNBZN3S:contract:negative:request.body#:additionalProperties",
+        "ata:op_Z4MCICNBZN3S:contract:negative:request.body#:minProperties",
         "ata:op_Z4MCICNBZN3S:contract:negative:request.body#/name:type",
+        "ata:op_Z4MCICNBZN3S:contract:negative:request.body#/name:nullable",
         "ata:op_Z4MCICNBZN3S:contract:negative:request.body#/name:minLength",
         "ata:op_Z4MCICNBZN3S:contract:negative:request.body#/name:maxLength",
         "ata:op_Z4MCICNBZN3S:contract:negative:request.body#/price:type",
-        "ata:op_Z4MCICNBZN3S:contract:negative:request.body#/price:minimum",
-        "ata:op_Z4MCICNBZN3S:contract:negative:request.body#/tags:type",
-        "ata:op_Z4MCICNBZN3S:contract:negative:request.body#/tags:maxItems",
-        "ata:op_Z4MCICNBZN3S:contract:negative:request.body#:additionalProperties",
-        "ata:op_Z4MCICNBZN3S:contract:negative:request.body#:minProperties"
+        "ata:op_Z4MCICNBZN3S:contract:negative:request.body#/price:nullable",
+        "ata:op_Z4MCICNBZN3S:contract:negative:request.body#/price:minimum"
       ],
       "operationUids": [
         "op_Z4MCICNBZN3S",
@@ -195,7 +195,7 @@
         "op_EDRRXKOK26ZL"
       ],
       "ownership": "generated",
-      "sha256": "8c0b79701cc998ccd4afd0f16c274536cb7fad84af02ef5fbe2189c35bdf4a5b",
+      "sha256": "1f353d4c44630a9cc9556190625ad61b71aeee5b3215d3159d7f097ca61758cd",
       "suiteType": "contract"
     },
     "items/patch-by-id/functional.spec.ts": {
@@ -231,21 +231,28 @@
         "ata:op_UPN7JLUXYUZ7:contract:positive:response.body#:schema",
         "ata:op_UPN7JLUXYUZ7:contract:negative:request.body#/name:required",
         "ata:op_UPN7JLUXYUZ7:contract:negative:request.body#/price:required",
+        "ata:op_UPN7JLUXYUZ7:contract:negative:request.body#:additionalProperties",
         "ata:op_UPN7JLUXYUZ7:contract:negative:request.body#/name:type",
+        "ata:op_UPN7JLUXYUZ7:contract:negative:request.body#/name:nullable",
         "ata:op_UPN7JLUXYUZ7:contract:negative:request.body#/name:minLength",
         "ata:op_UPN7JLUXYUZ7:contract:negative:request.body#/name:maxLength",
         "ata:op_UPN7JLUXYUZ7:contract:negative:request.body#/price:type",
+        "ata:op_UPN7JLUXYUZ7:contract:negative:request.body#/price:nullable",
         "ata:op_UPN7JLUXYUZ7:contract:negative:request.body#/price:minimum",
         "ata:op_UPN7JLUXYUZ7:contract:negative:request.body#/tags:type",
+        "ata:op_UPN7JLUXYUZ7:contract:negative:request.body#/tags:nullable",
         "ata:op_UPN7JLUXYUZ7:contract:negative:request.body#/tags:maxItems",
-        "ata:op_UPN7JLUXYUZ7:contract:negative:request.body#:additionalProperties"
+        "ata:op_UPN7JLUXYUZ7:contract:negative:request.body#/tags/*:type",
+        "ata:op_UPN7JLUXYUZ7:contract:negative:request.body#/tags/*:nullable",
+        "ata:op_UPN7JLUXYUZ7:contract:negative:request.body#/tags/*:minLength",
+        "ata:op_UPN7JLUXYUZ7:contract:negative:request.body#/tags/*:maxLength"
       ],
       "operationUids": [
         "op_UPN7JLUXYUZ7",
         "op_EDRRXKOK26ZL"
       ],
       "ownership": "generated",
-      "sha256": "373f0a7807196e97caf331181e6cbac8867e14ade0e9a1074f63eb1359b9967b",
+      "sha256": "c14bca7ba83da65165b9631315895ad5e9323a98af6283aaf043697d783c738b",
       "suiteType": "contract"
     },
     "items/post/functional.spec.ts": {
@@ -346,7 +353,7 @@
   "schemaVersion": 1,
   "spec": {
     "hash": "d7b3b546ce170690",
-    "revision": "4c34a850465f66f749be62929c9df568b247a6d7",
+    "revision": "ca2c522d318de340e5afdbb31c0fa0a6e85f91ff",
     "source": "demo-api/openapi.yaml"
   }
 }

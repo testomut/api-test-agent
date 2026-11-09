@@ -88,11 +88,11 @@ export function assignCaseIds(s: AssignInput, uidOf: (op: Operation) => string):
   }
   for (const c of s.bodyCases) {
     const t = c.target;
-    ids.contract.body.push(t ? add('contract', { subjectUid: uid, polarity: 'negative', location: location.requestBody(t.field === null ? '' : bodyPointer([t.field])), rule: t.rule }) : '');
+    ids.contract.body.push(t?.in === 'body' ? add('contract', { subjectUid: uid, polarity: 'negative', location: location.requestBody(bodyPointer(t.path)), rule: t.rule }) : '');
   }
   for (const c of s.queryCases) {
     const t = c.target;
-    ids.contract.query.push(t?.field ? add('contract', { subjectUid: uid, polarity: 'negative', location: location.query(t.field), rule: t.rule }) : '');
+    ids.contract.query.push(t?.in === 'query' && t.field ? add('contract', { subjectUid: uid, polarity: 'negative', location: location.query(t.field), rule: t.rule }) : '');
   }
 
   // CRUD scenarios: steps in order; the operation under test is the action.

@@ -174,6 +174,13 @@
       "subjectUid": "op_UPN7JLUXYUZ7",
       "suiteType": "contract"
     },
+    "ata:op_UPN7JLUXYUZ7:contract:negative:request.body#/name:nullable": {
+      "location": "request.body#/name",
+      "polarity": "negative",
+      "rule": "nullable",
+      "subjectUid": "op_UPN7JLUXYUZ7",
+      "suiteType": "contract"
+    },
     "ata:op_UPN7JLUXYUZ7:contract:negative:request.body#/name:required": {
       "location": "request.body#/name",
       "polarity": "negative",
@@ -195,6 +202,13 @@
       "subjectUid": "op_UPN7JLUXYUZ7",
       "suiteType": "contract"
     },
+    "ata:op_UPN7JLUXYUZ7:contract:negative:request.body#/price:nullable": {
+      "location": "request.body#/price",
+      "polarity": "negative",
+      "rule": "nullable",
+      "subjectUid": "op_UPN7JLUXYUZ7",
+      "suiteType": "contract"
+    },
     "ata:op_UPN7JLUXYUZ7:contract:negative:request.body#/price:required": {
       "location": "request.body#/price",
       "polarity": "negative",
@@ -209,10 +223,45 @@
       "subjectUid": "op_UPN7JLUXYUZ7",
       "suiteType": "contract"
     },
+    "ata:op_UPN7JLUXYUZ7:contract:negative:request.body#/tags/*:maxLength": {
+      "location": "request.body#/tags/*",
+      "polarity": "negative",
+      "rule": "maxLength",
+      "subjectUid": "op_UPN7JLUXYUZ7",
+      "suiteType": "contract"
+    },
+    "ata:op_UPN7JLUXYUZ7:contract:negative:request.body#/tags/*:minLength": {
+      "location": "request.body#/tags/*",
+      "polarity": "negative",
+      "rule": "minLength",
+      "subjectUid": "op_UPN7JLUXYUZ7",
+      "suiteType": "contract"
+    },
+    "ata:op_UPN7JLUXYUZ7:contract:negative:request.body#/tags/*:nullable": {
+      "location": "request.body#/tags/*",
+      "polarity": "negative",
+      "rule": "nullable",
+      "subjectUid": "op_UPN7JLUXYUZ7",
+      "suiteType": "contract"
+    },
+    "ata:op_UPN7JLUXYUZ7:contract:negative:request.body#/tags/*:type": {
+      "location": "request.body#/tags/*",
+      "polarity": "negative",
+      "rule": "type",
+      "subjectUid": "op_UPN7JLUXYUZ7",
+      "suiteType": "contract"
+    },
     "ata:op_UPN7JLUXYUZ7:contract:negative:request.body#/tags:maxItems": {
       "location": "request.body#/tags",
       "polarity": "negative",
       "rule": "maxItems",
+      "subjectUid": "op_UPN7JLUXYUZ7",
+      "suiteType": "contract"
+    },
+    "ata:op_UPN7JLUXYUZ7:contract:negative:request.body#/tags:nullable": {
+      "location": "request.body#/tags",
+      "polarity": "negative",
+      "rule": "nullable",
       "subjectUid": "op_UPN7JLUXYUZ7",
       "suiteType": "contract"
     },
@@ -318,6 +367,13 @@
       "subjectUid": "op_Z4MCICNBZN3S",
       "suiteType": "contract"
     },
+    "ata:op_Z4MCICNBZN3S:contract:negative:request.body#/name:nullable": {
+      "location": "request.body#/name",
+      "polarity": "negative",
+      "rule": "nullable",
+      "subjectUid": "op_Z4MCICNBZN3S",
+      "suiteType": "contract"
+    },
     "ata:op_Z4MCICNBZN3S:contract:negative:request.body#/name:type": {
       "location": "request.body#/name",
       "polarity": "negative",
@@ -332,6 +388,13 @@
       "subjectUid": "op_Z4MCICNBZN3S",
       "suiteType": "contract"
     },
+    "ata:op_Z4MCICNBZN3S:contract:negative:request.body#/price:nullable": {
+      "location": "request.body#/price",
+      "polarity": "negative",
+      "rule": "nullable",
+      "subjectUid": "op_Z4MCICNBZN3S",
+      "suiteType": "contract"
+    },
     "ata:op_Z4MCICNBZN3S:contract:negative:request.body#/price:type": {
       "location": "request.body#/price",
       "polarity": "negative",
@@ -343,6 +406,7 @@
       "location": "request.body#/tags",
       "polarity": "negative",
       "rule": "maxItems",
+      "status": "retired",
       "subjectUid": "op_Z4MCICNBZN3S",
       "suiteType": "contract"
     },
@@ -350,6 +414,7 @@
       "location": "request.body#/tags",
       "polarity": "negative",
       "rule": "type",
+      "status": "retired",
       "subjectUid": "op_Z4MCICNBZN3S",
       "suiteType": "contract"
     },

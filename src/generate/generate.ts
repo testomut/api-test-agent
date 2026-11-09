@@ -12,6 +12,7 @@ import { assignCaseIds, type CaseRecord, type ScenarioDefinition } from '../case
 import { buildRegistry, canonicalJson, fileHash, readRegistry, resolveOperationUids } from '../cases/registry.js';
 import { headRevision } from '../change/baseline.js';
 import { isUrl } from '../change/network.js';
+import { bodyCasesDetailed, type CoverageGap } from './body-cases.js';
 import { bodyCases, documentedRejections, nonexistentIdExpr, queryCases } from './negative.js';
 import { CONTRACT_ASSERT, SUITE_TYPES, TS_FILES, operationFolder, queryVariants, renderContract, renderFunctional, renderResourceHelpers, renderScenarios, scenarioCases, suiteCounts, type ChainPlan, type Meta, type SuiteInput, type SuiteType } from './templates.js';
 import { API_BASE, buildApiIndex, renderApiBaseClass, renderApiChildClass, renderApis } from './api-objects.js';
@@ -32,6 +33,8 @@ export interface GenerateOptions {
   deps?: DepsFile;
   version: string;
   lang?: TestLang; // default typescript
+  /** Body negative cases per operation (default 60); the rest is reported as CASE_LIMIT_REACHED. */
+  maxCases?: number;
 }
 
 export interface Scenario {
@@ -68,6 +71,10 @@ export interface Coverage {
   positiveBlocked: string | null;
   negativeGaps: string[];
   lifecycle: string | null;
+  /** Checks that could not be generated, each with a machine code and its exact location. */
+  gaps: CoverageGap[];
+  /** Body negative cases found / generated / dropped by the limit. */
+  bodyCases?: { potential: number; generated: number; dropped: number };
 }
 
 function jsonBodySchema(spec: LoadedSpec, op: Operation): any {
@@ -262,6 +269,8 @@ export async function generate(spec: LoadedSpec, ops: Operation[], o: GenerateOp
     const reachable = safe || !!plan; // never fire write requests at operations without confirmed cleanup
     const why: string[] = [];
     let bCases: ReturnType<typeof bodyCases> = [];
+    let bodyGaps: CoverageGap[] = [];
+    let bodyStats: Coverage['bodyCases'];
     let qCases: ReturnType<typeof queryCases> = [];
     let notFound: { idExpr: string; param: string } | undefined;
     let unauthorized = false;
@@ -273,7 +282,12 @@ export async function generate(spec: LoadedSpec, ops: Operation[], o: GenerateOp
         const schema = jsonBodySchema(spec, op);
         const base = plan?.chain.create === op ? plan.createPayload : plan?.chain.update === op ? plan.updatePayload : undefined;
         const bodyTarget = schema && base && typeof base === 'object' && (plan?.chain.create === op || plan?.chain.update === op);
-        if (bodyTarget) bCases = bodyCases(spec.doc, schema, base as Record<string, unknown>, schema.$ref?.split('/').pop() ?? 'body');
+        if (bodyTarget) {
+          const detailed = bodyCasesDetailed(spec.doc, schema, base, schema.$ref?.split('/').pop() ?? 'body', o.maxCases);
+          bCases = detailed.cases;
+          bodyGaps = detailed.gaps;
+          bodyStats = { potential: detailed.potential, generated: detailed.cases.length, dropped: detailed.dropped.length };
+        }
         if (!unresolvedPath.length) qCases = queryCases(op);
         if (!bCases.length && !qCases.length) why.push(`${rej.validation.join('/')} is documented but there is no constraint the agent can break safely`);
       } else why.push('no 400/422 documented');
@@ -297,7 +311,7 @@ export async function generate(spec: LoadedSpec, ops: Operation[], o: GenerateOp
     const ids = assignCaseIds({ op, chain: plan?.chain, positive: input.positive, bodyCases: bCases, queryCases: qCases, notFound, unauthorized, scenarios: scenarioCases(input), queryVariants: variants }, uidOf);
     input.ids = ids;
     // Explicit per-operation coverage and gaps, independent of test execution status.
-    coverage.push({ operation: op.key, counts, positiveBlocked: posReason ?? null, negativeGaps: why, lifecycle: plan ? plan.chain.name : null });
+    coverage.push({ operation: op.key, counts, positiveBlocked: posReason ?? null, negativeGaps: why, lifecycle: plan ? plan.chain.name : null, gaps: bodyGaps, ...(bodyStats ? { bodyCases: bodyStats } : {}) });
     const render: Record<SuiteType, (s: SuiteInput, m: Meta) => string> = py
       ? { functional: renderPyFunctional, contract: renderPyContract, scenario: renderPyScenarios }
       : { functional: renderFunctional, contract: renderContract, scenario: renderScenarios };

@@ -214,6 +214,7 @@ common(program.command('audit').description('analyse a spec (and, if allowed, a 
 common(program.command('generate').description('audit, then generate Playwright API tests for confirmed CRUD dependencies'))
   .option('--tests-dir <dir>', 'where generated tests are written (default: API_TESTS_DIR or tests/api)')
   .option('--deps <file>', 'JSON file with human-confirmed dependencies')
+  .option('--max-cases <n>', 'request-body negative cases per operation; the rest is reported as CASE_LIMIT_REACHED', '60')
   .addOption(new Option('--lang <lang>', 'language of generated tests (default: API_TESTS_LANG or typescript)').choices(['typescript', 'python']))
   .option('--run', 'run the generated tests once against --base-url (needs --allow-write)', false)
   .option('--draft-pr', 'commit to a new branch and open a GitHub Draft PR for review', false)
@@ -221,7 +222,7 @@ common(program.command('generate').description('audit, then generate Playwright 
   .addOption(new Option('--ai-runner <runner>', 'console tool: claude, codex, or command (API_AI_COMMAND). Default: API_AI or claude').choices(RUNNERS))
   .option('--ai-max-calls <n>', 'AI call budget per run', '10')
   .option('--ai-model <id>', 'model name passed to the console tool (default: its own default)')
-  .action(async (specArg: string | undefined, o: CommonOpts & { testsDir?: string; deps?: string; run: boolean; draftPr: boolean; lang?: 'typescript' | 'python'; ai: boolean; aiMaxCalls: string; aiModel?: string; aiRunner?: RunnerKind }) => {
+  .action(async (specArg: string | undefined, o: CommonOpts & { testsDir?: string; deps?: string; run: boolean; draftPr: boolean; lang?: 'typescript' | 'python'; ai: boolean; aiMaxCalls: string; maxCases: string; aiModel?: string; aiRunner?: RunnerKind }) => {
     const location = await resolveInputs(specArg, o);
     o.testsDir ??= cfg.testsDir;
     o.lang ??= cfg.testsLang;
@@ -235,7 +236,9 @@ common(program.command('generate').description('audit, then generate Playwright 
     const deps = o.deps ? JSON.parse(await readFile(o.deps, 'utf8')) : undefined;
     if (o.ai) await aiProposals(r.spec.doc, r.ops, o.out, { maxCalls: Number(o.aiMaxCalls), model: o.aiModel, runner: o.aiRunner }, deps);
     log('Generating test suites (functional / contract / scenarios)…');
-    const gen = await generate(r.spec, r.ops, { outDir: o.testsDir!, deps, version: VERSION, lang: o.lang });
+    const maxCases = Number(o.maxCases);
+    if (!Number.isInteger(maxCases) || maxCases < 1) throw new Error(`--max-cases must be a positive integer, got "${o.maxCases}".`);
+    const gen = await generate(r.spec, r.ops, { outDir: o.testsDir!, deps, version: VERSION, lang: o.lang, maxCases });
     for (const s of gen.scenarios) log(`  ${s.status.padEnd(9)} ${s.name}`);
     for (const f of gen.removed) log(`  REMOVED   ${relative(process.cwd(), f).replace(/\\/g, '/')} (generated earlier, no longer produced)`);
     if (o.run) {
