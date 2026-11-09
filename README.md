@@ -109,6 +109,8 @@ tests/api/
    { "scenarios": [{ "create": "createItem", "idFrom": "/id", "param": "itemId", "read": "getItem", "update": "updateItem", "delete": "deleteItem" }] }
    ```
    `POST /x` + `GET /x/{id}` without either is reported as an unconfirmed candidate, with the question to answer. Write operations without a confirmed cleanup are not generated at all.
+
+   A create body that references another resource can take the id of **existing** data instead of creating it: `"fill": { "product_id": { "from": "getProducts", "pointer": "/data/0/id" } }` reads the value from that operation's response at run time. The source must be a `GET` the test can call as is (no unknown required parameters); a filled value is never suffixed. Use it when the parent cannot be cleaned up by the test account.
 2. **Negative cases** need two things from the spec: a rule to break (required, type, min/max, length, enum, maxItems, additionalProperties, minProperties, security) and a documented rejection (400/422/4XX, 404, 401). Each case breaks exactly one rule of a valid payload and names its source. No documented rejection → no negative cases, and the report says why.
 3. Payloads come from schema `example` / `default` / `enum`, then minimal values that satisfy simple constraints; each value's source is in the helper's header. A constraint that cannot be met deterministically blocks the scenario.
 4. Created data is removed in `finally`, including records a broken API wrongly accepted in negative tests.

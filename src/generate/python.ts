@@ -1,5 +1,5 @@
 import type { Operation } from '../types.js';
-import { roleOf, scenarioCases, uniqueNote, type ChainPlan, type Meta, type SuiteInput, type SuiteType } from './templates.js';
+import { hasFill, roleOf, scenarioCases, uniqueNote, type ChainPlan, type Meta, type SuiteInput, type SuiteType } from './templates.js';
 
 /**
  * pytest + requests output. Same cases and safety rules as the TypeScript templates;
@@ -107,10 +107,18 @@ class ${cls}:
         self.api = api
         self.contract = contract
 
-    @staticmethod
+${hasFill(plan) ? `    def new_create_payload(self):
+        """deps file "fill": ${chain.fill!.map((f) => f.field).join(', ')} come from existing data at run time, never created by the test."""
+        payload = _unique(CREATE_PAYLOAD, UNIQUE_CREATE)
+${chain.fill!.map((f) => `        source = self.api.${f.from!.method}(${str(f.from!.path.replace(/^\//, ''))})
+        assert source.ok, f"${f.from!.key} answers (to fill ${f.field}): {source.status_code}"
+        payload[${str(f.field)}] = read_pointer(source.json(), ${str(f.pointer)})
+        assert payload[${str(f.field)}] is not None, "${f.field} from ${f.from!.key} #${f.pointer}: no existing data to use"`).join('\n')}
+        return payload
+` : `    @staticmethod
     def new_create_payload():
         return _unique(CREATE_PAYLOAD, UNIQUE_CREATE)
-${plan.updatePayload !== undefined ? `
+`}${plan.updatePayload !== undefined ? `
     @staticmethod
     def new_update_payload():
         return _unique(UPDATE_PAYLOAD, UNIQUE_UPDATE)

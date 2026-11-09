@@ -16,6 +16,9 @@ export interface ChainPlan {
   assumptions: string[];
 }
 
+/** The create payload reads values from existing data at run time (deps file "fill"). */
+export const hasFill = (plan?: ChainPlan) => !!plan?.chain.fill?.length;
+
 /** One comment line per payload whose fields are made unique, citing the documented 409. */
 export function uniqueNote(op: Operation, fields: Record<string, number | null>, prefix: string): string[] {
   const names = Object.keys(fields);
@@ -123,11 +126,31 @@ export function renderResourceHelpers(plan: ChainPlan, refs: Map<Operation, ApiR
     `}`,
     '',
     ...uniqueNote(c, plan.uniqueCreate, '// '),
-    `export const newCreatePayload = () => unique(createPayload, ${JSON.stringify(plan.uniqueCreate)});`,
+    ...(hasFill(plan)
+      ? [
+          `/** deps file "fill": ${chain.fill!.map((f) => f.field).join(', ')} come from existing data at run time, never created by the test. */`,
+          `export async function newCreatePayload(api: Apis): Promise<Record<string, unknown>> {`,
+          `  const payload: Record<string, unknown> = { ...unique(createPayload, ${JSON.stringify(plan.uniqueCreate)}) };`,
+          ...chain.fill!.flatMap((f, i) => {
+            const ref = refs.get(f.from!)!;
+            const label = `${f.field} from ${f.from!.key} #${f.pointer}`;
+            return [
+              `  const source${i} = await ${apiCall(ref, 'api', pathArgs(f.from!, ref))};`,
+              `  expect(source${i}.ok(), ${q(`${f.from!.key} answers (to fill ${f.field})`)}).toBe(true);`,
+              `  payload[${q(f.field)}] = readPointer(await source${i}.json(), ${q(f.pointer)});`,
+              `  expect(payload[${q(f.field)}] ?? undefined, ${q(`${label}: no existing data to use`)}).toBeDefined();`,
+            ];
+          }),
+          `  return payload;`,
+          `}`,
+        ]
+      : [`export const newCreatePayload = () => unique(createPayload, ${JSON.stringify(plan.uniqueCreate)});`]),
     ...(plan.updatePayload !== undefined ? [...uniqueNote(chain.update!, plan.uniqueUpdate, '// '), `export const newUpdatePayload = () => unique(updatePayload, ${JSON.stringify(plan.uniqueUpdate)});`] : []),
     '',
     `/** ${c.key}: creates a resource for a test and returns its id (at $response.body#${chain.idPointer}). */`,
-    `export async function create(api: Apis, data: unknown = newCreatePayload()): Promise<{ id: string; body: unknown }> {`,
+    ...(hasFill(plan)
+      ? [`export async function create(api: Apis, data?: unknown): Promise<{ id: string; body: unknown }> {`, `  data ??= await newCreatePayload(api);`]
+      : [`export async function create(api: Apis, data: unknown = newCreatePayload()): Promise<{ id: string; body: unknown }> {`]),
     `  const res = await ${apiCall(cr, 'api', pathArgs(c, cr), '{ data }')};`,
     `  ${expectSuccess(c)}`,
     `  const body = await expectContract(res, '${c.method}', ${q(c.path)});`,
@@ -239,7 +262,7 @@ function positiveTest(s: SuiteInput, title: string, assert: (indent: string) => 
   if (role === 'create') {
     return [
       `  test(${q(title)}, ${POS}, async ({ api }) => {`,
-      `    const res = await ${call('id', '{ data: resource.newCreatePayload() }')};`,
+      `    const res = await ${call('id', hasFill(plan) ? '{ data: await resource.newCreatePayload(api) }' : '{ data: resource.newCreatePayload() }')};`,
       `    try {`,
       ...assert('      '),
       `    } finally {`,
