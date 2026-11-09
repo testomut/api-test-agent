@@ -395,7 +395,7 @@ describe('unique values for operations that document 409', () => {
     expect(helper).toContain('data: unknown = newCreatePayload()');
     expect(await readFileP(joinP(dir, 'items/post/functional.spec.ts'), 'utf8')).toContain('{ data: resource.newCreatePayload() }');
     const scenario = await readFileP(joinP(dir, 'items/patch-by-id/scenarios.spec.ts'), 'utf8');
-    expect(scenario).toMatch(/const payload = resource\.newUpdatePayload\(\);[\s\S]*toMatchObject\(payload as object\)/);
+    expect(scenario).toMatch(/const payload = resource\.newUpdatePayload\(\);[\s\S]*toMatchObject\(payload\);/);
 
     const py = await mkdtemp(joinP(tmpdir(), 'ata-uq-py-'));
     await generate({ ...demo, doc: d } as any, buildCatalog(d), { outDir: py, version: 'test', lang: 'python' });

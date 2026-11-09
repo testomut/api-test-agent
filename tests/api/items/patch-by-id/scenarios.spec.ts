@@ -18,7 +18,7 @@ test.describe('PATCH /items/{itemId} · scenarios', { tag: '@scenario' }, () => 
       // ASSUMPTION: the read operation returns the updated values.
       const read = await api.items.getItem(id);
       expect(read.status(), 'documented success status of getItem').toBe(200);
-      expect(await read.json()).toMatchObject(payload as object);
+      expect(await read.json()).toMatchObject(payload);
     } finally {
       await resource.remove(api, id);
     }

@@ -426,7 +426,7 @@ export function renderScenarios(s: SuiteInput, meta: Meta): string {
       `      // ASSUMPTION: the read operation returns the updated values.`,
       `      const read = await ${call(r)};`,
       `      ${expectSuccess(r, 'read')}`,
-      `      expect(await read.json()).toMatchObject(payload as object);`,
+      `      expect(await read.json()).toMatchObject(payload);`,
       `    } finally {`,
       `      await resource.remove(api, id);`,
       `    }`,
