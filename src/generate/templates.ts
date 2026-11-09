@@ -4,6 +4,7 @@ import type { NegCase } from './negative.js';
 import { apiCall, type ApiRef } from './api-objects.js';
 import type { SuiteCaseIds } from '../cases/assign.js';
 import { requiredRequest, type ParamRequest } from './param-cases.js';
+import type { ErrorPlan } from './error-cases.js';
 
 /** Payloads and assumptions for one confirmed resource chain. */
 export interface ChainPlan {
@@ -219,6 +220,8 @@ export interface SuiteInput {
   unauthorized: boolean;
   /** Stable case IDs of this operation's tests (Playwright annotation caseId, pytest marker api_case_id). */
   ids?: SuiteCaseIds;
+  /** Documented error responses with a safe trigger (stage 6). */
+  errors?: ErrorPlan;
 }
 
 export type Role = 'create' | 'read' | 'update' | 'delete';
@@ -230,10 +233,11 @@ export function roleOf(op: Operation, plan?: ChainPlan): Role | undefined {
 }
 
 /** Multi-request scenarios whose primary operation is `op` (the action under test, never the setup step). */
-export function scenarioCases(s: Pick<SuiteInput, 'op' | 'plan' | 'positive'>): { createRead: boolean; updateRead: boolean; deleteGone: boolean } {
+export function scenarioCases(s: Pick<SuiteInput, 'op' | 'plan' | 'positive' | 'errors'>): { createRead: boolean; updateRead: boolean; deleteGone: boolean; conflict: boolean } {
   const role = roleOf(s.op, s.plan);
   const read = s.plan?.chain.read;
   return {
+    conflict: s.positive && role === 'create' && !!s.errors?.conflict,
     createRead: s.positive && role === 'create' && !!read,
     updateRead: s.positive && role === 'update' && !!read && s.plan!.updatePayload !== undefined,
     deleteGone: s.positive && role === 'delete' && !!read && read.responses.some((r) => r.status === '404'),
@@ -244,10 +248,11 @@ export function scenarioCases(s: Pick<SuiteInput, 'op' | 'plan' | 'positive'>): 
 export function suiteCounts(s: SuiteInput): Record<SuiteType, number> {
   const extra = (s.notFound ? 1 : 0) + (s.unauthorized ? 1 : 0);
   const sc = scenarioCases(s);
+  const e = s.errors;
   return {
-    functional: (s.positive ? 1 : 0) + extra + (s.positive && !s.plan ? queryVariants(s.op).length : 0),
-    contract: (s.positive ? 1 : 0) + extra + s.bodyCases.length + s.paramCases.length,
-    scenario: (sc.createRead ? 1 : 0) + (sc.updateRead ? 1 : 0) + (sc.deleteGone ? 1 : 0),
+    functional: (s.positive ? 1 : 0) + extra + (s.positive && !s.plan ? queryVariants(s.op).length : 0) + (e?.invalidCredentials ? 1 : 0) + (e?.methodNotAllowed ? 1 : 0) + (e?.preconditionFailed && s.plan ? 1 : 0),
+    contract: (s.positive ? 1 : 0) + extra + s.bodyCases.length + s.paramCases.length + (e?.unsupportedMediaType && s.plan ? 1 : 0),
+    scenario: (sc.createRead ? 1 : 0) + (sc.updateRead ? 1 : 0) + (sc.deleteGone ? 1 : 0) + (sc.conflict ? 1 : 0),
   };
 }
 
@@ -343,8 +348,9 @@ export function renderFunctional(s: SuiteInput, meta: Meta): string {
   const chain = plan?.chain;
   const role = roleOf(op, plan);
   const fx = chain ? 'api' : apiFixture(op);
-  const usesHelpers = (s.positive && !!role) || notFoundNeedsHelpers(s);
-  const names = ['expect', ...(s.positive && (role === 'create' || role === 'read') ? ['readPointer'] : []), ...(s.notFound || s.unauthorized ? ['expectStatus'] : [])];
+  const usesHelpers = (s.positive && !!role) || notFoundNeedsHelpers(s) || !!(s.errors?.preconditionFailed && plan);
+  const errorStatus = !!(s.errors?.invalidCredentials || s.errors?.methodNotAllowed || s.errors?.preconditionFailed);
+  const names = ['expect', ...(s.positive && (role === 'create' || role === 'read') ? ['readPointer'] : []), ...(s.notFound || s.unauthorized || errorStatus ? ['expectStatus'] : [])];
   const L = suiteHeader('functional', s, meta, ['Checks the behavior of the endpoint: status and result. The response schema is checked in contract.spec.ts.']);
   L.push(...imports(s, names, usesHelpers), '', `test.describe('${op.key} · functional', { tag: '@functional' }, () => {`);
 
@@ -387,7 +393,60 @@ export function renderFunctional(s: SuiteInput, meta: Meta): string {
     // publicApi sends no credentials at all (not even the project's static token).
     L.push(`  test('returns documented 401 without credentials', ${testOptions('negative', s.ids?.functional.unauthorized)}, async ({ publicApi }) => {`, anonymousCall(s), `    expectStatus(res, ['401'], '${op.method}', ${q(op.path)});`, `  });`, '');
   }
+  L.push(...errorTests(s));
   return close(L);
+}
+
+/** Documented error responses with a safe trigger (stage 6): invalid credentials, 405, 412. */
+function errorTests(s: SuiteInput): string[] {
+  const { op, plan } = s;
+  const e = s.errors;
+  if (!e) return [];
+  const ref = s.refs.get(op)!;
+  const req = requiredRequest(op);
+  const L: string[] = [];
+  if (e.invalidCredentials) {
+    const params = { ...req.params, ...e.invalidCredentials.params };
+    const headers = { ...req.headers, ...e.invalidCredentials.headers };
+    const opts = [Object.keys(params).length ? `params: ${JSON.stringify(params)}` : '', `headers: ${JSON.stringify(headers)}`].filter(Boolean).join(', ');
+    // publicApi carries no credentials of its own: only the invalid one is sent.
+    L.push(
+      `  test('returns documented 401 for invalid credentials', ${testOptions('negative', s.ids?.functional.invalidCredentials)}, async ({ publicApi }) => {`,
+      `    const res = await ${apiCall(ref, 'publicApi', pathArgs(op, ref, plan?.chain.param, "'unused'"), `{ ${opts} }`)};`,
+      `    expectStatus(res, ['401'], '${op.method}', ${q(op.path)});`,
+      `  });`,
+      '',
+    );
+  }
+  if (e.methodNotAllowed) {
+    const path = op.path.replace(/\{([^}]+)\}/g, (_, name) => encodeURIComponent(String(op.params.find((p) => p.in === 'path' && p.name === name)?.knownValue ?? 'unused')));
+    // GET is the only method that is safe to send to a route the spec does not define.
+    L.push(
+      `  test('answers documented 405 to a method the path does not define (GET)', ${testOptions('negative', s.ids?.functional.methodNotAllowed)}, async ({ request }) => {`,
+      `    const res = await request.get(${q(path.replace(/^\//, ''))});`,
+      `    expectStatus(res, ['405'], '${op.method}', ${q(op.path)});`,
+      `  });`,
+      '',
+    );
+  }
+  if (e.preconditionFailed && plan) {
+    const headers = { ...req.headers, [e.preconditionFailed.header]: e.preconditionFailed.value };
+    const data = plan.chain.update === op ? ', data: resource.newUpdatePayload()' : '';
+    const params = Object.keys(req.params).length ? `params: ${JSON.stringify(req.params)}, ` : '';
+    L.push(
+      `  test('returns documented 412 when ${e.preconditionFailed.header} does not match', ${testOptions('negative', s.ids?.functional.preconditionFailed)}, async ({ api }) => {`,
+      `    const { id } = await resource.create(api);`,
+      `    try {`,
+      `      const res = await ${apiCall(ref, 'api', pathArgs(op, ref, plan.chain.param, 'id'), `{ ${params}headers: ${JSON.stringify(headers)}${data} }`)};`,
+      `      expectStatus(res, ['412'], '${op.method}', ${q(op.path)});`,
+      `    } finally {`,
+      `      await resource.remove(api, id);`,
+      `    }`,
+      `  });`,
+      '',
+    );
+  }
+  return L;
 }
 
 const caseField = (id?: string) => (id ? `caseId: ${q(id)}, ` : '');
@@ -402,14 +461,15 @@ export function renderContract(s: SuiteInput, meta: Meta): string {
   const ref = s.refs.get(op)!;
   const isCreate = chain?.create === op;
   const needsExisting = !!chain && chain.create !== op && op.params.some((p) => p.in === 'path' && p.name === chain.param);
-  const invalid = s.bodyCases.length + s.paramCases.length > 0;
-  const usesHelpers = (s.positive && !!role) || notFoundNeedsHelpers(s) || (s.bodyCases.length > 0 && !!chain && (isCreate || needsExisting));
+  const wrongMedia = !!(s.errors?.unsupportedMediaType && chain);
+  const invalid = s.bodyCases.length + s.paramCases.length > 0 || wrongMedia;
+  const usesHelpers = (s.positive && !!role) || notFoundNeedsHelpers(s) || (s.bodyCases.length > 0 && !!chain && (isCreate || needsExisting)) || wrongMedia;
   // Validation cases go through the same fixture as the positive test (anonymous for public operations).
   const fx = chain ? 'api' : apiFixture(op);
   const names = [...(s.positive || s.notFound || s.unauthorized ? ['expectContract'] : []), ...(invalid ? ['expectRejected'] : [])];
   const L = suiteHeader('contract', s, meta, ['Checks conformance to the OpenAPI document: the status actually returned is documented and the body matches its schema.', 'Invalid requests break one documented constraint each and must get a documented rejection.']);
   L.push(...imports(s, names, usesHelpers));
-  if (invalid) L.push('', `const rejection = ${JSON.stringify(s.validation)}; // documented in the spec`);
+  if (s.bodyCases.length + s.paramCases.length > 0) L.push('', `const rejection = ${JSON.stringify(s.validation)}; // documented in the spec`);
   L.push('', `test.describe('${op.key} · contract', { tag: '@contract' }, () => {`);
 
   const contract = (i: string, v = 'res') => [`${i}await expectContract(${v}, '${op.method}', ${q(op.path)});`];
@@ -447,6 +507,18 @@ export function renderContract(s: SuiteInput, meta: Meta): string {
     L.push(`  ];`, '', `  for (const c of invalidParameters) {`, `    test(\`rejects invalid parameter: \${c.title}\`, ${loopOptions(s.ids?.contract.params)}, async ({ ${fx} }) => {`);
     L.push(`      const res = await ${apiCall(ref, fx, args, '{ params: c.params, headers: c.headers }')};`, `      await expectRejected(res, rejection, '${op.method}', ${q(op.path)});`, `    });`, `  }`, '');
   }
+  if (wrongMedia) {
+    // 415: the documented body, but declared as text/plain. Anything the API wrongly creates is removed.
+    const req = requiredRequest(op);
+    const headers = JSON.stringify({ ...req.headers, 'content-type': 'text/plain' });
+    const params = Object.keys(req.params).length ? `params: ${JSON.stringify(req.params)}, ` : '';
+    const payload = isCreate ? (hasFill(plan) ? 'await resource.newCreatePayload(api)' : 'resource.newCreatePayload()') : 'resource.newUpdatePayload()';
+    const opts = `{ ${params}headers: ${headers}, data: JSON.stringify(${payload}) }`;
+    L.push(`  test('rejects a body sent as text/plain with documented 415', ${testOptions('negative', s.ids?.contract.unsupportedMediaType)}, async ({ api }) => {`);
+    if (isCreate) L.push(`    const res = await ${apiCall(ref, 'api', pathArgs(op, ref), opts)};`, `    await resource.removeIfCreated(api, res);`, `    await expectRejected(res, ['415'], '${op.method}', ${q(op.path)});`);
+    else L.push(`    const { id } = await resource.create(api);`, `    try {`, `      const res = await ${apiCall(ref, 'api', pathArgs(op, ref, chain!.param, 'id'), opts)};`, `      await expectRejected(res, ['415'], '${op.method}', ${q(op.path)});`, `    } finally {`, `      await resource.remove(api, id);`, `    }`);
+    L.push(`  });`, '');
+  }
   return close(L);
 }
 
@@ -463,7 +535,29 @@ export function renderScenarios(s: SuiteInput, meta: Meta): string {
   const extra = ['Each scenario: setup (create) → action (this operation) → assertion (read) → cleanup (delete).'];
   if (sc.updateRead) extra.push(`ASSUMPTION (not in spec, reviewer must confirm): ${plan!.assumptions.find((a) => a.startsWith('after')) ?? 'read after update returns the new values'}`);
   const L = suiteHeader('scenario', s, meta, extra);
-  L.push(...imports(s, ['expect', ...(sc.createRead ? ['readPointer'] : [])], true, false), '', `test.describe('${op.key} · scenarios', { tag: '@scenario' }, () => {`);
+  L.push(...imports(s, ['expect', ...(sc.createRead ? ['readPointer'] : []), ...(sc.conflict ? ['expectStatus'] : [])], true, false), '', `test.describe('${op.key} · scenarios', { tag: '@scenario' }, () => {`);
+  if (sc.conflict) {
+    // 409 on the fields a reviewed deps file names: the same payload twice. Both records are removed.
+    const fields = s.errors!.conflict!.fields;
+    const payload = hasFill(plan) ? 'await resource.newCreatePayload(api)' : 'resource.newCreatePayload()';
+    L.push(
+      `  test(${q(`a second create with the same ${fields.join(', ')} gets the documented 409`)}, ${testOptions('negative', s.ids?.scenario.conflict)}, async ({ api }) => {`,
+      `    const payload = ${payload};`,
+      `    const first = await resource.create(api, payload);`,
+      `    try {`,
+      `      const res = await ${call(op, optionsWith(op, '{ data: payload }'))};`,
+      `      try {`,
+      `        expectStatus(res, ['409'], '${op.method}', ${q(op.path)});`,
+      `      } finally {`,
+      `        await resource.removeIfCreated(api, res);`,
+      `      }`,
+      `    } finally {`,
+      `      await resource.remove(api, first.id);`,
+      `    }`,
+      `  });`,
+      '',
+    );
+  }
   if (sc.createRead) {
     L.push(
       `  test('the created resource can be retrieved by ${r.operationId ?? r.key}', ${testOptions('positive', s.ids?.scenario.createRead)}, async ({ api }) => {`,

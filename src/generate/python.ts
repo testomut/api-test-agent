@@ -359,7 +359,7 @@ function pyHeader(suite: SuiteType, s: SuiteInput, meta: Meta, extra: string[]):
   const lines = [...extra];
   if (s.plan) lines.unshift(`Preconditions and cleanup: ${s.plan.chain.source}`);
   lines.push('Polarity is a marker: run one side with -m positive or -m negative.');
-  return [header(suite, s.op, meta, lines), 'import uuid  # noqa: F401', 'from urllib.parse import quote  # noqa: F401', '', 'import pytest', '', 'from contract import read_pointer  # noqa: F401', '', `pytestmark = pytest.mark.${suite}`, '', ''];
+  return [header(suite, s.op, meta, lines), 'import json  # noqa: F401', 'import uuid  # noqa: F401', 'from urllib.parse import quote  # noqa: F401', '', 'import pytest', '', 'from contract import read_pointer  # noqa: F401', '', `pytestmark = pytest.mark.${suite}`, '', ''];
 }
 
 /** The successful call with its precondition (fixtures) and cleanup; `assert` returns the assertion lines. */
@@ -441,7 +441,50 @@ export function renderPyFunctional(s: SuiteInput, meta: Meta): string {
   }
   if (s.notFound) L.push(...pyNotFound(s, 'test_returns_documented_404_for_unknown_id', withId(NEG, s.ids?.functional.notFound), statusIs(op, '404')));
   if (s.unauthorized) L.push(...pyAnonymous(s, 'test_returns_documented_401_without_credentials', withId(NEG, s.ids?.functional.unauthorized), statusIs(op, '401')));
+  L.push(...pyErrorTests(s));
   return finish(L);
+}
+
+/** Documented error responses with a safe trigger (stage 6), as in the TypeScript suite. */
+function pyErrorTests(s: SuiteInput): string[] {
+  const { op, plan } = s;
+  const e = s.errors;
+  if (!e) return [];
+  const req = requiredRequest(op);
+  const L: string[] = [];
+  if (e.invalidCredentials) {
+    const params = { ...req.params, ...e.invalidCredentials.params };
+    const headers = { ...req.headers, ...e.invalidCredentials.headers };
+    // anonymous_api carries no credentials of its own: only the invalid one is sent.
+    L.push(
+      withId(NEG, s.ids?.functional.invalidCredentials),
+      'def test_returns_documented_401_for_invalid_credentials(anonymous_api):',
+      `    res = anonymous_api.${op.method}(${pathExpr(op, plan?.chain.param, '"unused"')}${Object.keys(params).length ? `, params=${pyLit(params, 4)}` : ''}, headers=${pyLit(headers, 4)})`,
+      `    ${statusIs(op, '401')}`,
+      '',
+      '',
+    );
+  }
+  if (e.methodNotAllowed) {
+    const path = op.path.replace(/^\//, '').replace(/\{([^}]+)\}/g, (_, name) => encodeURIComponent(String(op.params.find((p) => p.in === 'path' && p.name === name)?.knownValue ?? 'unused')));
+    // GET is the only method that is safe to send to a route the spec does not define.
+    L.push(withId(NEG, s.ids?.functional.methodNotAllowed), 'def test_answers_documented_405_to_a_method_the_path_does_not_define(api):', `    res = api.get(${str(path)})`, `    ${statusIs(op, '405')}`, '', '');
+  }
+  if (e.preconditionFailed && plan) {
+    const res = resourceModule(plan).replace(/_resource$/, '');
+    const headers = { ...req.headers, [e.preconditionFailed.header]: e.preconditionFailed.value };
+    const data = plan.chain.update === op ? `, json=${res}.new_update_payload()` : '';
+    const params = Object.keys(req.params).length ? `, params=${pyLit(req.params, 4)}` : '';
+    L.push(
+      withId(NEG, s.ids?.functional.preconditionFailed),
+      `def test_returns_documented_412_when_precondition_does_not_match(api, ${res}, created_${res}):`,
+      `    res = api.${op.method}(${pathExpr(op, plan.chain.param, `created_${res}`)}${data}${params}, headers=${pyLit(headers, 4)})`,
+      `    ${statusIs(op, '412')}`,
+      '',
+      '',
+    );
+  }
+  return L;
 }
 
 /** test_contract.py: responses match OpenAPI; invalid requests are rejected as documented. */
@@ -484,6 +527,19 @@ export function renderPyContract(s: SuiteInput, meta: Meta): string {
     L.push('    path = parts.get("path", {})');
     L.push(`    res = api.${op.method}(${pathFromParts(op)}, params=parts.get("params"), headers=parts.get("headers"))`, `    contract.expect_rejected(res, REJECTION, ${str(op.method)}, ${str(op.path)})`, '', '');
   }
+  if (s.errors?.unsupportedMediaType && chain) {
+    // 415: the documented body, but declared as text/plain. Anything the API wrongly creates is removed.
+    const req = requiredRequest(op);
+    const headers = pyLit({ ...req.headers, 'content-type': 'text/plain' }, 4);
+    const params = Object.keys(req.params).length ? `, params=${pyLit(req.params, 4)}` : '';
+    L.push(withId(NEG, s.ids?.contract.unsupportedMediaType));
+    if (isCreate) {
+      L.push(`def test_rejects_a_body_sent_as_text_plain(api, contract, ${res}):`, `    res = api.${op.method}(${pathExpr(op)}, data=json.dumps(${res}.new_create_payload())${params}, headers=${headers})`, `    ${res}.remove_if_created(res)`);
+    } else {
+      L.push(`def test_rejects_a_body_sent_as_text_plain(api, contract, ${res}, created_${res}):`, `    res = api.${op.method}(${pathExpr(op, chain.param, `created_${res}`)}, data=json.dumps(${res}.new_update_payload())${params}, headers=${headers})`);
+    }
+    L.push(`    contract.expect_rejected(res, ["415"], ${str(op.method)}, ${str(op.path)})`, '', '');
+  }
   return finish(L);
 }
 
@@ -498,6 +554,25 @@ export function renderPyScenarios(s: SuiteInput, meta: Meta): string {
   if (sc.updateRead) extra.push(`ASSUMPTION (not in spec, reviewer must confirm): ${plan!.assumptions.find((a) => a.startsWith('after')) ?? 'read after update returns the new values'}`);
   const L = pyHeader('scenario', s, meta, extra);
   const id = `created_${res}`;
+  if (sc.conflict) {
+    // 409 on the fields a reviewed deps file names: the same payload twice. Both records are removed.
+    L.push(
+      withId(NEG, s.ids?.scenario.conflict),
+      `def test_second_create_with_the_same_fields_conflicts(api, ${res}):`,
+      `    payload = ${res}.new_create_payload()`,
+      `    first_id, _ = ${res}.create(payload)`,
+      '    try:',
+      `        res = api.${op.method}(${pathExpr(op)}, json=payload${pyRequired(op)})`,
+      '        try:',
+      `            ${statusIs(op, '409')}`,
+      '        finally:',
+      `            ${res}.remove_if_created(res)`,
+      '    finally:',
+      `        ${res}.remove(first_id)`,
+      '',
+      '',
+    );
+  }
   if (sc.createRead) {
     L.push(
       withId(POS, s.ids?.scenario.createRead),

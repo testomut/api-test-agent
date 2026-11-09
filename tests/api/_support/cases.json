@@ -339,6 +339,13 @@
       "subjectUid": "op_WRZHS7HTMVON",
       "suiteType": "contract"
     },
+    "ata:op_WRZHS7HTMVON:functional:negative:request.security:invalid-credentials": {
+      "location": "request.security",
+      "polarity": "negative",
+      "rule": "invalid-credentials",
+      "subjectUid": "op_WRZHS7HTMVON",
+      "suiteType": "functional"
+    },
     "ata:op_WRZHS7HTMVON:functional:negative:request.security:unauthorized": {
       "location": "request.security",
       "polarity": "negative",

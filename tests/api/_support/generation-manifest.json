@@ -1,5 +1,5 @@
 {
-  "caseRegistryHash": "8b7eb6331738126984b0de2b2ae737f245b0f9fcd294de32cb8e5d1a91e976c8",
+  "caseRegistryHash": "51f82bffa7438b9e1f7595daf8ca206bbf944b446f15c35a87d78b4f3310b879",
   "files": {
     "_support/api/generated/AdminApiBase.ts": {
       "ownership": "generated",
@@ -55,7 +55,7 @@
     },
     "_support/openapi.snapshot.meta.json": {
       "ownership": "generated",
-      "sha256": "da2e6eb7ce782763af79669ad4f51564631e99a56233733d3b52e5ed6a69314c"
+      "sha256": "02321c2de281b2ca60e29bca3a07b8ce21294ad4fe4a77491c43f0b397091cf9"
     },
     "_support/openapi.snapshot.ts": {
       "ownership": "generated",
@@ -295,13 +295,14 @@
     "me/get/functional.spec.ts": {
       "caseIds": [
         "ata:op_WRZHS7HTMVON:functional:positive:operation:documented-success",
-        "ata:op_WRZHS7HTMVON:functional:negative:request.security:unauthorized"
+        "ata:op_WRZHS7HTMVON:functional:negative:request.security:unauthorized",
+        "ata:op_WRZHS7HTMVON:functional:negative:request.security:invalid-credentials"
       ],
       "operationUids": [
         "op_WRZHS7HTMVON"
       ],
       "ownership": "generated",
-      "sha256": "7889879405c221505474de9f4e3048b77dc1be70ab2b1399ade88fd629ce018d",
+      "sha256": "0078147e5f0ab275165ebf21e15f534439352c5af45fe5d3a82596070546326b",
       "suiteType": "functional"
     },
     "reports/get-by-id/contract.spec.ts": {
@@ -353,7 +354,7 @@
   "schemaVersion": 1,
   "spec": {
     "hash": "d7b3b546ce170690",
-    "revision": "9142b4bfc92cba8ebcfaecd302af395090aac8c6",
+    "revision": "ea9aa19720af422a38924d9284f0e7190b6d5337",
     "source": "demo-api/openapi.yaml"
   }
 }

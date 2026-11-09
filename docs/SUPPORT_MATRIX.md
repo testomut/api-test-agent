@@ -91,20 +91,24 @@ The TypeScript and Python validators apply the same rules; `tests/unit/validator
 | `discriminator` | 🟡 | `oneOf` validated; the mapping is not used | |
 | contract tests exercise | 🟡 | success, 404 and 401 responses; more in stage 6 | 6 |
 
-## Documented error responses
+## Documented error responses (`src/generate/error-cases.ts`)
 
-| Status | State | Limits | Stage |
+A case is generated only when the request that triggers the error is safe and the error is documented for the operation; everything else is a gap in `coverage-gaps.json` at `response.status#/<code>`.
+
+| Status | State | How / gap | Stage |
 |---|---|---|---|
-| 400 / 422 (invalid input) | ✅ | body + query | |
-| 401 (no credentials) | ✅ | | |
-| 401 (invalid token / API key) | ❌ | | 6 |
+| 400 / 422 (invalid input) | ✅ | body and parameter cases | 3–4 ✔ |
+| 401 (no credentials) | ✅ | `publicApi` / `anonymous_api` | |
+| 401 (invalid credentials) | ✅ | a certainly invalid credential of the operation's scheme: HTTP bearer / OAuth2 / OpenID Connect (`Bearer api-agent-invalid-token`), HTTP basic, API key in header / query / cookie; an unknown scheme → `UNSUPPORTED_SCHEMA_KEYWORD` | 6 ✔ |
+| 401 (expired token) | ⛔ | needs a configured expired token | 6 (gap) |
+| 403 (scope / role) | ⛔ | `UNCONFIRMED_BUSINESS_RULE`: needs a reviewed account that must be refused | 6 ✔ (gap) |
 | 404 (unknown id) | ✅ | single trailing path parameter | |
-| 403 (scope / role) | ⛔ | needs a reviewed role configuration | 6 |
-| 405 | ❌ | | 6 |
-| 409 (conflict) | ❌ | unique suffix only prevents it | 6 |
-| 412 (precondition) | ❌ | | 6 |
-| 415 (wrong Content-Type) | ❌ | | 6 |
-| 429 (rate limit) | ⛔ | opt-in only | 6 |
+| 405 | ✅ | a GET to a path that defines no GET (one case per path); a path with GET → `UNSAFE_LIVE_CHECK` (any other undocumented method could change data) | 6 ✔ |
+| 409 (conflict) | ✅ | create twice with the same payload, only when the deps file names `conflictOn` fields (a reviewed business rule); both records removed in `finally`; otherwise `UNCONFIRMED_BUSINESS_RULE` | 6 ✔ |
+| 412 (precondition) | ✅ | a non-matching `If-Match` / `If-Unmodified-Since` header (when documented) on a resource the test creates and removes; no such header → `UNCONFIRMED_BUSINESS_RULE` | 6 ✔ |
+| 415 (wrong Content-Type) | ✅ | the documented body as `text/plain`, create / update with confirmed cleanup; otherwise `MISSING_CLEANUP` | 6 ✔ |
+| 429 (rate limit) | ⛔ | `UNSAFE_LIVE_CHECK`: never exercised (opt-in with a request budget is not implemented) | 6 ✔ (gap) |
+| other documented 4xx | ⛔ | `UNREACHABLE_RESPONSE_STATUS` | 6 ✔ (gap) |
 
 ## Scenarios (`scenarios.spec.ts`)
 
@@ -114,7 +118,7 @@ The TypeScript and Python validators apply the same rules; `tests/unit/validator
 | create → update → read | ✅ (marked ASSUMPTION) | |
 | create → delete → read 404 | ✅ | |
 | create → list / search / filter | ❌ | 8 |
-| create → duplicate create → 409 | ❌ | 6 / 8 |
+| create → duplicate create → 409 | ✅ (deps `conflictOn`) | 6 ✔ |
 | repeated delete, update / delete unknown | ❌ | 8 |
 | login / refresh → authorized request | ❌ | 8 |
 | parent → child, state transitions, idempotency key, bounded polling | ⛔ | need the reviewed scenario file | 8 |

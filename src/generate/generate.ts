@@ -14,6 +14,7 @@ import { headRevision } from '../change/baseline.js';
 import { isUrl } from '../change/network.js';
 import { bodyCasesDetailed, type CoverageGap } from './body-cases.js';
 import { paramCasesDetailed, sendable } from './param-cases.js';
+import { errorPlan } from './error-cases.js';
 import { bodyCases, documentedRejections, nonexistentIdExpr, type NegCase } from './negative.js';
 import { CONTRACT_ASSERT, SUITE_TYPES, TS_FILES, operationFolder, queryVariants, renderContract, renderFunctional, renderResourceHelpers, renderScenarios, scenarioCases, suiteCounts, type ChainPlan, type Meta, type SuiteInput, type SuiteType } from './templates.js';
 import { API_BASE, buildApiIndex, renderApiBaseClass, renderApiChildClass, renderApis } from './api-objects.js';
@@ -228,6 +229,7 @@ export async function generate(spec: LoadedSpec, ops: Operation[], o: GenerateOp
   // 2. Per operation: <resource>/<action>/{functional,contract,scenarios}.spec.ts, each only when it has a case.
   //    Polarity (positive/negative) is a tag inside the files, not a file of its own.
   const used = new Set<string>();
+  const paths405 = new Set<string>(); // one 405 case per path
   for (const op of ops) {
     let { resource, action } = operationFolder(op);
     if (py) {
@@ -311,10 +313,15 @@ export async function generate(spec: LoadedSpec, ops: Operation[], o: GenerateOp
     }
 
     // --- suites
-    const input: SuiteInput = { op, refs, plan, helpers, positive: !posReason, validation: rej.validation, bodyCases: bCases, paramCases: qCases, notFound, unauthorized };
+    // Documented error responses with a safe trigger; the rest are gaps (stage 6).
+    const errRole = !plan ? undefined : plan.chain.create === op ? 'create' : plan.chain.read === op ? 'read' : plan.chain.update === op ? 'update' : plan.chain.delete === op ? 'delete' : undefined;
+    const firstWith405 = op.responses.some((r) => r.status === '405') && !paths405.has(op.path);
+    if (firstWith405) paths405.add(op.path);
+    const errors = op.deprecated ? { gaps: [] } : errorPlan({ doc: spec.doc, op, ops, chain: plan?.chain, role: errRole, hasUpdatePayload: plan?.updatePayload !== undefined, reachable, firstWith405 });
+    const input: SuiteInput = { op, refs, plan, helpers, positive: !posReason, validation: rej.validation, bodyCases: bCases, paramCases: qCases, notFound, unauthorized, errors };
     const counts = suiteCounts(input);
     const variants = input.positive && !plan && op.method === 'get' ? queryVariants(op) : [];
-    const ids = assignCaseIds({ op, chain: plan?.chain, positive: input.positive, bodyCases: bCases, paramCases: qCases, notFound, unauthorized, scenarios: scenarioCases(input), queryVariants: variants }, uidOf);
+    const ids = assignCaseIds({ op, chain: plan?.chain, positive: input.positive, bodyCases: bCases, paramCases: qCases, notFound, unauthorized, scenarios: scenarioCases(input), queryVariants: variants, errors }, uidOf);
     input.ids = ids;
     // Explicit per-operation coverage and gaps, independent of test execution status.
     // Response bodies the validator cannot check: said explicitly, never passed silently.
@@ -327,7 +334,7 @@ export async function generate(spec: LoadedSpec, ops: Operation[], o: GenerateOp
         return [];
       }),
     );
-    coverage.push({ operation: op.key, counts, positiveBlocked: posReason ?? null, negativeGaps: why, lifecycle: plan ? plan.chain.name : null, gaps: [...bodyGaps, ...responseGaps], ...(bodyStats ? { bodyCases: bodyStats } : {}) });
+    coverage.push({ operation: op.key, counts, positiveBlocked: posReason ?? null, negativeGaps: why, lifecycle: plan ? plan.chain.name : null, gaps: [...bodyGaps, ...errors.gaps, ...responseGaps], ...(bodyStats ? { bodyCases: bodyStats } : {}) });
     const render: Record<SuiteType, (s: SuiteInput, m: Meta) => string> = py
       ? { functional: renderPyFunctional, contract: renderPyContract, scenario: renderPyScenarios }
       : { functional: renderFunctional, contract: renderContract, scenario: renderScenarios };

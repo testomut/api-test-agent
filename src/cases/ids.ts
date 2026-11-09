@@ -10,7 +10,10 @@ import { base32 } from '../change/normalize.js';
 export type SuiteType = 'functional' | 'contract' | 'scenario';
 export type Polarity = 'positive' | 'negative';
 
-/** v2 adds functional/positive `accepted-value` (one case per documented parameter value). Registries of v1 stay readable. */
+/**
+ * v2 adds functional/positive `accepted-value` (one case per documented parameter value) and functional/negative
+ * `invalid-credentials`, `method-not-allowed`, `precondition-failed`. Registries of v1 stay readable.
+ */
 export const CASE_RULE_VOCABULARY_VERSION = 2;
 
 const CONSTRAINT_RULES = [
@@ -21,7 +24,7 @@ const CONSTRAINT_RULES = [
 /** Built-in vocabulary v1, by suiteType/polarity. */
 export const VOCABULARY_V1: Record<string, readonly string[]> = {
   'functional/positive': ['documented-success', 'accepted-value'],
-  'functional/negative': ['not-found', 'unauthorized', 'forbidden'],
+  'functional/negative': ['not-found', 'unauthorized', 'forbidden', 'invalid-credentials', 'method-not-allowed', 'precondition-failed'],
   'contract/positive': ['documented', 'schema'],
   'contract/negative': [...CONSTRAINT_RULES, 'content-type'],
   'scenario/positive': ['crud', 'business-rule'],
@@ -120,6 +123,8 @@ export function checkCombination(p: CaseParts): CaseIdError | undefined {
       return loc === 'operation' ? undefined : bad(`documented-success is checked on "operation", not "${loc}"`);
     case 'functional/negative':
       if (p.rule === 'not-found') return /^request\.path#\/[^/]*$/.test(loc) ? undefined : bad('not-found is checked on a path parameter');
+      if (p.rule === 'method-not-allowed') return loc === 'operation' ? undefined : bad('method-not-allowed is checked on "operation"');
+      if (p.rule === 'precondition-failed') return /^request\.header#\/[^/]*$/.test(loc) ? undefined : bad('precondition-failed is checked on a precondition header');
       return loc === 'request.security' ? undefined : bad(`${p.rule} is checked on "request.security"`);
     case 'contract/positive':
       if (p.rule === 'schema') return loc.startsWith('response.body#') ? undefined : bad('schema is checked on a response body location');

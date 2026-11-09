@@ -34,6 +34,17 @@ jobs:
       - run: npm run build
       - run: npm test
 
+      - name: Generated code for the synthetic fixture compiles (TypeScript and Python)
+        # tests/fixtures/coverage/kitchen-sink.yaml exercises every template: nested bodies, all parameter
+        # kinds, error responses, scenarios. Generated, never run (no server), but it must compile.
+        run: |
+          npx tsx src/cli.ts generate tests/fixtures/coverage/kitchen-sink.yaml --deps tests/fixtures/coverage/kitchen-sink.deps.json --tests-dir tests/api-ks --max-cases 500 -o reports/ks --fail-on never
+          npx tsc --noEmit
+          npx tsx src/cli.ts generate tests/fixtures/coverage/kitchen-sink.yaml --deps tests/fixtures/coverage/kitchen-sink.deps.json --tests-dir tests/api-ks-python --lang python --max-cases 500 -o reports/ks-python --fail-on never
+          python -m py_compile $(find tests/api-ks-python -name '*.py')
+          npx tsx src/cli.ts registry validate tests/api-ks/_support/cases.json --spec tests/fixtures/coverage/kitchen-sink.yaml --require-spec > /dev/null
+          rm -rf tests/api-ks tests/api-ks-python
+
       - name: Start demo API
         run: |
           nohup npm run demo > demo-api.log 2>&1 &

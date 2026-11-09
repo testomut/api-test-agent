@@ -4,6 +4,8 @@ openapi: 3.1.0
 info:
   title: Kitchen sink
   version: '1.0'
+security:
+  - bearer: []
 paths:
   /orders:
     get:
@@ -26,6 +28,9 @@ paths:
             application/json:
               schema: { type: array, items: { $ref: '#/components/schemas/Order' } }
         '400': { description: invalid }
+        '401': { description: no or invalid token }
+        '403': { description: not allowed }
+        '429': { description: slow down }
     post:
       operationId: createOrder
       requestBody:
@@ -42,6 +47,7 @@ paths:
           links:
             GetOrder: { operationId: getOrder, parameters: { orderId: '$response.body#/id' } }
             DeleteOrder: { operationId: deleteOrder, parameters: { orderId: '$response.body#/id' } }
+            UpdateOrder: { operationId: updateOrder, parameters: { orderId: '$response.body#/id' } }
         '400': { description: invalid }
         '409': { description: duplicate }
         '415': { description: unsupported media type }
@@ -58,12 +64,41 @@ paths:
               schema: { $ref: '#/components/schemas/Order' }
         '400': { description: invalid id }
         '404': { description: missing }
+    put:
+      operationId: updateOrder
+      parameters:
+        - { name: If-Match, in: header, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/OrderInput' }
+      responses:
+        '200':
+          description: updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Order' }
+        '404': { description: missing }
+        '412': { description: etag mismatch }
+        '415': { description: unsupported media type }
+        '418': { description: teapot }
     delete:
       operationId: deleteOrder
       responses:
         '204': { description: deleted }
         '404': { description: missing }
+  /orders/{orderId}/cancel:
+    parameters:
+      - { name: orderId, in: path, required: true, schema: { type: string, format: uuid, example: 00000000-0000-4000-8000-000000000009 } }
+    post:
+      operationId: cancelOrder
+      responses:
+        '202': { description: accepted }
+        '405': { description: method not allowed }
 components:
+  securitySchemes:
+    bearer: { type: http, scheme: bearer }
   schemas:
     OrderInput:
       type: object
