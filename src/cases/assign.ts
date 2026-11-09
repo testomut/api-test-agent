@@ -63,8 +63,14 @@ export function assignCaseIds(s: AssignInput, uidOf: (op: Operation) => string):
 
   if (s.positive) {
     ids.functional.success = add('functional', { subjectUid: uid, polarity: 'positive', location: location.operation(), rule: 'documented-success' }, rel);
-    const covers = ok ? [`contract:positive:${location.status(ok.status)}:documented`, ...ok.contentTypes.map((ct) => `contract:positive:${location.responseContentType(ct.split(';')[0].trim())}:documented`)] : [];
-    ids.contract.success = add('contract', { subjectUid: uid, polarity: 'positive', location: location.responseBody(''), rule: 'schema' }, { ...rel, ...(covers.length ? { covers } : {}) });
+    if (ok?.contentTypes.length) {
+      // A documented body: the schema is the primary check; status and content type are covered by the same test.
+      const covers = [`contract:positive:${location.status(ok.status)}:documented`, ...ok.contentTypes.map((ct) => `contract:positive:${location.responseContentType(ct.split(';')[0].trim())}:documented`)];
+      ids.contract.success = add('contract', { subjectUid: uid, polarity: 'positive', location: location.responseBody(''), rule: 'schema' }, { ...rel, covers });
+    } else {
+      // No body documented for the success response: what the test checks is that the status is documented.
+      ids.contract.success = add('contract', { subjectUid: uid, polarity: 'positive', location: location.status(ok?.status ?? '200'), rule: 'documented' }, rel);
+    }
   }
   if (s.notFound) {
     ids.functional.notFound = add('functional', { subjectUid: uid, polarity: 'negative', location: location.path(s.notFound.param), rule: 'not-found' });

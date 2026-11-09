@@ -81,6 +81,17 @@ describe('generated suites carry case IDs', () => {
     expect((await validateManifest(dir)).findings).toEqual([]);
   });
 
+  it('a success response without a documented body is checked as a documented status, not a body schema', async () => {
+    const d = parse(stringify(demo.doc));
+    delete d.paths['/health'].get.responses['200'].content;
+    const { registry, read } = await gen(d);
+    const uid = operationUid('GET', '/health');
+    const reg = await registry();
+    expect(reg.cases[`ata:${uid}:contract:positive:response.status#/200:documented`]).toBeDefined();
+    expect(reg.cases[`ata:${uid}:contract:positive:response.body#:schema`]).toBeUndefined();
+    expect(validateRegistry(await read('_support/cases.json'), normalizeSpec(stringify(d), 'd')).errors).toEqual([]);
+  });
+
   it('Python: api_case_id markers, registered in conftest; parametrized cases carry theirs', async () => {
     const { r, read } = await gen(demo.doc, { lang: 'python' });
     expect(await read('conftest.py')).toContain('"api_case_id(id): stable case ID from _support/cases.json"');
