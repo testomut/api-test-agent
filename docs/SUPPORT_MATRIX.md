@@ -70,20 +70,26 @@ Every case is a valid request (each required query / header / cookie parameter w
 | optional-field variants | ❌ | | 7 |
 | response examples as requirements | ⛔ | examples are illustrations unless marked | 7 |
 
-## Response contract (`src/contract/validator.ts`)
+## Response contract (`src/contract/validator.ts`, `src/contract/contract.py`)
+
+The TypeScript and Python validators apply the same rules; `tests/unit/validator.test.ts` runs one table of cases through both and requires identical results.
 
 | Check | State | Limits | Stage |
 |---|---|---|---|
 | status, `NXX` ranges, `default` | ✅ | | |
-| Content-Type of the matched response | ✅ | | |
-| JSON schema (3.0 nullable, 3.1 / 2020-12, formats via ajv-formats) | ✅ | | |
-| local / bundled `$ref` | ✅ | snapshot is bundled | |
-| non-JSON media types | 🟡 | body not checked; not reported as unchecked | 5 |
-| response headers (required, schema) | ❌ | | 5 |
-| no body for `204` / `205` / `HEAD` / no `content` | ❌ | an unexpected body is accepted | 5 |
-| `readOnly` / `writeOnly` | ❌ | | 5 |
-| `discriminator` | 🟡 | `oneOf` validated, mapping ignored | 5 |
-| contract tests exercise | 🟡 | success, 404 and 401 responses only | 5 / 6 |
+| Content-Type of the matched response, media type parameters ignored, `type/*` and `*/*` | ✅ | an undocumented type is reported before an empty body | 5 ✔ |
+| JSON schema (3.0 nullable, 3.1 / 3.2 JSON Schema 2020-12, formats) | ✅ | | |
+| local / bundled `$ref` | ✅ | the snapshot is bundled | |
+| response headers | ✅ | required ones present; documented ones match their schema (integer / number / boolean coerced, arrays comma-separated, style simple); `Content-Type` ignored as OpenAPI says | 5 ✔ |
+| no body for `204` / `205` / `304`, `HEAD`, responses without `content` | ✅ | a body that arrives anyway is `unexpected-body` | 5 ✔ |
+| empty body where a schema is documented | ✅ | `empty-body` (JSON `null` is a body) | 5 ✔ |
+| text media types with a schema | ✅ | the text is validated as a string | 5 ✔ |
+| other media types (XML, binary, …) | ⛔ | not checked: a note in the test report (Playwright annotation `contract-note`, pytest warning) and `UNSUPPORTED_MEDIA_TYPE` in `coverage-gaps.json` | 5 ✔ (gap) |
+| a response without a schema | ⛔ | not checked: note + `MISSING_RESPONSE_SCHEMA` | 5 ✔ (gap) |
+| `writeOnly` | ✅ | must not appear in a response; never required in a response | 5 ✔ |
+| `readOnly` | ✅ | not sent in request cases (stage 3) | 3 ✔ |
+| `discriminator` | 🟡 | `oneOf` validated; the mapping is not used | |
+| contract tests exercise | 🟡 | success, 404 and 401 responses; more in stage 6 | 6 |
 
 ## Documented error responses
 

@@ -39,11 +39,11 @@
     },
     "_support/contract-assert.ts": {
       "ownership": "generated",
-      "sha256": "fbbd168c9255903b3c1499dd88f007806846b2e14e3c42e7b01e17361ba60d78"
+      "sha256": "78f7d10c5e3b5e16fc2589da1beaec473034391b3fca2ab20254b6992245729a"
     },
     "_support/contract.ts": {
       "ownership": "generated",
-      "sha256": "8593fa68484c84f12c84803c30ef474dc1718750ef102647014c7e99e0b166aa"
+      "sha256": "e3984cc678d6fa6afb72a849e65f103f1b7c42a6dcedcf2074719396714ae7a7"
     },
     "_support/fixtures.ts": {
       "ownership": "generated",
@@ -55,7 +55,7 @@
     },
     "_support/openapi.snapshot.meta.json": {
       "ownership": "generated",
-      "sha256": "b25f9dfc2d7412b7a7a3ce73d2051f0336f68409ab4ac29faf5d97027fb02d35"
+      "sha256": "da2e6eb7ce782763af79669ad4f51564631e99a56233733d3b52e5ed6a69314c"
     },
     "_support/openapi.snapshot.ts": {
       "ownership": "generated",
@@ -353,7 +353,7 @@
   "schemaVersion": 1,
   "spec": {
     "hash": "d7b3b546ce170690",
-    "revision": "93b4d144ee116dffa83c091e603b4c385ab916cb",
+    "revision": "9142b4bfc92cba8ebcfaecd302af395090aac8c6",
     "source": "demo-api/openapi.yaml"
   }
 }

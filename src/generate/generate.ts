@@ -317,7 +317,17 @@ export async function generate(spec: LoadedSpec, ops: Operation[], o: GenerateOp
     const ids = assignCaseIds({ op, chain: plan?.chain, positive: input.positive, bodyCases: bCases, paramCases: qCases, notFound, unauthorized, scenarios: scenarioCases(input), queryVariants: variants }, uidOf);
     input.ids = ids;
     // Explicit per-operation coverage and gaps, independent of test execution status.
-    coverage.push({ operation: op.key, counts, positiveBlocked: posReason ?? null, negativeGaps: why, lifecycle: plan ? plan.chain.name : null, gaps: bodyGaps, ...(bodyStats ? { bodyCases: bodyStats } : {}) });
+    // Response bodies the validator cannot check: said explicitly, never passed silently.
+    const responseGaps: CoverageGap[] = op.responses.flatMap((resp) =>
+      resp.contentTypes.flatMap((ct): CoverageGap[] => {
+        const media = ct.split(';')[0].trim().toLowerCase();
+        const loc = `response.content-type#/${media.replace(/~/g, '~0').replace(/\//g, '~1')}`;
+        if (!resp.hasSchema) return [{ code: 'MISSING_RESPONSE_SCHEMA', location: loc, reason: `${resp.status} ${media}: no schema documented, the body is not checked` }];
+        if (!media.includes('json') && !media.startsWith('text/')) return [{ code: 'UNSUPPORTED_MEDIA_TYPE', location: loc, reason: `${resp.status} ${media}: the validator checks JSON and text bodies only` }];
+        return [];
+      }),
+    );
+    coverage.push({ operation: op.key, counts, positiveBlocked: posReason ?? null, negativeGaps: why, lifecycle: plan ? plan.chain.name : null, gaps: [...bodyGaps, ...responseGaps], ...(bodyStats ? { bodyCases: bodyStats } : {}) });
     const render: Record<SuiteType, (s: SuiteInput, m: Meta) => string> = py
       ? { functional: renderPyFunctional, contract: renderPyContract, scenario: renderPyScenarios }
       : { functional: renderFunctional, contract: renderContract, scenario: renderScenarios };
