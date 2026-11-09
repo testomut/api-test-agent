@@ -27,11 +27,16 @@ export async function expectContract(res: APIResponse, method: string, path: str
   return body;
 }
 
-/** The request must be rejected with one of the documented statuses ("400", "422", "4XX"...), then match the contract. */
-export async function expectRejected(res: APIResponse, documented: string[], method: string, path: string): Promise<unknown> {
+/** Functional check: the status is one of the expected documented ones ("404", "4XX"...). The body is checked in contract.spec.ts. */
+export function expectStatus(res: APIResponse, documented: string[], method: string, path: string): void {
   const s = String(res.status());
   const ok = documented.some((c) => c === s || (/^\dXX$/i.test(c) && c[0] === s[0]));
   expect(ok, `CONTRACT_MISMATCH ${method.toUpperCase()} ${path}: expected documented rejection ${documented.join('/')}, got ${s}`).toBe(true);
+}
+
+/** The request must be rejected with one of the documented statuses ("400", "422", "4XX"...), then match the contract. */
+export async function expectRejected(res: APIResponse, documented: string[], method: string, path: string): Promise<unknown> {
+  expectStatus(res, documented, method, path);
   return expectContract(res, method, path);
 }
 

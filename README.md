@@ -38,7 +38,7 @@ npm i -D @testomut/api-test-agent @playwright/test ajv ajv-formats
 npx @testomut/api-test-agent init        # 6 questions (incl. TypeScript or Python), then shows the plan and asks before applying
 npm run api-tests              # read-only analysis → reports/api-agent/report.md
 npx @testomut/api-test-agent adapt       # move existing tests into the layout, convert Postman (plan first, git-safe)
-npm run api-tests:generate     # generate missing positive/negative tests and run them once
+npm run api-tests:generate     # generate missing functional/contract/scenario tests and run them once
 npx playwright test
 ```
 
@@ -66,7 +66,7 @@ npx tsx src/cli.ts audit demo-api/openapi.yaml
 # Read-only probe + bounded Schemathesis run against the test environment
 npx tsx src/cli.ts audit demo-api/openapi.yaml -u http://localhost:3100 --probe --schemathesis
 
-# Generate tests/api/<resource>/<method>/{positive,negative}.spec.ts and run them once
+# Generate tests/api/<resource>/<method>/{functional,contract,scenarios}.spec.ts and run them once
 npx tsx src/cli.ts generate demo-api/openapi.yaml -u http://localhost:3100 --allow-write --run
 
 npm run test:api        # the generated suite is plain Playwright and runs without the agent
@@ -79,27 +79,27 @@ The demo API contains one deliberate defect (`GET /stats` returns `total` as a s
 | Operation | Probe | Schemathesis | Functional |
 |---|---|---|---|
 | `GET /health`, `GET /items` | PASS | PASS | - |
-| `GET /stats` | **CONTRACT_MISMATCH** | **CONTRACT_MISMATCH** (ST108) | **CONTRACT_MISMATCH** |
-| `GET /items/{itemId}` | BLOCKED: no value for `itemId` | BLOCKED: only 404s, core logic never reached | PASS (positive + negative) |
-| `POST/PATCH/DELETE /items…` | NOT_RUN (read-only probe) | NOT_RUN without `--allow-write` | PASS (positive + negative) |
-| `GET /reports/{reportId}` | BLOCKED | BLOCKED | negative only (unknown id → 404) |
+| `GET /stats` | **CONTRACT_MISMATCH** | **CONTRACT_MISMATCH** (ST108) | functional PASS, **contract CONTRACT_MISMATCH** |
+| `GET /items/{itemId}` | BLOCKED: no value for `itemId` | BLOCKED: only 404s, core logic never reached | PASS (functional + contract) |
+| `POST/PATCH/DELETE /items…` | NOT_RUN (read-only probe) | NOT_RUN without `--allow-write` | PASS (functional + contract; PATCH/DELETE also scenarios) |
+| `GET /reports/{reportId}` | BLOCKED | BLOCKED | negative cases only (unknown id → 404) |
 | `POST /admin/reset` | NOT_RUN | NOT_RUN | BLOCKED: destructive, no confirmed cleanup |
 
 Note the `GET /items/{itemId}` row: Schemathesis exits green for it, but every request returned 404, so the tool reports `BLOCKED` rather than a misleading `PASS`.
 
 ## How functional tests are generated
 
-Tests are laid out per resource and operation, with positive and negative cases in separate files:
+Tests are laid out per resource and operation, with up to three files per operation, one per **suite type**:
 
 ```
 tests/api/
   items/
-    get/            positive.spec.ts  negative.spec.ts   (GET /items: limit below/above bounds, wrong type)
-    post/           positive.spec.ts  negative.spec.ts   (10 invalid bodies, one broken rule each)
-    get-by-id/      positive.spec.ts  negative.spec.ts   (unknown id → documented 404)
-    patch-by-id/    positive.spec.ts  negative.spec.ts
-    delete-by-id/   positive.spec.ts  negative.spec.ts
-  health/get/       positive.spec.ts                      (no 4xx documented → no negative file)
+    get/            functional.spec.ts  contract.spec.ts                     (contract: limit below/above bounds, wrong type)
+    post/           functional.spec.ts  contract.spec.ts                     (contract: 10 invalid bodies, one broken rule each)
+    get-by-id/      functional.spec.ts  contract.spec.ts                     (functional: unknown id → documented 404)
+    patch-by-id/    functional.spec.ts  contract.spec.ts  scenarios.spec.ts  (scenario: create → update → read → delete)
+    delete-by-id/   functional.spec.ts  contract.spec.ts  scenarios.spec.ts  (scenario: create → delete → read gives 404)
+  health/get/       functional.spec.ts  contract.spec.ts                     (no multi-request flow → no scenarios file)
   _support/         contract assertions, spec snapshot, items.resource.ts (create / remove helpers)
     api/            API objects: generated/ItemsApiBase.ts (rewritten) + ItemsApi.ts (yours, never overwritten)
 ```
@@ -109,11 +109,21 @@ tests/api/
    { "scenarios": [{ "create": "createItem", "idFrom": "/id", "param": "itemId", "read": "getItem", "update": "updateItem", "delete": "deleteItem" }] }
    ```
    `POST /x` + `GET /x/{id}` without either is reported as an unconfirmed candidate, with the question to answer. Write operations without a confirmed cleanup are not generated at all.
-2. **Negative cases** need two things from the spec: a rule to break (required, type, min/max, length, enum, maxItems, additionalProperties, minProperties, security) and a documented rejection (400/422/4XX, 404, 401). Each case breaks exactly one rule of a valid payload and names its source. No documented rejection → only `positive.spec.ts`, and the report says why.
+2. **Negative cases** need two things from the spec: a rule to break (required, type, min/max, length, enum, maxItems, additionalProperties, minProperties, security) and a documented rejection (400/422/4XX, 404, 401). Each case breaks exactly one rule of a valid payload and names its source. No documented rejection → no negative cases, and the report says why.
 3. Payloads come from schema `example` / `default` / `enum`, then minimal values that satisfy simple constraints; each value's source is in the helper's header. A constraint that cannot be met deterministically blocks the scenario.
 4. Created data is removed in `finally`, including records a broken API wrongly accepted in negative tests.
 5. Every response is validated against the spec (status, content type, JSON schema with `$ref`, `nullable`, formats). Failures are tagged `CONTRACT_MISMATCH`.
 6. Anything asserted that the spec does not state is marked `ASSUMPTION` for the reviewer.
+
+| File | What it checks |
+|---|---|
+| `functional.spec.ts` | the endpoint does its job: the expected success status and result (created id, same resource); documented 404 / 401 as behavior |
+| `contract.spec.ts` | conformance to OpenAPI: the status actually returned is documented, content type and body match the schema; invalid bodies / queries get a documented rejection |
+| `scenarios.spec.ts` | multi-request flows, in the folder of the operation under test (the action, not the setup step): update then read, delete then read 404 |
+
+**Positive/negative is not a file**: it is a tag on each test (`@positive` / `@negative`; pytest markers `positive` / `negative`), next to the suite tag (`@functional`, `@contract`, `@scenario`). Run one slice with `npx playwright test --grep @negative` or `pytest -m "contract and negative"`. A file is written only when it has at least one case; otherwise the report says why.
+
+Upgrading from the older `positive` / `negative` layout: `generate` deletes the generated `positive.spec.ts` / `negative.spec.ts` (and `test_positive.py` / `test_negative.py`) and lists them as `REMOVED`. Only files whose first line is the generator's header are touched; hand-written files stay.
 
 Generated files are overwritten when the spec changes; put hand-written cases in separate files. The same layout and rules are available to Claude Code as a skill: [`skills/api-test-writer/SKILL.md`](skills/api-test-writer/SKILL.md) (copy it to `.claude/skills/` in your test repository).
 

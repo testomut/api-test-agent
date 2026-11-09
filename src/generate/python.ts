@@ -1,16 +1,16 @@
 import type { Operation } from '../types.js';
-import type { ChainPlan, Meta, NegativeInput, PositiveInput } from './templates.js';
+import { roleOf, scenarioCases, type ChainPlan, type Meta, type SuiteInput, type SuiteType } from './templates.js';
 
 /**
  * pytest + requests output. Same cases and safety rules as the TypeScript templates;
- * idiomatic pytest: shared fixtures in conftest.py, parametrize for negative cases,
+ * idiomatic pytest: shared fixtures in conftest.py, parametrize for invalid inputs,
  * fixture teardown for cleanup.
  *
- * Layout: tests/api/<resource>/<method>[_by_id]/test_positive.py / test_negative.py
- * (underscores: folders are Python packages, each with an __init__.py).
+ * Layout: tests/api/<resource>/<method>[_by_id]/test_functional.py / test_contract.py / test_scenarios.py
+ * (underscores: folders are Python packages, each with an __init__.py). Polarity is a marker.
  */
 
-export const PY_FILES = { positive: 'test_positive.py', negative: 'test_negative.py' } as const;
+export const PY_FILES: Record<SuiteType, string> = { functional: 'test_functional.py', contract: 'test_contract.py', scenario: 'test_scenarios.py' };
 
 export const pyName = (s: string) => s.replace(/[^A-Za-z0-9_]/g, '_').replace(/^(\d)/, '_$1');
 const pyClass = (s: string) => pyName(s).split('_').filter(Boolean).map((p) => p[0].toUpperCase() + p.slice(1)).join('') + 'Resource';
@@ -184,6 +184,18 @@ def _load_env():
 _load_env()
 
 
+def pytest_configure(config):
+    # Suite type is the file (test_functional / test_contract / test_scenarios); polarity is a marker.
+    for name, text in {
+        "functional": "endpoint behavior: expected status and result",
+        "contract": "conformance to the OpenAPI document",
+        "scenario": "multi-request flows",
+        "positive": "the request is expected to succeed / the response to conform",
+        "negative": "the request is expected to be rejected",
+    }.items():
+        config.addinivalue_line("markers", f"{name}: {text}")
+
+
 class ApiClient(requests.Session):
     """requests.Session with a base URL, JSON accept header and a default timeout."""
 
@@ -266,102 +278,110 @@ def contract():
 ${fixtures}`;
 }
 
-/* ------------------------------------------------------------------ positive */
+/* ------------------------------------------------------------------ suites: functional / contract / scenarios */
 
-export function renderPyPositive({ op, plan }: PositiveInput, meta: Meta): string {
+const POS = '@pytest.mark.positive';
+const NEG = '@pytest.mark.negative';
+
+function pyHeader(suite: SuiteType, s: SuiteInput, meta: Meta, extra: string[]): string[] {
+  const lines = [...extra];
+  if (s.plan) lines.unshift(`Preconditions and cleanup: ${s.plan.chain.source}`);
+  lines.push('Polarity is a marker: run one side with -m positive or -m negative.');
+  return [header(suite, s.op, meta, lines), 'import uuid  # noqa: F401', 'from urllib.parse import quote  # noqa: F401', '', 'import pytest', '', 'from contract import read_pointer  # noqa: F401', '', `pytestmark = pytest.mark.${suite}`, '', ''];
+}
+
+/** The successful call with its precondition (fixtures) and cleanup; `assert` returns the assertion lines. */
+function pyPositive(s: SuiteInput, name: string, assert: (indent: string) => string[]): string[] {
+  const { op, plan } = s;
   const chain = plan?.chain;
-  const role = chain ? (chain.create === op ? 'create' : chain.read === op ? 'read' : chain.update === op ? 'update' : chain.delete === op ? 'delete' : undefined) : undefined;
+  const role = roleOf(op, plan);
   const res = plan ? resourceModule(plan).replace(/_resource$/, '') : '';
-  const extra: string[] = [];
-  if (chain) extra.push(`Preconditions and cleanup: ${chain.source}`);
-  if (role === 'update' && chain?.read) extra.push(`ASSUMPTION (not in spec, reviewer must confirm): ${plan!.assumptions.find((a) => a.startsWith('after')) ?? 'read after update returns the new values'}`);
-  const L = [header('positive', op, meta, extra)];
-  if (role || op.params.some((p) => p.in === 'path')) L.push('from urllib.parse import quote', '');
-  if (role) L.push('from contract import read_pointer', '');
-  L.push('');
-
   if (!role) {
     const query = Object.fromEntries(op.params.filter((p) => p.in === 'query' && p.required && p.knownValue !== undefined).map((p) => [p.name, p.knownValue]));
     const params = Object.keys(query).length ? `, params=${pyLit(query, 4)}` : '';
-    L.push(
-      'def test_returns_documented_success_response(api, contract):',
-      `    res = api.${op.method}(${pathExpr(op)}${params})`,
-      `    ${assertSuccess(op)}`,
-      `    contract.expect(res, ${str(op.method)}, ${str(op.path)})`,
-    );
-  } else if (role === 'create') {
-    L.push(
-      `def test_creates_resource_from_documented_example(api, contract, ${res}):`,
-      `    res = api.${op.method}(${pathExpr(op)}, json=${res}.create_payload)`,
-      '    try:',
-      `        ${assertSuccess(op)}`,
-      `        body = contract.expect(res, ${str(op.method)}, ${str(op.path)})`,
-      `        assert read_pointer(body, ${str(chain!.idPointer)}) not in (None, ""), "identifier at $response.body#${chain!.idPointer}"`,
-      '    finally:',
-      `        ${res}.remove_if_created(res)`,
-    );
-  } else if (role === 'read') {
-    L.push(
-      `def test_returns_resource_created_in_precondition(api, contract, created_${res}):`,
-      `    res = api.${op.method}(${pathExpr(op, chain!.param, `created_${res}`)})`,
-      `    ${assertSuccess(op)}`,
-      `    body = contract.expect(res, ${str(op.method)}, ${str(op.path)})`,
-      `    assert str(read_pointer(body, ${str(chain!.idPointer)})) == created_${res}, "same resource"`,
-    );
-  } else if (role === 'update') {
-    const r = chain!.read;
-    L.push(
-      `def test_applies_documented_example_update(api, contract, ${res}, created_${res}):`,
-      `    res = api.${op.method}(${pathExpr(op, chain!.param, `created_${res}`)}, json=${res}.update_payload)`,
-      `    ${assertSuccess(op)}`,
-      `    contract.expect(res, ${str(op.method)}, ${str(op.path)})`,
-    );
-    if (r) {
-      L.push(
-        '    # ASSUMPTION: the read operation returns the updated values.',
-        `    read = api.${r.method}(${pathExpr(r, chain!.param, `created_${res}`)})`,
-        `    ${assertSuccess(r, 'read')}`,
-        `    body = contract.expect(read, ${str(r.method)}, ${str(r.path)})`,
-        `    for key, value in ${res}.update_payload.items():`,
-        '        assert body.get(key) == value, f"{key} after update"',
-      );
-    }
-  } else if (role === 'delete') {
-    const r = chain!.read;
-    L.push(
-      `def test_deletes_resource_created_in_precondition(api, contract, created_${res}):`,
-      `    res = api.${op.method}(${pathExpr(op, chain!.param, `created_${res}`)})`,
-      `    ${assertSuccess(op)}`,
-      `    contract.expect(res, ${str(op.method)}, ${str(op.path)})`,
-    );
-    if (r && r.responses.some((x) => x.status === '404')) {
-      L.push(
-        `    read = api.${r.method}(${pathExpr(r, chain!.param, `created_${res}`)})`,
-        '    assert read.status_code == 404, f"documented 404 after delete, got {read.status_code}"',
-        `    contract.expect(read, ${str(r.method)}, ${str(r.path)})`,
-      );
-    }
+    return [POS, `def ${name}(api, contract):`, `    res = api.${op.method}(${pathExpr(op)}${params})`, ...assert('    '), '', ''];
   }
-  return L.join('\n') + '\n';
+  if (role === 'create') {
+    return [POS, `def ${name}(api, contract, ${res}):`, `    res = api.${op.method}(${pathExpr(op)}, json=${res}.create_payload)`, '    try:', ...assert('        '), '    finally:', `        ${res}.remove_if_created(res)`, '', ''];
+  }
+  const body = role === 'update' ? `, json=${res}.update_payload` : '';
+  // created_<res> removes the resource after the test (best effort: a deleted one is already gone).
+  return [POS, `def ${name}(api, contract, ${res}, created_${res}):`, `    res = api.${op.method}(${pathExpr(op, chain!.param, `created_${res}`)}${body})`, ...assert('    '), '', ''];
 }
 
-/* ------------------------------------------------------------------ negative */
+const pyNotFoundId = (idExpr: string) => (idExpr === 'randomUUID()' ? 'str(uuid.uuid4())' : /^\d+$/.test(idExpr) ? `str(${idExpr})` : 'f"nonexistent-{uuid.uuid4().hex}"');
 
-export function renderPyNegative(n: NegativeInput, meta: Meta): string {
-  const { op, plan } = n;
+function pyNotFound(s: SuiteInput, name: string, mark: string, assert: string): string[] {
+  const { op, plan } = s;
+  const chain = plan?.chain;
+  const res = plan ? resourceModule(plan).replace(/_resource$/, '') : '';
+  const body = plan?.updatePayload !== undefined && chain?.update === op;
+  return [
+    mark,
+    `def ${name}(api, contract${body ? `, ${res}` : ''}):`,
+    `    missing_id = ${pyNotFoundId(s.notFound!.idExpr)}`,
+    `    res = api.${op.method}(${pathExpr(op, chain?.param ?? s.notFound!.param, 'missing_id')}${body ? `, json=${res}.update_payload` : ''})`,
+    `    ${assert}`,
+    '',
+    '',
+  ];
+}
+
+function pyAnonymous(s: SuiteInput, name: string, mark: string, assert: string): string[] {
+  return [mark, `def ${name}(anonymous_api, contract):`, `    res = anonymous_api.${s.op.method}(${pathExpr(s.op, s.plan?.chain.param, '"unused"')})`, `    ${assert}`, '', ''];
+}
+
+const statusIs = (op: Operation, code: string) =>
+  `assert res.status_code == ${code}, f"CONTRACT_MISMATCH ${op.method.toUpperCase()} ${op.path.replace(/[{}]/g, (c) => c + c)}: expected documented rejection ${code}, got {res.status_code}"`;
+const finish = (L: string[]) => L.join('\n').replace(/\n+$/, '') + '\n';
+
+/** test_functional.py: the endpoint does its job (expected status and result); documented 404/401 as behavior. */
+export function renderPyFunctional(s: SuiteInput, meta: Meta): string {
+  const { op, plan } = s;
+  const role = roleOf(op, plan);
+  const ptr = plan ? str(plan.chain.idPointer) : '';
+  const L = pyHeader('functional', s, meta, ['Checks the behavior of the endpoint: status and result. The response schema is checked in test_contract.py.']);
+  if (s.positive) {
+    const names: Record<string, string> = {
+      none: 'test_returns_documented_success_status',
+      create: 'test_creates_resource_from_documented_example',
+      read: 'test_returns_resource_created_in_precondition',
+      update: 'test_applies_documented_example_update',
+      delete: 'test_deletes_resource_created_in_precondition',
+    };
+    const res = plan ? resourceModule(plan).replace(/_resource$/, '') : '';
+    L.push(
+      ...pyPositive(s, names[role ?? 'none'], (i) => {
+        const a = [`${i}${assertSuccess(op)}`];
+        if (role === 'create') a.push(`${i}assert read_pointer(res.json(), ${ptr}) not in (None, ""), "identifier at $response.body#${plan!.chain.idPointer}"`);
+        if (role === 'read') a.push(`${i}assert str(read_pointer(res.json(), ${ptr})) == created_${res}, "same resource"`);
+        return a;
+      }),
+    );
+  }
+  if (s.notFound) L.push(...pyNotFound(s, 'test_returns_documented_404_for_unknown_id', NEG, statusIs(op, '404')));
+  if (s.unauthorized) L.push(...pyAnonymous(s, 'test_returns_documented_401_without_credentials', NEG, statusIs(op, '401')));
+  return finish(L);
+}
+
+/** test_contract.py: responses match OpenAPI; invalid requests are rejected as documented. */
+export function renderPyContract(s: SuiteInput, meta: Meta): string {
+  const { op, plan } = s;
   const chain = plan?.chain;
   const res = plan ? resourceModule(plan).replace(/_resource$/, '') : '';
   const isCreate = chain?.create === op;
   const needsExisting = !!chain && chain.create !== op && op.params.some((p) => p.in === 'path' && p.name === chain.param);
-  const L = [header('negative', op, meta, ['Expected statuses come from the documented responses of this operation; each case breaks one documented rule.'])];
-  L.push('import uuid  # noqa: F401', 'from urllib.parse import quote  # noqa: F401', '', 'import pytest', '');
-  L.push(`REJECTION = ${pyLit(n.validation)}  # documented in the spec`, '');
+  const expect = `contract.expect(res, ${str(op.method)}, ${str(op.path)})`;
+  const L = pyHeader('contract', s, meta, ['Checks conformance to the OpenAPI document: the status actually returned is documented and the body matches its schema.', 'Invalid requests break one documented constraint each and must get a documented rejection.']);
+  if (s.bodyCases.length || s.queryCases.length) L.push(`REJECTION = ${pyLit(s.validation)}  # documented in the spec`, '', '');
+  if (s.positive) L.push(...pyPositive(s, 'test_success_response_matches_contract', (i) => [`${i}${expect}`]));
+  if (s.notFound) L.push(...pyNotFound(s, 'test_response_for_unknown_id_matches_contract', POS, expect));
+  if (s.unauthorized) L.push(...pyAnonymous(s, 'test_response_without_credentials_matches_contract', POS, expect));
 
-  if (n.bodyCases.length) {
+  if (s.bodyCases.length) {
     L.push('INVALID_BODIES = [');
-    for (const c of n.bodyCases) L.push(`    pytest.param(${pyLit(c.data, 4)}, id=${str(c.title)}),  # ${c.source}`);
-    L.push(']', '', '');
-    L.push('@pytest.mark.parametrize("payload", INVALID_BODIES)');
+    for (const c of s.bodyCases) L.push(`    pytest.param(${pyLit(c.data, 4)}, id=${str(c.title)}),  # ${c.source}`);
+    L.push(']', '', '', NEG, '@pytest.mark.parametrize("payload", INVALID_BODIES)');
     if (needsExisting) {
       L.push(`def test_rejects_invalid_body(api, contract, created_${res}, payload):`);
       L.push(`    res = api.${op.method}(${pathExpr(op, chain!.param, `created_${res}`)}, json=payload)`);
@@ -372,30 +392,51 @@ export function renderPyNegative(n: NegativeInput, meta: Meta): string {
     }
     L.push(`    contract.expect_rejected(res, REJECTION, ${str(op.method)}, ${str(op.path)})`, '', '');
   }
-
-  if (n.queryCases.length) {
+  if (s.queryCases.length) {
     L.push('INVALID_QUERIES = [');
-    for (const c of n.queryCases) L.push(`    pytest.param(${pyLit(c.query, 4)}, id=${str(c.title)}),  # ${c.source}`);
-    L.push(']', '', '');
-    L.push('@pytest.mark.parametrize("params", INVALID_QUERIES)');
-    L.push('def test_rejects_invalid_query(api, contract, params):');
-    L.push(`    res = api.${op.method}(${pathExpr(op)}, params=params)`);
-    L.push(`    contract.expect_rejected(res, REJECTION, ${str(op.method)}, ${str(op.path)})`, '', '');
+    for (const c of s.queryCases) L.push(`    pytest.param(${pyLit(c.query, 4)}, id=${str(c.title)}),  # ${c.source}`);
+    L.push(']', '', '', NEG, '@pytest.mark.parametrize("params", INVALID_QUERIES)', 'def test_rejects_invalid_query(api, contract, params):');
+    L.push(`    res = api.${op.method}(${pathExpr(op)}, params=params)`, `    contract.expect_rejected(res, REJECTION, ${str(op.method)}, ${str(op.path)})`, '', '');
   }
+  return finish(L);
+}
 
-  if (n.notFound) {
-    const body = plan?.updatePayload !== undefined && chain?.update === op;
-    const idExpr = n.notFound.idExpr === 'randomUUID()' ? 'str(uuid.uuid4())' : /^\d+$/.test(n.notFound.idExpr) ? `str(${n.notFound.idExpr})` : 'f"nonexistent-{uuid.uuid4().hex}"';
-    L.push(`def test_returns_documented_404_for_unknown_id(api, contract${body ? `, ${res}` : ''}):`);
-    L.push(`    missing_id = ${idExpr}`);
-    L.push(`    res = api.${op.method}(${pathExpr(op, chain?.param ?? n.notFound.param, 'missing_id')}${body ? `, json=${res}.update_payload` : ''})`);
-    L.push(`    contract.expect_rejected(res, ["404"], ${str(op.method)}, ${str(op.path)})`, '', '');
+/** test_scenarios.py: multi-request flows whose primary (action under test) is this operation. */
+export function renderPyScenarios(s: SuiteInput, meta: Meta): string {
+  const { op, plan } = s;
+  const chain = plan!.chain;
+  const r = chain.read!;
+  const res = resourceModule(plan!).replace(/_resource$/, '');
+  const sc = scenarioCases(s);
+  const extra = ['Each scenario: setup (create) → action (this operation) → assertion (read) → cleanup (delete).'];
+  if (sc.updateRead) extra.push(`ASSUMPTION (not in spec, reviewer must confirm): ${plan!.assumptions.find((a) => a.startsWith('after')) ?? 'read after update returns the new values'}`);
+  const L = pyHeader('scenario', s, meta, extra);
+  const id = `created_${res}`;
+  if (sc.updateRead) {
+    L.push(
+      POS,
+      `def test_update_is_visible_through_read(api, ${res}, ${id}):`,
+      `    res = api.${op.method}(${pathExpr(op, chain.param, id)}, json=${res}.update_payload)`,
+      `    ${assertSuccess(op)}`,
+      '    # ASSUMPTION: the read operation returns the updated values.',
+      `    read = api.${r.method}(${pathExpr(r, chain.param, id)})`,
+      `    ${assertSuccess(r, 'read')}`,
+      '    body = read.json()',
+      `    for key, value in ${res}.update_payload.items():`,
+      '        assert body.get(key) == value, f"{key} after update"',
+      '',
+      '',
+    );
   }
-
-  if (n.unauthorized) {
-    L.push('def test_returns_documented_401_without_credentials(anonymous_api, contract):');
-    L.push(`    res = anonymous_api.${op.method}(${pathExpr(op, chain?.param, '"unused"')})`);
-    L.push(`    contract.expect_rejected(res, ["401"], ${str(op.method)}, ${str(op.path)})`, '');
+  if (sc.deleteGone) {
+    L.push(
+      POS,
+      `def test_deleted_resource_is_no_longer_returned(api, ${id}):`,
+      `    res = api.${op.method}(${pathExpr(op, chain.param, id)})`,
+      `    ${assertSuccess(op)}`,
+      `    read = api.${r.method}(${pathExpr(r, chain.param, id)})`,
+      '    assert read.status_code == 404, f"documented 404 after delete, got {read.status_code}"',
+    );
   }
-  return L.join('\n').replace(/\n{3,}$/, '\n') + '\n';
+  return finish(L);
 }

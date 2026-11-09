@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { SAFE_METHODS, type Finding, type Operation, type Status } from '../types.js';
@@ -9,9 +9,9 @@ import { operationPointer } from '../spec/catalog.js';
 import { findChains, type CrudChain, type DepsFile } from './graph.js';
 import { sampleFromSchema } from './sample.js';
 import { bodyCases, documentedRejections, nonexistentIdExpr, queryCases } from './negative.js';
-import { CONTRACT_ASSERT, operationFolder, renderNegative, renderPositive, renderResourceHelpers, type ChainPlan, type Meta } from './templates.js';
+import { CONTRACT_ASSERT, SUITE_TYPES, TS_FILES, operationFolder, renderContract, renderFunctional, renderResourceHelpers, renderScenarios, scenarioCases, suiteCounts, type ChainPlan, type Meta, type SuiteInput, type SuiteType } from './templates.js';
 import { API_BASE, buildApiIndex, renderApiBaseClass, renderApiChildClass, renderApis } from './api-objects.js';
-import { PY_FILES, pyName, renderConftest, renderPyNegative, renderPyPositive, renderPyResource, resourceModule } from './python.js';
+import { PY_FILES, pyName, renderConftest, renderPyContract, renderPyFunctional, renderPyResource, renderPyScenarios, resourceModule } from './python.js';
 
 const PY_RESERVED = new Set([
   'py', 'pytest', '_pytest', 'requests', 'jsonschema', 'contract', 'conftest',
@@ -31,8 +31,8 @@ export interface GenerateOptions {
 }
 
 export interface Scenario {
-  name: string; // e.g. "items/post/negative"
-  kind: 'positive' | 'negative' | 'chain';
+  name: string; // e.g. "items/post/contract"
+  kind: SuiteType | 'chain';
   status: Status;
   reason: string;
   operations: string[];
@@ -41,6 +41,8 @@ export interface Scenario {
 
 export interface GenerateResult {
   files: string[];
+  /** Generated files of earlier runs that this run no longer produces (incl. the old positive/negative layout). */
+  removed: string[];
   scenarios: Scenario[];
 }
 
@@ -93,6 +95,7 @@ export async function generate(spec: LoadedSpec, ops: Operation[], o: GenerateOp
   const support = join(out, '_support');
   const { refs, groups } = buildApiIndex(ops);
   const files: string[] = [];
+  const removed: string[] = [];
   const scenarios: Scenario[] = [];
   const write = async (file: string, content: string) => {
     await mkdir(dirname(file), { recursive: true });
@@ -122,10 +125,12 @@ export async function generate(spec: LoadedSpec, ops: Operation[], o: GenerateOp
   const planOf = (op: Operation) => plans.find((p) => [p.chain.create, p.chain.read, p.chain.update, p.chain.delete].includes(op));
   const helperFile = (p: ChainPlan) => (py ? join(support, `${resourceModule(p)}.py`) : join(support, `${operationFolder(p.chain.create).resource}.resource.ts`));
   for (const p of plans) await write(helperFile(p), py ? renderPyResource(p, meta) : renderResourceHelpers(p, refs, meta));
-  const fileNames = py ? PY_FILES : { positive: 'positive.spec.ts', negative: 'negative.spec.ts' };
+  const fileNames = py ? PY_FILES : TS_FILES;
+  const legacyNames = py ? ['test_positive.py', 'test_negative.py'] : ['positive.spec.ts', 'negative.spec.ts'];
   const packages = new Set<string>(); // python: every test folder is a package (__init__.py)
 
-  // 2. Per operation: <resource>/<action>/positive.spec.ts and, when the spec allows, negative.spec.ts.
+  // 2. Per operation: <resource>/<action>/{functional,contract,scenarios}.spec.ts, each only when it has a case.
+  //    Polarity (positive/negative) is a tag inside the files, not a file of its own.
   const used = new Set<string>();
   for (const op of ops) {
     let { resource, action } = operationFolder(op);
@@ -164,14 +169,6 @@ export async function generate(spec: LoadedSpec, ops: Operation[], o: GenerateOp
       posReason = `${op.key} ends the session shared by the other tests (logout/revoke): test it with its own login, not in the generated suite.`;
     }
 
-    if (posReason) scenarios.push({ name: `${name}/positive`, kind: 'positive', status: 'BLOCKED', reason: posReason, operations: [op.key] });
-    else {
-      const file = join(dir, fileNames.positive);
-      await write(file, py ? renderPyPositive({ op, refs, plan, helpers }, meta) : renderPositive({ op, refs, plan, helpers }, meta));
-      packages.add(dir);
-      scenarios.push({ name: `${name}/positive`, kind: 'positive', status: 'NOT_RUN', reason: 'Generated; not executed yet.', operations: [op.key], file });
-    }
-
     // --- negative (only documented rejections)
     const rej = documentedRejections(op);
     const reachable = safe || !!plan; // never fire write requests at operations without confirmed cleanup
@@ -205,15 +202,44 @@ export async function generate(spec: LoadedSpec, ops: Operation[], o: GenerateOp
       }
     }
 
-    if (bCases.length || qCases.length || notFound || unauthorized) {
-      const file = join(dir, fileNames.negative);
-      const input = { op, refs, plan, helpers, validation: rej.validation, bodyCases: bCases, queryCases: qCases, notFound, unauthorized };
-      await write(file, py ? renderPyNegative(input, meta) : renderNegative(input, meta));
-      packages.add(dir);
-      const count = bCases.length + qCases.length + (notFound ? 1 : 0) + (unauthorized ? 1 : 0);
-      scenarios.push({ name: `${name}/negative`, kind: 'negative', status: 'NOT_RUN', reason: `Generated ${count} case(s); not executed yet.`, operations: [op.key], file });
-    } else {
-      scenarios.push({ name: `${name}/negative`, kind: 'negative', status: 'BLOCKED', reason: `No negative file: ${why.join('; ') || 'nothing documented to reject'}.`, operations: [op.key] });
+    // --- suites
+    const input: SuiteInput = { op, refs, plan, helpers, positive: !posReason, validation: rej.validation, bodyCases: bCases, queryCases: qCases, notFound, unauthorized };
+    const counts = suiteCounts(input);
+    const render: Record<SuiteType, (s: SuiteInput, m: Meta) => string> = py
+      ? { functional: renderPyFunctional, contract: renderPyContract, scenario: renderPyScenarios }
+      : { functional: renderFunctional, contract: renderContract, scenario: renderScenarios };
+    const sc = scenarioCases(input);
+    const role = plan ? (plan.chain.update === op ? 'update' : plan.chain.delete === op ? 'delete' : undefined) : undefined;
+    for (const suite of SUITE_TYPES) {
+      const label = `${name}/${suite === 'scenario' ? 'scenarios' : suite}`;
+      if (counts[suite]) {
+        const file = join(dir, fileNames[suite]);
+        await write(file, render[suite](input, meta));
+        packages.add(dir);
+        scenarios.push({ name: label, kind: suite, status: 'NOT_RUN', reason: `Generated ${counts[suite]} case(s); not executed yet.`, operations: [op.key], file });
+        continue;
+      }
+      // A suite without cases gets no file; the reason is reported instead.
+      if (suite === 'scenario') {
+        // Only operations that are the action of a lifecycle flow (update → read, delete → read 404) have scenarios.
+        if (!role) continue;
+        const r = plan!.chain.read;
+        const reason = posReason ?? (!r ? 'no read operation is linked to verify the result' : role === 'delete' && !sc.deleteGone ? `${r.key} documents no 404 to verify the deletion` : 'no example-backed update payload');
+        scenarios.push({ name: label, kind: suite, status: 'BLOCKED', reason: `No scenario: ${reason}`, operations: [op.key] });
+        continue;
+      }
+      const parts = [posReason ? `success call: ${posReason}` : '', why.length ? `rejections: ${why.join('; ')}` : ''].filter(Boolean);
+      scenarios.push({ name: label, kind: suite, status: 'BLOCKED', reason: `No ${suite} cases: ${parts.join(' / ') || 'nothing documented to check'}.`, operations: [op.key] });
+    }
+
+    // Generated files that this run no longer produces (old positive/negative layout, or a suite that lost its cases).
+    const keep = new Set(SUITE_TYPES.filter((t) => counts[t]).map((t) => fileNames[t]));
+    for (const f of [...legacyNames, ...SUITE_TYPES.map((t) => fileNames[t])]) {
+      const p = join(dir, f);
+      if (!keep.has(f) && (await isGenerated(p))) {
+        await unlink(p);
+        removed.push(p);
+      }
     }
   }
 
@@ -222,7 +248,7 @@ export async function generate(spec: LoadedSpec, ops: Operation[], o: GenerateOp
     await write(join(support, 'contract.py'), await readFile(fileURLToPath(new URL('../../src/contract/contract.py', import.meta.url)), 'utf8'));
     await write(join(support, 'openapi_snapshot.json'), JSON.stringify(spec.doc, null, 2) + '\n');
     await write(join(out, 'conftest.py'), renderConftest(plans, meta));
-    // Folders are packages so test_positive.py / test_negative.py can repeat across folders.
+    // Folders are packages so test_functional.py / test_contract.py / test_scenarios.py can repeat across folders.
     const inits = new Set<string>([out]);
     for (const dir of packages) for (let d = dir; d.startsWith(out) && d !== out; d = dirname(d)) inits.add(d);
     for (const d of inits) if (!existsSync(join(d, '__init__.py'))) await write(join(d, '__init__.py'), '');
@@ -243,7 +269,14 @@ export async function generate(spec: LoadedSpec, ops: Operation[], o: GenerateOp
     await write(join(apiDir, 'generated', 'apis.ts'), renderApis(groups, o.version));
     await write(join(support, 'openapi.snapshot.ts'), `// Snapshot of ${spec.location} (hash ${spec.hash}). Regenerated with the tests.\nexport const spec: any = ${JSON.stringify(spec.doc, null, 2)};\n`);
   }
-  return { files, scenarios };
+  return { files, removed, scenarios };
+}
+
+/** A file written by the generator (its first line carries the generated header), never a hand-written one. */
+async function isGenerated(file: string): Promise<boolean> {
+  if (!existsSync(file)) return false;
+  const first = (await readFile(file, 'utf8')).split('\n', 1)[0];
+  return /^(\/\/|""")\s*\S.* · \w+ cases\. Generated by api-test-agent /.test(first);
 }
 
 /** Python used for generated pytest suites: API_TESTS_PYTHON, then ./.venv, then python on PATH. */
@@ -363,7 +396,7 @@ export async function runGenerated(result: GenerateResult, env: { baseUrl: strin
 
 const SEVERITY: Status[] = ['CONTRACT_MISMATCH', 'TEST_FAILURE', 'PASS', 'NOT_RUN', 'BLOCKED'];
 
-/** One functional finding per operation: the most important status across its positive/negative files. */
+/** One functional finding per operation: the most important status across its suite files. */
 export function scenarioFindings(result: GenerateResult): Finding[] {
   const byOp = new Map<string, Scenario[]>();
   for (const s of result.scenarios) for (const op of s.operations) byOp.set(op, [...(byOp.get(op) ?? []), s]);

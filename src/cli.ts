@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { Command, Option } from 'commander';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import { join, relative, resolve } from 'node:path';
 import { loadSpec, UnsupportedSpecError, type LoadedSpec } from './spec/loader.js';
 import { lintSpec } from './spec/lint.js';
 import { buildCatalog } from './spec/catalog.js';
@@ -229,9 +229,10 @@ common(program.command('generate').description('audit, then generate Playwright 
     const r = await runAudit(location, o);
     const deps = o.deps ? JSON.parse(await readFile(o.deps, 'utf8')) : undefined;
     if (o.ai) await aiProposals(r.spec.doc, r.ops, o.out, { maxCalls: Number(o.aiMaxCalls), model: o.aiModel, runner: o.aiRunner }, deps);
-    log('Generating functional scenarios…');
+    log('Generating test suites (functional / contract / scenarios)…');
     const gen = await generate(r.spec, r.ops, { outDir: o.testsDir!, deps, version: VERSION, lang: o.lang });
     for (const s of gen.scenarios) log(`  ${s.status.padEnd(9)} ${s.name}`);
+    for (const f of gen.removed) log(`  REMOVED   ${relative(process.cwd(), f).replace(/\\/g, '/')} (generated earlier, no longer produced)`);
     if (o.run) {
       log('Running generated tests once (assertions are never changed to pass)…');
       await runGenerated(gen, { baseUrl: o.baseUrl! }, o.out, o.lang);
@@ -254,7 +255,7 @@ common(program.command('generate').description('audit, then generate Playwright 
     log(`Report: ${files.md}`);
     if (o.draftPr) {
       if (!gen.files.length) log('No tests generated: Draft PR skipped.');
-      else log(`Draft PR: ${await openDraftPr({ files: [...gen.files, files.md], title: `test(api): generated contract and CRUD tests for ${report.spec.title ?? location}`, bodyFile: files.md, hash: r.spec.hash })}`);
+      else log(`Draft PR: ${await openDraftPr({ files: [...gen.files, ...gen.removed, files.md], title: `test(api): generated contract and CRUD tests for ${report.spec.title ?? location}`, bodyFile: files.md, hash: r.spec.hash })}`);
     }
     finish(report, o.failOn);
   });
