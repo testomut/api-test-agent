@@ -82,7 +82,8 @@ The TypeScript and Python validators apply the same rules; `tests/unit/validator
 | JSON schema (3.0 nullable, 3.1 / 3.2 JSON Schema 2020-12, formats) | ✅ | | |
 | local / bundled `$ref` | ✅ | the snapshot is bundled | |
 | response headers | ✅ | required ones present; documented ones match their schema (integer / number / boolean coerced, arrays comma-separated, style simple); `Content-Type` ignored as OpenAPI says | 5 ✔ |
-| no body for `204` / `205` / `304`, `HEAD`, responses without `content` | ✅ | a body that arrives anyway is `unexpected-body` | 5 ✔ |
+| no body for `204` / `205` / `304`, `HEAD` | ✅ | a body that arrives anyway is `unexpected-body` (RFC 9110) | 5 ✔ |
+| a response without `content` | ✅ | means "not described", not "no body": a body is accepted and not checked, with a note and `MISSING_RESPONSE_SCHEMA` | 5 ✔ |
 | empty body where a schema is documented | ✅ | `empty-body` (JSON `null` is a body) | 5 ✔ |
 | text media types with a schema | ✅ | the text is validated as a string | 5 ✔ |
 | other media types (XML, binary, …) | ⛔ | not checked: a note in the test report (Playwright annotation `contract-note`, pytest warning) and `UNSUPPORTED_MEDIA_TYPE` in `coverage-gaps.json` | 5 ✔ (gap) |

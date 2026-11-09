@@ -27,7 +27,7 @@ const doc = {
           default: { description: 'error', content: { 'application/json': { schema: { type: 'object', required: ['message'], properties: { message: { type: 'string' } } } } } },
         },
       },
-      delete: { responses: { '204': { description: 'gone' }, '4XX': { description: 'client error' } } },
+      delete: { responses: { '204': { description: 'gone' }, '205': { description: 'reset' }, '4XX': { description: 'client error' } } },
       head: { responses: { '200': { description: 'ok', content: { 'application/json': { schema: { type: 'object' } } } } } },
     },
     '/text': { get: { responses: { '200': { description: 'ok', content: { 'text/plain': { schema: { type: 'string', pattern: '^OK' } } } } } } },
@@ -64,7 +64,8 @@ const CASES: [string, ResponseInput, boolean, string | undefined][] = [
   ['empty body where a schema is documented', { method: 'get', path: '/users', status: 200, contentType: 'application/json', body: null, rawText: '', headers: okHeaders }, false, 'empty-body'],
   ['204 without a body', { method: 'delete', path: '/users', status: 204, contentType: null, body: '', rawText: '' }, true, undefined],
   ['204 with a body', { method: 'delete', path: '/users', status: 204, ...json({ deleted: true }) }, false, 'unexpected-body'],
-  ['4XX range without content, body returned', { method: 'delete', path: '/users', status: 409, ...json({ message: 'conflict' }) }, false, 'unexpected-body'],
+  ['no content documented is "not described": a body is accepted, not checked', { method: 'delete', path: '/users', status: 409, ...json({ message: 'conflict' }) }, true, undefined],
+  ['205 with a body', { method: 'delete', path: '/users', status: 205, ...json({ reset: true }) }, false, 'unexpected-body'],
   ['HEAD: no body is expected', { method: 'head', path: '/users', status: 200, contentType: 'application/json', body: '', rawText: '' }, true, undefined],
   ['text/plain matches its string schema', { method: 'get', path: '/text', status: 200, contentType: 'text/plain', body: 'OK fine', rawText: 'OK fine' }, true, undefined],
   ['text/plain breaks its pattern', { method: 'get', path: '/text', status: 200, contentType: 'text/plain', body: 'bad', rawText: 'bad' }, false, 'schema'],
@@ -86,6 +87,10 @@ describe('stage 5: response contract', () => {
       expect({ ok: r.ok, kind: r.kind }, r.errors.join('; ')).toEqual({ ok, kind });
     });
   }
+
+  it('a body under a response without content is accepted with a note', () => {
+    expect(v.validateResponse({ method: 'delete', path: '/users', status: 409, ...json({ message: 'conflict' }) }).notes).toEqual(['4XX: no content documented, body not checked (22 bytes)']);
+  });
 
   it('notes say what was not checked', () => {
     expect(v.validateResponse(CASES.find((c) => c[0].startsWith('xml'))![1]).notes).toEqual(['200 application/xml: media type not supported by the validator, body not checked']);

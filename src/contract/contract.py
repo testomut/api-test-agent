@@ -229,11 +229,15 @@ class ContractValidator:
         raw = raw_text if raw_text is not None else ("" if body is _UNPARSEABLE else (body if isinstance(body, str) else json.dumps(body)))
         content = resp.get("content") or {}
         head = method.lower() == "head"
-        if not content or status in _NO_BODY_STATUS or head:
-            # No body is documented (or the status / method has none): one that arrives anyway breaks the contract.
+        # 204 / 205 / 304 and HEAD never carry a body (RFC 9110): one that arrives breaks the contract.
+        if status in _NO_BODY_STATUS or head:
             if raw.strip() and not head:
-                why = f"status {code} has no body" if status in _NO_BODY_STATUS else f"no content is documented for {matched}"
-                return False, "unexpected-body", [f"A body was returned but {why} ({len(raw)} bytes)"]
+                return False, "unexpected-body", [f"A body was returned but status {code} has no body ({len(raw)} bytes)"]
+            return True, None, []
+        # No content documented means "not described", not "no body": the body is not checked, and that is said.
+        if not content:
+            if raw.strip():
+                self.notes.append(f"{matched}: no content documented, body not checked ({len(raw)} bytes)")
             return True, None, []
         actual = (content_type or "").split(";")[0].strip().lower()
         # Compare without parameters: "application/json; v=1.0" documents "application/json".
