@@ -17,6 +17,17 @@ export interface CrudChain {
   update?: Operation;
   delete?: Operation;
   source: string;
+  /** Body fields of create taken from existing data at run time (deps file "fill"), never created by the test. */
+  fill?: FillRule[];
+}
+
+export interface FillRule {
+  field: string;
+  /** operationId of the list / read operation the value comes from. */
+  fromId: string;
+  from?: Operation;
+  /** JSON pointer into that operation's response body, e.g. "/data/0/id". */
+  pointer: string;
 }
 
 export interface Candidate {
@@ -26,7 +37,16 @@ export interface Candidate {
 }
 
 export interface DepsFile {
-  scenarios: { create: string; idFrom: string; param: string; read?: string; update?: string; delete?: string }[];
+  scenarios: {
+    create: string;
+    idFrom: string;
+    param: string;
+    read?: string;
+    update?: string;
+    delete?: string;
+    /** field → where its value comes from at run time: { "product_id": { "from": "getProducts", "pointer": "/data/0/id" } } */
+    fill?: Record<string, { from: string; pointer: string }>;
+  }[];
 }
 
 const RUNTIME_EXPR = /^\$response\.body#(\/.*)$/;
@@ -48,6 +68,7 @@ export function findChains(doc: OpenApiDoc, ops: Operation[], deps?: DepsFile): 
       update: s.update ? byId.get(s.update) : undefined,
       delete: s.delete ? byId.get(s.delete) : undefined,
       source: 'deps file (human-confirmed)',
+      ...(s.fill ? { fill: Object.entries(s.fill).map(([field, f]) => ({ field, fromId: f?.from, from: byId.get(f?.from), pointer: f?.pointer })) } : {}),
     });
   }
 
