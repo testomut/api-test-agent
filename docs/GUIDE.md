@@ -71,6 +71,7 @@ API_PASSWORD=...
 Before `generate` and `audit` log in, they ask: **Do you have a test account?**
 
 - **Yes** (`existing`): the credentials above are read from `.env`.
+- **Auto** (`auto`, only with `API_TEST_ACCOUNT=auto` or `--test-account auto`): the account from `.env` while it works. Only when it is missing or its login is refused (401 / 403 / 422, e.g. the test environment reset its data) is a new one registered: by the agent before `--run` (the generated tests then use that one), or by a Playwright worker that hits the refusal (one per such worker). A working account never causes a registration, and `.env` is never changed. Needs `--allow-write` for the agent's registration.
 - **No** (`new`): **new accounts are registered on every run** and left on the server (nothing deletes them): the generated suite registers **one per Playwright worker** (the `testAccount` worker fixture in `_support/fixtures.ts`), so parallel workers never share user data; the agent registers one more only for its own `--probe/--schemathesis`. Emails (`api-test-<unique>@example.com`) and passwords are generated and kept in memory only. Needs `--allow-write`. Playwright starts a fresh worker after a failed test, and that worker registers its own account too.
 
 ```
@@ -78,7 +79,7 @@ API_REGISTER=POST /users/register
 API_REGISTER_BODY={"first_name":"Api","last_name":"Test","email":"${API_USER}","password":"${API_PASSWORD}"}
 ```
 
-`API_REGISTER_BODY` must use the same `${VAR}`s as `API_LOGIN_BODY`; `${UNIQUE}` is a per-run suffix for other unique fields. To skip the question (CI): `API_TEST_ACCOUNT=existing|new` or `--test-account existing|new`. Without a terminal and without the setting, an account in `.env` means `existing`; otherwise the run stops with an explanation.
+`API_REGISTER_BODY` must use the same `${VAR}`s as `API_LOGIN_BODY`; `${UNIQUE}` is a per-run suffix for other unique fields. To skip the question (CI): `API_TEST_ACCOUNT=existing|new|auto` or `--test-account existing|new|auto`. Python suites support `existing` only (for now). Without a terminal and without the setting, an account in `.env` means `existing`; otherwise the run stops with an explanation.
 
 You need at least one of: a spec, a Postman collection, or existing tests. With none of them there is nothing to analyse.
 

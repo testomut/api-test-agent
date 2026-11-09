@@ -13,6 +13,9 @@
  *  - API_TEST_ACCOUNT=new: every Playwright WORKER registers its own NEW account through
  *    API_REGISTER / API_REGISTER_BODY at the start of every run. Accounts are never deleted.
  *    Generated email/password live in the worker's memory only.
+ *  - API_TEST_ACCOUNT=auto: the account from .env; only when it is missing or its login is refused
+ *    (401 / 403 / 422, e.g. the test environment was reset) does a worker register a new one, once,
+ *    and log in with it. A working account never causes a registration.
  * The login happens lazily: a test that only uses publicApi never logs in.
  * Without API_LOGIN the static API_TOKEN from playwright.config (or none) is used unchanged.
  */
@@ -28,7 +31,7 @@ try {
 
 type Credentials = Record<string, string>;
 export interface TestAccount {
-  mode: 'none' | 'existing' | 'new';
+  mode: 'none' | 'existing' | 'new' | 'auto';
   /** Values for the ${VAR}s of API_LOGIN_BODY. */
   credentials: Credentials;
   /** Email-like identifier, for logs (never the password). */
@@ -63,6 +66,8 @@ async function resolveAccount(playwright: PlaywrightWorkerArgs['playwright'], ba
   if (!process.env.API_LOGIN) return { mode: 'none', credentials: {} };
   const vars = loginVars();
   const mode = (process.env.API_TEST_ACCOUNT ?? 'existing').trim().toLowerCase();
+  // auto: whatever .env has; TokenSource registers a new account only if this one is missing or refused.
+  if (mode === 'auto') return { mode: 'auto', credentials: Object.fromEntries(vars.filter((v) => process.env[v]).map((v) => [v, process.env[v]!])) };
   if (mode !== 'new') {
     if (mode !== 'existing') throw new Error(`API_TEST_ACCOUNT must be "existing" or "new", got "${mode}"`);
     const missing = vars.filter((v) => !process.env[v]);
@@ -70,7 +75,12 @@ async function resolveAccount(playwright: PlaywrightWorkerArgs['playwright'], ba
     return { mode: 'existing', credentials: Object.fromEntries(vars.map((v) => [v, process.env[v]!])) };
   }
 
-  // A new account for this worker: generated email/password fill the same ${VAR}s as the login body.
+  return registerNew(playwright, baseURL, worker);
+}
+
+/** A new account for this worker: generated email/password fill the same ${VAR}s as the login body. */
+async function registerNew(playwright: PlaywrightWorkerArgs['playwright'], baseURL: string | undefined, worker: number): Promise<TestAccount> {
+  const vars = loginVars();
   const reg = splitRequest(process.env.API_REGISTER, 'API_REGISTER');
   const template = process.env.API_REGISTER_BODY;
   if (!template) throw new Error('API_TEST_ACCOUNT=new needs API_REGISTER_BODY (use the same ${VAR}s as API_LOGIN_BODY)');
@@ -94,16 +104,45 @@ class TokenSource {
   private token?: string;
   private expiresAt = 0;
 
-  constructor(private readonly account: TestAccount) {}
+  private registered = false;
+
+  constructor(
+    private account: TestAccount,
+    private readonly worker = 0,
+  ) {}
 
   async get(playwright: PlaywrightWorkerArgs['playwright'], baseURL: string | undefined): Promise<string> {
     if (this.token && Date.now() < this.expiresAt - 30_000) return this.token;
+    if (this.account.mode === 'auto' && !this.registered) {
+      const missing = loginVars().filter((v) => !this.account.credentials[v]);
+      if (missing.length) await this.registerInstead(playwright, baseURL, `${missing.join(', ')} not set`);
+      else {
+        try {
+          return await this.login(playwright, baseURL);
+        } catch (e) {
+          const status = /answered (\d+)/.exec((e as Error).message)?.[1];
+          if (!status || !['401', '403', '422'].includes(status)) throw e;
+          await this.registerInstead(playwright, baseURL, `the account from .env is refused (${status})`);
+        }
+      }
+    }
+    return this.login(playwright, baseURL);
+  }
+
+  /** auto: one new account for this worker, used for the rest of the run. */
+  private async registerInstead(playwright: PlaywrightWorkerArgs['playwright'], baseURL: string | undefined, why: string): Promise<void> {
+    console.log(`[test-account] worker ${this.worker}: ${why}; registering a new account`);
+    this.account = await registerNew(playwright, baseURL, this.worker);
+    this.registered = true;
+  }
+
+  private async login(playwright: PlaywrightWorkerArgs['playwright'], baseURL: string | undefined): Promise<string> {
     const { method, path } = splitRequest(process.env.API_LOGIN, 'API_LOGIN');
     const body = fill(process.env.API_LOGIN_BODY ?? '{}', { ...process.env, ...this.account.credentials }, 'API_LOGIN_BODY');
     const ctx = await playwright.request.newContext({ baseURL, extraHTTPHeaders: { accept: 'application/json' } });
     try {
       const res = await ctx.fetch(path, { method, data: body });
-      if (!res.ok()) throw new Error(`Login failed: ${method} /${path} answered ${res.status()} (${this.account.mode === 'new' ? 'freshly registered account' : 'check the test account in .env'})`);
+      if (!res.ok()) throw new Error(`Login failed: ${method} /${path} answered ${res.status()} (${this.account.mode === 'new' ? 'freshly registered account' : this.account.mode === 'auto' ? 'account from .env' : 'check the test account in .env'})`);
       const json = await res.json();
       const pointer = process.env.API_TOKEN_POINTER || '/access_token';
       const token = readPointer(json, pointer);
@@ -127,8 +166,8 @@ export const test = base.extend<{ api: Apis; publicApi: Apis }, { testAccount: T
     { scope: 'worker' },
   ],
   tokenSource: [
-    async ({ testAccount }, use) => {
-      await use(new TokenSource(testAccount));
+    async ({ testAccount }, use, workerInfo) => {
+      await use(new TokenSource(testAccount, workerInfo.workerIndex));
     },
     { scope: 'worker' },
   ],

@@ -17,8 +17,9 @@ describe('test account', () => {
 
   it('accepts only existing/new', () => {
     expect(parseAccountMode(' New ')).toBe('new');
+    expect(parseAccountMode('auto')).toBe('auto');
     expect(parseAccountMode('')).toBeUndefined();
-    expect(() => parseAccountMode('maybe')).toThrow(/existing" or "new/);
+    expect(() => parseAccountMode('maybe')).toThrow(/"existing", "new" or "auto"/);
   });
 
   it('says plainly that "no" registers an account on every run', () => {

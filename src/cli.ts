@@ -75,7 +75,7 @@ function common(cmd: Command) {
     .option('-o, --out <dir>', 'output directory for reports', `reports/api-agent/${cmd.name()}`)
     .addOption(new Option('--fail-on <level>', 'exit non-zero on').choices(['mismatch', 'blocked', 'never']).default('mismatch'))
     .option('--schemathesis-bin <path>', 'path to the schemathesis executable')
-    .addOption(new Option('--test-account <mode>', 'with API_LOGIN: use the account from .env (existing) or register a new one on every run (new). Default: API_TEST_ACCOUNT, else asked').choices(ACCOUNT_MODES));
+    .addOption(new Option('--test-account <mode>', 'with API_LOGIN: the account from .env (existing), a new one on every run (new), or the .env account and a new one only when it is refused (auto). Default: API_TEST_ACCOUNT, else asked').choices(ACCOUNT_MODES));
 }
 
 async function load(location: string): Promise<{ spec: LoadedSpec; ops: Operation[] }> {
@@ -119,6 +119,28 @@ async function prepareAccount(o: CommonOpts, agentLogin: boolean, suiteRun = fal
     }
   }
   process.env.API_TEST_ACCOUNT = mode; // the generated suite started by --run reads it too
+  if (mode === 'auto') {
+    // The account from .env while it works; a new one only when it is missing or refused (e.g. after a reset).
+    const missing = missingLoginVars();
+    let why = missing.length ? `${missing.join(', ')} not set` : '';
+    if (!why) {
+      try {
+        await applyLogin(o.baseUrl, log);
+        log('Test account: auto, the account from .env works (nothing registered).');
+        return;
+      } catch (e) {
+        const status = /HTTP (\d+)/.exec((e as Error).message)?.[1];
+        if (!status || !['401', '403', '422'].includes(status)) throw e;
+        why = `the account from .env is refused (HTTP ${status})`;
+      }
+    }
+    if (!o.allowWrite) throw new Error(`Test account: ${why}. Registering a new one writes to the API: add --allow-write (test environments only), or fix the account in .env.`);
+    checkRegisterConfig();
+    const acc = await registerAccount(o.baseUrl);
+    log(`Test account: auto, ${why}: registered ${acc.label} (stays on the server). This run, and the generated tests it starts, use it; .env is not changed.`);
+    await applyLogin(o.baseUrl, log);
+    return;
+  }
   if (mode === 'existing') {
     const missing = missingLoginVars();
     if (missing.length) throw new Error(`Test account: put its credentials into .env: ${missing.map((v) => `${v}=...`).join(', ')}. Or use --test-account new to register one on every run.`);
