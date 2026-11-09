@@ -266,9 +266,6 @@ common(program.command('generate').description('audit, then generate Playwright 
     log(`Test language: ${o.lang}`);
     if (o.run && (!o.baseUrl || !o.allowWrite)) throw new Error('--run creates and deletes data: it needs --base-url and --allow-write.');
     await prepareAccount(o, o.probe || o.schemathesis, o.run);
-    if (o.run && o.lang === 'python' && process.env.API_LOGIN && process.env.API_TEST_ACCOUNT === 'new') {
-      throw new Error('A new account per run is supported for TypeScript suites only (for now): use an existing account for Python.');
-    }
     const r = await runAudit(location, o);
     const deps = o.deps ? JSON.parse(await readFile(o.deps, 'utf8')) : undefined;
     if (o.ai) await aiProposals(r.spec.doc, r.ops, o.out, { maxCalls: Number(o.aiMaxCalls), model: o.aiModel, runner: o.aiRunner }, deps);

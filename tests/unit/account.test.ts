@@ -67,3 +67,14 @@ describe('test account', () => {
     expect(env).not.toHaveProperty('SHOP_EMAIL'); // nothing half-applied
   });
 });
+
+describe('Python suites: test account modes', () => {
+  it('the generated conftest supports existing, new and auto, registering at most once per session', async () => {
+    const { renderConftest } = await import('../../src/generate/python.js');
+    const text = renderConftest([], { spec: 'x', hash: 'h', version: 'test' });
+    expect(text).toContain('if self.mode not in ("existing", "new", "auto")');
+    expect(text).toContain('if e.status not in (401, 403, 422):');
+    expect(text).toContain('self.registered = True');
+    expect(text).toContain(String.raw`_LOGIN_VARS = re.compile(r"\$\{(\w+)\}")`);
+  });
+});

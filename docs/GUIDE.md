@@ -79,7 +79,7 @@ API_REGISTER=POST /users/register
 API_REGISTER_BODY={"first_name":"Api","last_name":"Test","email":"${API_USER}","password":"${API_PASSWORD}"}
 ```
 
-`API_REGISTER_BODY` must use the same `${VAR}`s as `API_LOGIN_BODY`; `${UNIQUE}` is a per-run suffix for other unique fields. To skip the question (CI): `API_TEST_ACCOUNT=existing|new|auto` or `--test-account existing|new|auto`. Python suites support `existing` only (for now). Without a terminal and without the setting, an account in `.env` means `existing`; otherwise the run stops with an explanation.
+`API_REGISTER_BODY` must use the same `${VAR}`s as `API_LOGIN_BODY`; `${UNIQUE}` is a per-run suffix for other unique fields. To skip the question (CI): `API_TEST_ACCOUNT=existing|new|auto` or `--test-account existing|new|auto`. Python suites support all three: one registration at most per pytest session. Without a terminal and without the setting, an account in `.env` means `existing`; otherwise the run stops with an explanation.
 
 You need at least one of: a spec, a Postman collection, or existing tests. With none of them there is nothing to analyse.
 

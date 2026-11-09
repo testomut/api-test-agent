@@ -210,14 +210,16 @@ def created_${name}(${name}):
 
 Settings come from .env (API_BASE_URL, API_TOKEN or API_LOGIN...) or the real environment; real variables win.
 Auth: with API_LOGIN (e.g. "POST /users/login") the tests log in and refresh the token before it expires;
-otherwise the static API_TOKEN is used.
+otherwise the static API_TOKEN is used. Test account: API_TEST_ACCOUNT=existing (default) | new | auto.
 """
 import json
 import os
 import pathlib
 import re
+import secrets
 import sys
 import time
+import uuid
 
 import pytest
 import requests
@@ -291,29 +293,68 @@ def base_url():
     return url
 
 
+_LOGIN_VARS = re.compile(r"\\$\\{(\\w+)\\}")
+
+
+def _fill(template, values, name):
+    def sub(match):
+        value = values.get(match.group(1))
+        if not value:
+            raise RuntimeError(f"{name} uses {match.group(0)}, which is not set (.env or environment)")
+        return json.dumps(value)[1:-1]
+
+    return json.loads(_LOGIN_VARS.sub(sub, template))
+
+
+def _login_vars():
+    return list(dict.fromkeys(_LOGIN_VARS.findall(os.environ.get("API_LOGIN_BODY") or "")))
+
+
 class _TokenSource:
-    """Logs in with API_LOGIN / API_LOGIN_BODY and refreshes the token shortly before it expires."""
+    """Logs in with API_LOGIN / API_LOGIN_BODY and refreshes the token shortly before it expires.
+
+    API_TEST_ACCOUNT=existing (default): the account from .env (the \${VAR}s of API_LOGIN_BODY).
+    API_TEST_ACCOUNT=new: one NEW account per test session through API_REGISTER / API_REGISTER_BODY.
+    API_TEST_ACCOUNT=auto: the .env account; only when it is missing or its login is refused (401 / 403 / 422,
+    e.g. the test environment was reset) is ONE new account registered for the session.
+    Generated emails / passwords live in this process's memory only; .env is never changed.
+    """
 
     def __init__(self, base_url):
         self.base_url = base_url.rstrip("/") + "/"
         self.token = None
         self.expires_at = 0.0
+        self.mode = (os.environ.get("API_TEST_ACCOUNT") or "existing").strip().lower()
+        if self.mode not in ("existing", "new", "auto"):
+            raise RuntimeError(f'API_TEST_ACCOUNT must be "existing", "new" or "auto", got "{self.mode}"')
+        self.credentials = {v: os.environ[v] for v in _login_vars() if os.environ.get(v)}
+        self.registered = False
 
-    def get(self):
-        if self.token and time.time() < self.expires_at - 30:
-            return self.token
-        method, path = os.environ["API_LOGIN"].split(None, 1)
-
-        def fill(match):
-            value = os.environ.get(match.group(1))
-            if not value:
-                raise RuntimeError(f"API_LOGIN_BODY uses {match.group(0)}, which is not set (.env or environment)")
-            return json.dumps(value)[1:-1]
-
-        body = json.loads(re.sub(r"\\$\\{(\\w+)\\}", fill, os.environ.get("API_LOGIN_BODY") or "{}"))
-        res = requests.request(method, self.base_url + path.strip().lstrip("/"), json=body, timeout=30)
+    def _register(self, why):
+        method, path = (os.environ.get("API_REGISTER") or "").split(None, 1) if os.environ.get("API_REGISTER") else ("", "")
+        template = os.environ.get("API_REGISTER_BODY")
+        if not method or not template:
+            raise RuntimeError(f"Test account: {why}; registering a new one needs API_REGISTER and API_REGISTER_BODY")
+        unique = f"{int(time.time() * 1000):x}{uuid.uuid4().hex[:6]}"
+        password = f"Qa-{secrets.token_urlsafe(12)}-7x!"
+        creds = {v: password if "pass" in v.lower() else f"api-test-{unique}@example.com" for v in _login_vars()}
+        body = _fill(template, {**os.environ, **creds, "UNIQUE": unique}, "API_REGISTER_BODY")
+        # Never print the request or the response: they contain the password.
+        res = requests.request(method.upper(), self.base_url + path.strip().lstrip("/"), json=body, timeout=30)
         if not res.ok:
-            raise RuntimeError(f"Login failed: {method} {path} answered {res.status_code} (check credentials in .env)")
+            raise RuntimeError(f"Registering a test account failed: {method} {path} answered {res.status_code} (check API_REGISTER_BODY)")
+        label = next((value for key, value in creds.items() if "pass" not in key.lower()), "")
+        print(f"[test-account] {why}: registered new account {label} (stays on the server)")
+        self.credentials = creds
+        self.registered = True
+
+    def _login(self):
+        method, path = os.environ["API_LOGIN"].split(None, 1)
+        body = _fill(os.environ.get("API_LOGIN_BODY") or "{}", {**os.environ, **self.credentials}, "API_LOGIN_BODY")
+        res = requests.request(method.upper(), self.base_url + path.strip().lstrip("/"), json=body, timeout=30)
+        if not res.ok:
+            source = "freshly registered account" if self.registered else "check the test account in .env"
+            raise _LoginRefused(res.status_code, f"Login failed: {method} {path} answered {res.status_code} ({source})")
         data = res.json()
         pointer = os.environ.get("API_TOKEN_POINTER") or "/access_token"
         token = read_pointer(data, pointer)
@@ -323,6 +364,30 @@ class _TokenSource:
         self.token = token
         self.expires_at = time.time() + (float(ttl) if isinstance(ttl, (int, float)) and ttl > 0 else 600)
         return token
+
+    def get(self):
+        if self.token and time.time() < self.expires_at - 30:
+            return self.token
+        if self.mode == "new" and not self.registered:
+            self._register("API_TEST_ACCOUNT=new")
+        elif self.mode == "auto" and not self.registered:
+            missing = [v for v in _login_vars() if v not in self.credentials]
+            if missing:
+                self._register(f"{', '.join(missing)} not set")
+            else:
+                try:
+                    return self._login()
+                except _LoginRefused as e:
+                    if e.status not in (401, 403, 422):
+                        raise
+                    self._register(f"the account from .env is refused ({e.status})")
+        return self._login()
+
+
+class _LoginRefused(RuntimeError):
+    def __init__(self, status, message):
+        super().__init__(message)
+        self.status = status
 
 
 @pytest.fixture(scope="session")
