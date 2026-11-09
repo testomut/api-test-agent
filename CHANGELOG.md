@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- **Collection testing** (docs/SUPPORT_MATRIX.md, "Collections"):
+  - reviewed deps `collection` mapping, checked strictly against the spec (`INVALID_REVIEWED_CONFIG` gap on a mismatch);
+  - strategy A (create & verify): controlled datasets with a unique marker in an isolating filter, cleanup in `finally`; strategy C (read-only) with explicit skips; strategy recorded per list operation in `coverage-gaps.json`;
+  - assertions in TypeScript and Python alike: contains / not contains, persisted fields by policy (exact, tolerance, schema, ignore), all match a filter, unique by, sorted by, page size, no duplicates across pages; offset and page/size paging; bounded polling for documented eventual consistency;
+  - create → list → update → list → delete → list scenario on the list operation;
+  - case ID vocabulary v3: `collection-contains`, `filter`, `sort`, `pagination`, `unique`, `fixture`.
+- **Approved fixtures (strategy B):** `generate --fixtures <dir>` compares a list with `<operationId>.json` approved by a person; `fixtures capture` writes candidates only; `fixtures refresh --draft-pr` proposes a changed candidate in one Draft PR per operation (updated, never duplicated). Approved files are never written by the agent.
+- **`maintain`:** spec diff → deterministic regeneration → registry and manifest validation → one Draft PR per suite with a summary (changed operations, files and cases, expectations old → new, fixtures, stale reviewed configuration, gaps before → after). Never merges; no PR when validation fails or nothing changed.
+- **Fault injection:** the demo API simulates six list defects (`DEMO_FAULT`); `scripts/mutation-check.ts` runs a generated suite against each, and CI requires 6/6 detected in TypeScript and Python. The previous generator detected 0/6.
+- Demo API: `offset`, `tag` and `sort` on `GET /items`; two reference items tagged `catalog` (the approved demo fixture).
+- Fixes: a GET of a single resource with an array field is no longer reported as an unconfigured collection; hand-written `_support/api/*Api.ts` stay in the generation manifest after the first run.
+
 - **Coverage completeness** (see docs/SUPPORT_MATRIX.md):
   - one physical test → one stable case ID (vocabulary v2: `accepted-value`, `invalid-credentials`, `method-not-allowed`, `precondition-failed`), checked on the real run (Playwright report, pytest collection); cases no longer generated become tombstones;
   - recursive request-body negative cases at any depth, exactly one broken rule each (verified with ajv), configurable limit `--max-cases` with dropped cases reported;

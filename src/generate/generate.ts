@@ -15,6 +15,10 @@ import { isUrl } from '../change/network.js';
 import { bodyCasesDetailed, compositionGaps, type CoverageGap } from './body-cases.js';
 import { paramCasesDetailed, sendable } from './param-cases.js';
 import { errorPlan } from './error-cases.js';
+import { collectionGaps, resolveCollection } from './collection.js';
+import { collectionStrategy, planCollectionTests } from './collection-tests.js';
+import { tsFixtureModule, fixtureModule, type CollectionInput } from './collection-render.js';
+import type { LoadedFixture } from '../fixtures/fixtures.js';
 import { positiveCode, uncheckedRequest, uncheckedStatuses } from './coverage.js';
 import type { ResolvedScenario } from '../scenarios/dsl.js';
 import { bodyCases, documentedRejections, nonexistentIdExpr, type NegCase } from './negative.js';
@@ -41,6 +45,9 @@ export interface GenerateOptions {
   maxCases?: number;
   /** Reviewed business scenarios (validated with validateScenarios against the same operations). */
   scenarios?: ResolvedScenario[];
+  /** Approved fixtures (strategy B), already validated against the spec; invalid ones arrive as fixtureErrors. */
+  fixtures?: LoadedFixture[];
+  fixtureErrors?: { file: string; operationId?: string; errors: string[] }[];
 }
 
 export interface Scenario {
@@ -91,6 +98,8 @@ export interface Coverage {
   uncheckedRequestContentTypes: string[];
   /** Security alternatives beyond the one the suite uses. */
   uncheckedSecurityAlternatives: string[][];
+  /** List operations: how the collection is tested (create-verify / read-only / contract-only) and why. */
+  collection?: { strategy: string; reasons: string[]; tests: { kind: string; mode: string }[] };
 }
 
 function jsonBodySchema(spec: LoadedSpec, op: Operation): any {
@@ -223,6 +232,21 @@ export async function generate(spec: LoadedSpec, ops: Operation[], o: GenerateOp
       if (op && !chainBlock.has(op)) chainBlock.set(op, c.question);
     }
   }
+  // Reviewed collection mappings (deps "collection"): checked strictly against the spec; errors become gaps.
+  const collectionOf = new Map<Operation, { plan: ChainPlan; c: NonNullable<ReturnType<typeof resolveCollection>['collection']> }>();
+  const collectionErrors = new Map<string, CoverageGap[]>();
+  for (const chain of chains) {
+    if (!chain.collection) continue;
+    const r = resolveCollection(spec.doc, ops, chain.collection);
+    const key = ops.find((x) => x.operationId === chain.collection!.operationId)?.key ?? '';
+    const p = plans.find((x) => x.chain === chain);
+    if (r.collection && p) collectionOf.set(r.collection.op, { plan: p, c: r.collection });
+    else {
+      const gaps: CoverageGap[] = r.errors.map((reason) => ({ code: 'INVALID_REVIEWED_CONFIG', location: 'operation', reason }));
+      if (r.collection && !p) gaps.push({ code: 'MISSING_CLEANUP', location: 'operation', reason: `collection of ${chain.name}: the chain is blocked, so no collection tests are generated` });
+      collectionErrors.set(key, [...(collectionErrors.get(key) ?? []), ...gaps]);
+    }
+  }
   const planOf = (op: Operation) => plans.find((p) => [p.chain.create, p.chain.read, p.chain.update, p.chain.delete].includes(op));
   const helperFile = (p: ChainPlan) => (py ? join(support, `${resourceModule(p)}.py`) : join(support, `${operationFolder(p.chain.create).resource}.resource.ts`));
   for (const p of plans) await write(helperFile(p), py ? renderPyResource(p, meta) : renderResourceHelpers(p, refs, meta));
@@ -255,7 +279,9 @@ export async function generate(spec: LoadedSpec, ops: Operation[], o: GenerateOp
     const dir = join(out, resource, action);
     const name = `${resource}/${action}`;
     const plan = planOf(op);
-    const helpers = plan ? posix(relative(dir, helperFile(plan))).replace(/\.ts$/, '.js') : undefined;
+    const coll = collectionOf.get(op);
+    const helperPlan = plan ?? coll?.plan;
+    const helpers = helperPlan ? posix(relative(dir, helperFile(helperPlan))).replace(/\.ts$/, '.js') : undefined;
     const safe = SAFE_METHODS.includes(op.method);
     const pathParams = op.params.filter((p) => p.in === 'path');
     const unresolvedPath = pathParams.filter((p) => p.knownValue === undefined && p.name !== plan?.chain.param);
@@ -333,9 +359,19 @@ export async function generate(spec: LoadedSpec, ops: Operation[], o: GenerateOp
     if (firstWith405) paths405.add(op.path);
     const errors = op.deprecated ? { gaps: [] } : errorPlan({ doc: spec.doc, op, ops, chain: plan?.chain, role: errRole, hasUpdatePayload: plan?.updatePayload !== undefined, reachable, firstWith405 });
     const input: SuiteInput = { op, refs, plan, helpers, positive: !posReason, validation: rej.validation, bodyCases: bCases, paramCases: qCases, notFound, unauthorized, errors, business: (o.scenarios ?? []).filter((b) => b.primaryOp === op) };
+    let collPlan: ReturnType<typeof planCollectionTests> | undefined;
+    if (coll && input.positive && !op.deprecated) {
+      const ch = coll.plan.chain;
+      collPlan = planCollectionTests(spec.doc, coll.c, { canCreate: !!ch.delete, createSchema: jsonBodySchema(spec, ch.create), canUpdate: !!ch.update && coll.plan.updatePayload !== undefined, updatePayload: coll.plan.updatePayload, canDelete: !!ch.delete });
+      input.collection = { plan: collPlan, chain: coll.plan } satisfies CollectionInput;
+    }
+    const fixture = input.positive && !op.deprecated ? o.fixtures?.find((f) => f.op === op) : undefined;
+    if (fixture) input.fixture = fixture;
+    const fixtureGaps: CoverageGap[] = (o.fixtureErrors ?? []).filter((e) => e.operationId && e.operationId === op.operationId).flatMap((e) => e.errors.map((reason) => ({ code: 'INVALID_REVIEWED_CONFIG', location: 'operation', reason: `${e.file}: ${reason}` })));
+    const collGaps: CoverageGap[] = [...fixtureGaps, ...(collectionErrors.get(op.key) ?? []), ...(collPlan?.gaps ?? []), ...(coll ? [] : collectionGaps(spec.doc, op, false))];
     const counts = suiteCounts(input);
     const variants = input.positive && !plan && op.method === 'get' ? queryVariants(op) : [];
-    const ids = assignCaseIds({ op, chain: plan?.chain, positive: input.positive, bodyCases: bCases, paramCases: qCases, notFound, unauthorized, scenarios: scenarioCases(input), queryVariants: variants, errors, business: input.business }, uidOf);
+    const ids = assignCaseIds({ op, chain: plan?.chain, positive: input.positive, bodyCases: bCases, paramCases: qCases, notFound, unauthorized, scenarios: scenarioCases(input), queryVariants: variants, errors, business: input.business, collection: collPlan, collectionChain: coll?.plan.chain, fixture: !!fixture }, uidOf);
     input.ids = ids;
     // Explicit per-operation coverage and gaps, independent of test execution status.
     // oneOf / anyOf in a payload that is sent: the other branches are reported (never dropped silently).
@@ -362,7 +398,8 @@ export async function generate(spec: LoadedSpec, ops: Operation[], o: GenerateOp
       positiveBlockedCode: pCode,
       negativeGaps: why,
       lifecycle: plan ? plan.chain.name : null,
-      gaps: [...bodyGaps, ...errors.gaps, ...variantGaps, ...responseGaps],
+      gaps: [...bodyGaps, ...errors.gaps, ...variantGaps, ...responseGaps, ...collGaps],
+      ...(coll || fixture || collGaps.length ? { collection: { ...collectionStrategy(collPlan, collGaps.map((g) => g.reason), !!fixture), tests: [...(collPlan?.tests ?? []).map((t) => ({ kind: t.kind, mode: t.mode })), ...(fixture ? [{ kind: 'fixture', mode: 'approved' }] : [])] } } : {}),
       ...(bodyStats ? { bodyCases: bodyStats } : {}),
       suites: {
         functional: { generated: counts.functional, missingCode: counts.functional ? null : pCode ?? 'NO_DOCUMENTED_REJECTION' },
@@ -415,6 +452,11 @@ export async function generate(spec: LoadedSpec, ops: Operation[], o: GenerateOp
     }
   }
 
+  // Approved fixtures used by this run, copied next to the suite (the suite runs without the agent).
+  for (const f of o.fixtures ?? []) {
+    if (!coverage.some((c) => c.operation === f.op.key && c.collection?.tests.some((t) => t.kind === 'fixture'))) continue;
+    await write(join(support, 'approved', py ? `${fixtureModule(f)}.json` : `${fixtureModule(f)}.fixture.ts`), py ? JSON.stringify(f.fixture, null, 2) + '\n' : tsFixtureModule(f, o.version));
+  }
   if (files.length && py) {
     // Self-contained support code: the generated suite runs without the agent installed.
     await write(join(support, 'contract.py'), await readFile(fileURLToPath(new URL('../../src/contract/contract.py', import.meta.url)), 'utf8'));
@@ -437,6 +479,7 @@ export async function generate(spec: LoadedSpec, ops: Operation[], o: GenerateOp
       await write(join(apiDir, 'generated', `${g.className}Base.ts`), renderApiBaseClass(g, refs, o.version));
       const child = join(apiDir, `${g.className}.ts`);
       if (!existsSync(child)) await write(child, renderApiChildClass(g));
+      else hashes.set(child, fileHash(await readFile(child, 'utf8'))); // kept in the manifest as hand-written, never rewritten
     }
     await write(join(apiDir, 'generated', 'apis.ts'), renderApis(groups, o.version));
     await write(join(support, 'openapi.snapshot.ts'), `// Snapshot of ${spec.location} (hash ${spec.hash}). Regenerated with the tests.\nexport const spec: any = ${JSON.stringify(spec.doc, null, 2)};\n`);

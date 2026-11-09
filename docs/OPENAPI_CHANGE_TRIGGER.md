@@ -280,6 +280,19 @@ scenario/positive:    crud  business-rule
 scenario/negative:    business-rule
 ```
 
+Later versions only add rules (a registry of an older version stays valid):
+
+```text
+v2  functional/positive:  accepted-value                 request.<in>#/<name>/<documented value>
+    functional/negative:  invalid-credentials            request.security
+                          method-not-allowed             operation
+                          precondition-failed            request.header#/<name>
+v3  functional/positive:  collection-contains, fixture   operation
+                          filter, pagination             request.query#/<parameter>
+                          sort                           request.query#/<parameter>/<documented value>
+                          unique                         response.body#<items pointer>/*<field>
+```
+
 This is the architecture's vocabulary. The generator may support only a subset, but it never creates unknown rules. `crud` is only for a general resource lifecycle; `business-rule` covers positive and negative business scenarios, including state transitions. A separate `state-transition` rule may come in a later vocabulary version if `business-rule` proves too broad.
 
 `registry validate` checks the allowed **combination** of `suiteType`, `polarity`, `location` and `rule`, not just that the rule exists. Allowed in v1:

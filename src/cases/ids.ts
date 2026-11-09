@@ -12,9 +12,12 @@ export type Polarity = 'positive' | 'negative';
 
 /**
  * v2 adds functional/positive `accepted-value` (one case per documented parameter value) and functional/negative
- * `invalid-credentials`, `method-not-allowed`, `precondition-failed`. Registries of v1 stay readable.
+ * `invalid-credentials`, `method-not-allowed`, `precondition-failed`.
+ * v3 adds functional/positive collection rules: `collection-contains`, `unique`, `fixture` (on "operation" /
+ * response.body), `filter`, `pagination` (on the query parameter), `sort` (request.query#/<param>/<value>).
+ * Registries of older versions stay readable.
  */
-export const CASE_RULE_VOCABULARY_VERSION = 2;
+export const CASE_RULE_VOCABULARY_VERSION = 3;
 
 const CONSTRAINT_RULES = [
   'required', 'nullable', 'type', 'format', 'pattern', 'minimum', 'maximum', 'exclusiveMinimum', 'exclusiveMaximum', 'multipleOf',
@@ -23,7 +26,7 @@ const CONSTRAINT_RULES = [
 
 /** Built-in vocabulary v1, by suiteType/polarity. */
 export const VOCABULARY_V1: Record<string, readonly string[]> = {
-  'functional/positive': ['documented-success', 'accepted-value'],
+  'functional/positive': ['documented-success', 'accepted-value', 'collection-contains', 'filter', 'sort', 'pagination', 'unique', 'fixture'],
   'functional/negative': ['not-found', 'unauthorized', 'forbidden', 'invalid-credentials', 'method-not-allowed', 'precondition-failed'],
   'contract/positive': ['documented', 'schema'],
   'contract/negative': [...CONSTRAINT_RULES, 'content-type'],
@@ -119,6 +122,10 @@ export function checkCombination(p: CaseParts): CaseIdError | undefined {
   const subject = (why: string): CaseIdError => ({ code: 'INVALID_CASE_SUBJECT', reason: why });
   switch (`${p.suiteType}/${p.polarity}`) {
     case 'functional/positive':
+      if (p.rule === 'collection-contains' || p.rule === 'fixture') return loc === 'operation' ? undefined : bad(`${p.rule} is checked on "operation"`);
+      if (p.rule === 'unique') return loc.startsWith('response.body#') ? undefined : bad('unique names a response body field');
+      if (p.rule === 'filter' || p.rule === 'pagination') return /^request\.query#\/[^/]*$/.test(loc) ? undefined : bad(`${p.rule} names a query parameter`);
+      if (p.rule === 'sort') return /^request\.query#\/[^/]*\/[^/]*$/.test(loc) ? undefined : bad('sort names a query parameter and its value');
       if (p.rule === 'accepted-value') return /^request\.(query|path|header|cookie)#\/[^/]*\/[^/]*$/.test(loc) ? undefined : bad('accepted-value names a parameter and its value: request.<in>#/<name>/<value>');
       return loc === 'operation' ? undefined : bad(`documented-success is checked on "operation", not "${loc}"`);
     case 'functional/negative':

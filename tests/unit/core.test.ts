@@ -152,7 +152,7 @@ describe('negative cases', () => {
 
   it('derives query cases from parameter bounds', () => {
     const r = paramCasesDetailed(demo.doc, op('GET /items'), { allowPath: true, allowOthers: true });
-    expect(r.cases.map((c) => c.request?.params)).toEqual([{ limit: 'not-a-number' }, { limit: 0 }, { limit: 101 }]);
+    expect(r.cases.map((c) => c.request?.params)).toEqual([{ limit: 'not-a-number' }, { limit: 0 }, { limit: 101 }, { offset: 'not-a-number' }, { offset: -1 }, { tag: '' }, { tag: 'x'.repeat(31) }, { sort: '__not_in_enum__' }]);
   });
 
   it('breaks exclusive bounds, minItems and query minLength, one rule per case', () => {

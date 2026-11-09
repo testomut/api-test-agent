@@ -143,9 +143,28 @@ Coverage is reported, never implied. The full keyword-by-keyword table is in [do
 - responses: status, Content-Type, headers, JSON / text schema, no body where none is documented, writeOnly;
 - documented errors with a safe trigger: 400 / 422, 401 (missing and invalid credentials), 404, 405 (GET only), 412, 415.
 
-**Needs your confirmation (deps or scenarios file):** CRUD chains and cleanup, 409 conflicts (`conflictOn`), fields a create returns as sent (`echoes`), values taken from existing data (`fill`), and every business flow (`--scenarios`): state transitions, parent → child, login / refresh, list / search / pagination.
+**Needs your confirmation (deps or scenarios file):** CRUD chains and cleanup, 409 conflicts (`conflictOn`), fields a create returns as sent (`echoes`), values taken from existing data (`fill`), collection semantics (`collection`: identifier, persisted fields and their comparison policy, filters, sorts, paging, uniqueness, eventual consistency), approved fixtures (`--fixtures`), and every other business flow (`--scenarios`): state transitions, parent → child, login / refresh.
 
 **Never generated (reported as gaps):** 403 without a reviewed role setup, 429, a 405 that would need an unsafe method, oneOf / anyOf branches other than the one sent, rules that cannot be broken without breaking another, media types other than JSON / text, and anything the spec does not state.
+
+## Collections, fixtures and maintenance
+
+The number of tests is not the goal; catching defects is. On the demo API the previous generator's 65 tests miss all six injected list defects (ignored filter, wrong sort, hidden record, duplicates, wrong field value, overlapping pages); the collection tests catch all six, in TypeScript and Python (`npx tsx scripts/mutation-check.ts tests/api/items/get`).
+
+```bash
+# Deep list tests from a reviewed "collection" mapping (demo-api/deps.json) and approved fixtures
+npx tsx src/cli.ts generate demo-api/openapi.yaml --deps demo-api/deps.json --fixtures demo-api/fixtures/approved
+
+# Fixtures are never trusted automatically: capture writes a candidate, refresh proposes it in a Draft PR
+npx tsx src/cli.ts fixtures capture demo-api/openapi.yaml --operation listItems -u http://localhost:3100 --query tag=catalog
+npx tsx src/cli.ts fixtures refresh demo-api/openapi.yaml --operation listItems -u http://localhost:3100 --draft-pr
+
+# After a spec change: diff → regenerate → validate → one Draft PR per suite (updated, never duplicated, never merged)
+npx tsx src/cli.ts maintain openapi.yaml --base <old spec> --deps deps.json --draft-pr
+```
+
+Collection tests create their own records with a unique marker, read them through an isolating filter, and remove them in `finally`; without a confirmed create they run read-only on existing data and skip with the reason when there is not enough. Strategy and reasons per list operation are in `coverage-gaps.json`. Details: [docs/SUPPORT_MATRIX.md](docs/SUPPORT_MATRIX.md#collections-srcgeneratecollectionts-srcfixtures).
+
 
 ## Options
 
@@ -158,7 +177,7 @@ Coverage is reported, never implied. The full keyword-by-keyword table is in [do
 | `--max-requests`, `--rps`, `--timeout` | 100, 5, 10s | probe budget and limits |
 | `--max-examples`, `--max-time`, `--seed` | 25, 120s, 42 | Schemathesis budget, reproducible seed |
 | `--fail-on` | `mismatch` | `mismatch` / `blocked` / `never` |
-| `--deps`, `--tests-dir`, `--run`, `--draft-pr` | | `generate` only |
+| `--deps`, `--fixtures`, `--tests-dir`, `--run`, `--draft-pr` | | `generate` only |
 
 Credentials: `API_TOKEN` (bearer / OAuth2 / OIDC), `API_USER` + `API_PASSWORD` (basic), `API_KEY` (apiKey header or query).
 
@@ -168,7 +187,10 @@ Credentials: `API_TOKEN` (bearer / OAuth2 / OIDC), `API_USER` + `API_PASSWORD` (
 src/spec/        load, bundle, validate (swagger-parser), lint (Redocly), operation catalogue
 src/audit/       SafeClient, probe, Schemathesis runner + JUnit/JSON parsing, auth + redaction
 src/contract/    response validator (Ajv), copied verbatim into generated suites
-src/generate/    dependency graph, deterministic payloads, Playwright templates, runner
+src/generate/    dependency graph, deterministic payloads, Playwright / pytest templates, collection tests, runner
+src/fixtures/    approved fixtures: validation, policies, capture of candidates
+src/maintain.ts  spec change → regenerate → validate → one Draft PR
+scripts/         fault injection (mutation-check.ts)
 src/report/      JSON + Markdown report
 demo-api/        in-memory target API and its OpenAPI spec
 tests/unit/      Vitest unit tests
@@ -176,7 +198,7 @@ tests/unit/      Vitest unit tests
 
 ## Roadmap
 
-- **Stage 2:** more scenario shapes (list-after-create, PUT, nested resources), Schemathesis config export for CI, re-analyse only operations changed since the last spec hash.
+- **Stage 2:** more scenario shapes (PUT, nested resources), cursor pagination, Schemathesis config export for CI, re-analyse only operations changed since the last spec hash.
 - **Stage 3:** optional AI adapter for unconfirmed dependencies, given only the operation, nearby schemas and the open question, with per-task token limits; `BLOCKED` when confidence is low.
 - **Stage 4:** Jira / GitHub / Telegram triggers and notifications.
 

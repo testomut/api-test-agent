@@ -14,6 +14,12 @@ interface Item {
 }
 
 const items = new Map<string, Item>();
+// Reference data present from the start (tag "catalog"): what demo-api/fixtures/approved/listItems.json approves.
+for (const seed of [
+  { id: '00000000-0000-4000-8000-000000000001', name: 'Catalog hammer', price: 12.5, tags: ['catalog'] },
+  { id: '00000000-0000-4000-8000-000000000002', name: 'Catalog screwdriver', price: 4.25, tags: ['catalog'] },
+]) items.set(seed.id, { ...seed, createdAt: new Date().toISOString() });
+let lastCreated: string | undefined; // DEMO_FAULT=hide-created hides it from the list
 const ADMIN_TOKEN = process.env.DEMO_ADMIN_TOKEN ?? 'demo-admin-token';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -78,8 +84,28 @@ route('/items', {
     const raw = url.searchParams.get('limit');
     const limit = raw === null ? 20 : Number(raw);
     if (!Number.isInteger(limit) || limit < 1 || limit > 100) return error(res, 400, 'limit must be an integer 1-100');
-    const all = [...items.values()];
-    send(res, 200, { items: all.slice(0, limit), total: all.length });
+    const rawOffset = url.searchParams.get('offset');
+    const offset = rawOffset === null ? 0 : Number(rawOffset);
+    if (!Number.isInteger(offset) || offset < 0) return error(res, 400, 'offset must be an integer >= 0');
+    const sort = url.searchParams.get('sort');
+    if (sort !== null && !['name', '-name', 'price', '-price'].includes(sort)) return error(res, 400, 'sort must be name, -name, price or -price');
+    const tag = url.searchParams.get('tag');
+    if (tag !== null && (tag.length < 1 || tag.length > 30)) return error(res, 400, 'tag must be 1-30 characters');
+    // DEMO_FAULT simulates one collection defect at a time (mutation tests: the generated suite must catch each).
+    const fault = process.env.DEMO_FAULT;
+    let all = [...items.values()];
+    if (tag !== null && fault !== 'ignore-filter') all = all.filter((i) => i.tags.includes(tag));
+    if (fault === 'hide-created') all = all.filter((i) => i.id !== lastCreated);
+    if (sort) {
+      const key = sort.replace(/^-/, '') as 'name' | 'price';
+      const dir = sort.startsWith('-') ? -1 : 1;
+      all = [...all].sort((a, b) => (a[key] < b[key] ? -1 : a[key] > b[key] ? 1 : 0) * dir * (fault === 'wrong-sort' ? -1 : 1));
+    }
+    if (fault === 'duplicate') all = all.flatMap((i) => [i, i]);
+    const start = fault === 'bad-pagination' ? Math.max(0, offset - 1) : offset;
+    let page = all.slice(start, start + limit);
+    if (fault === 'wrong-field') page = page.map((i) => ({ ...i, price: i.price + 1 }));
+    send(res, 200, { items: page, total: all.length });
   },
   POST: async (req, res) => {
     const body = await readJson(req);
@@ -88,6 +114,7 @@ route('/items', {
     if (typeof v === 'string') return error(res, 400, v);
     const item: Item = { id: randomUUID(), name: v.name!, price: v.price!, tags: v.tags ?? [], createdAt: new Date().toISOString() };
     items.set(item.id, item);
+    lastCreated = item.id;
     // DEMO_BREAK=create-price simulates a regression so the agent's CONTRACT_MISMATCH path can be demonstrated.
     const out = process.env.DEMO_BREAK === 'create-price' ? { ...item, price: String(item.price) } : item;
     send(res, 201, out, { location: `/items/${item.id}` });

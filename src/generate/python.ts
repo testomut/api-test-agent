@@ -2,6 +2,7 @@ import type { Operation } from '../types.js';
 import { requiredRequest } from './param-cases.js';
 import { varsIn, type ResolvedScenario, type ResolvedStep } from '../scenarios/dsl.js';
 import type { CrudChain } from './graph.js';
+import { pyCollectionPrelude, pyCollectionTests, pyFixtureTest, pyLifecycle } from './collection-render.js';
 import { hasFill, queryVariants, roleOf, scenarioCases, uniqueNote, type ChainPlan, type Meta, type SuiteInput, type SuiteType } from './templates.js';
 
 /**
@@ -35,7 +36,7 @@ export function pyLit(v: unknown, indent = 0): string {
   return `{\n${entries.map(([k, x]) => `${pad}    ${str(k)}: ${pyLit(x, indent + 4)},`).join('\n')}\n${pad}}`;
 }
 
-function assertSuccess(op: Operation, v = 'res'): string {
+export function assertSuccess(op: Operation, v = 'res'): string {
   const ok = successCodes(op);
   return ok.length === 1
     ? `assert ${v}.status_code == ${ok[0]}, f"documented success status of ${label(op)} is ${ok[0]}, got {${v}.status_code}"`
@@ -43,7 +44,7 @@ function assertSuccess(op: Operation, v = 'res'): string {
 }
 
 /** Python f-string for the request path; the chain parameter comes from `idVar`. */
-function pathExpr(op: Operation, chainParam?: string, idVar = 'resource_id'): string {
+export function pathExpr(op: Operation, chainParam?: string, idVar = 'resource_id'): string {
   let p = op.path.replace(/^\//, '').replace(/[{}]/g, (c) => c + c); // escape braces for the f-string
   for (const param of op.params.filter((x) => x.in === 'path')) {
     // Inner literals use single quotes: the f-string itself is double-quoted (Python < 3.12 forbids reuse).
@@ -55,7 +56,7 @@ function pathExpr(op: Operation, chainParam?: string, idVar = 'resource_id'): st
 }
 
 /** Keyword arguments with the operation's required query / header / cookie parameters (documented values). */
-function pyRequired(op: Operation, skip: ('params' | 'headers')[] = []): string {
+export function pyRequired(op: Operation, skip: ('params' | 'headers')[] = []): string {
   const r = requiredRequest(op);
   return [
     Object.keys(r.params).length && !skip.includes('params') ? `, params=${pyLit(r.params, 4)}` : '',
@@ -354,7 +355,7 @@ ${fixtures}`;
 const POS = '@pytest.mark.positive';
 const NEG = '@pytest.mark.negative';
 /** The polarity marker plus, when known, the stable case ID marker (registered in conftest.py). */
-const withId = (mark: string, id?: string) => (id ? `${mark}\n@pytest.mark.api_case_id(${str(id)})` : mark);
+export const withId = (mark: string, id?: string) => (id ? `${mark}\n@pytest.mark.api_case_id(${str(id)})` : mark);
 const paramMarks = (id?: string) => (id ? `, marks=pytest.mark.api_case_id(${str(id)})` : '');
 
 function pyHeader(suite: SuiteType, s: SuiteInput, meta: Meta, extra: string[]): string[] {
@@ -448,6 +449,11 @@ export function renderPyFunctional(s: SuiteInput, meta: Meta): string {
   if (s.notFound) L.push(...pyNotFound(s, 'test_returns_documented_404_for_unknown_id', withId(NEG, s.ids?.functional.notFound), statusIs(op, '404')));
   if (s.unauthorized) L.push(...pyAnonymous(s, 'test_returns_documented_401_without_credentials', withId(NEG, s.ids?.functional.unauthorized), statusIs(op, '401')));
   L.push(...pyErrorTests(s));
+  if (s.collection?.plan.tests.length) {
+    L.splice(L.indexOf(`pytestmark = pytest.mark.functional`), 0, ...pyCollectionPrelude(s, s.collection));
+    L.push(...pyCollectionTests(s, s.collection));
+  }
+  if (s.fixture) L.push(...pyFixtureTest(s, s.fixture));
   return finish(L);
 }
 
@@ -623,6 +629,10 @@ export function renderPyScenarios(s: SuiteInput, meta: Meta): string {
   if (sc.updateRead) extra.push(`ASSUMPTION (not in spec, reviewer must confirm): ${plan!.assumptions.find((a) => a.startsWith('after')) ?? 'read after update returns the new values'}`);
   const L = pyHeader('scenario', s, meta, extra);
   const id = `created_${res}`;
+  if (s.collection?.plan.lifecycle) {
+    L.splice(L.indexOf(`pytestmark = pytest.mark.scenario`), 0, ...pyCollectionPrelude(s, s.collection));
+    L.push(...pyLifecycle(s, s.collection));
+  }
   if (sc.deleteTwice) {
     // A repeated delete of the same resource gets the documented 404.
     L.push(

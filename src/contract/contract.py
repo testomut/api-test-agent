@@ -71,6 +71,141 @@ def _nullable(node: Any) -> Any:
     return out
 
 
+# Collection checks (a reviewed "collection" mapping in the deps file). Same semantics as contract-assert.ts.
+
+
+def items_of(body: Any, pointer: str) -> list:
+    v = read_pointer(body, pointer) if pointer else body
+    assert isinstance(v, list), f'collection at "{pointer or "(body)"}" is an array'
+    return v
+
+
+def _id_of(item: Any, ptr: str) -> str:
+    v = read_pointer(item, ptr)
+    return str(v).lower() if isinstance(v, bool) else str(v)
+
+
+def expect_contains(items: list, id_ptr: str, rid: Any, what: str = "resource") -> Any:
+    found = next((i for i in items if _id_of(i, id_ptr) == str(rid)), None)
+    assert found is not None, f"{what} {rid} is in the collection"
+    return found
+
+
+def expect_not_contains(items: list, id_ptr: str, rid: Any, what: str = "resource") -> None:
+    assert not any(_id_of(i, id_ptr) == str(rid) for i in items), f"{what} {rid} is not in the collection"
+
+
+def expect_fields(item: Any, expected: Any, policies: dict) -> None:
+    """Fields compare by policy: exact, tolerance:<n>; ignore and schema are not compared here."""
+    for ptr, policy in policies.items():
+        if policy in ("ignore", "schema"):
+            continue
+        want = read_pointer(expected, ptr)
+        if want is None:
+            continue
+        got = read_pointer(item, ptr)
+        if policy.startswith("tolerance:"):
+            t = float(policy[len("tolerance:"):])
+            assert abs(float(got) - float(want)) <= t, f"{ptr} within {t} of {want} (got {got})"
+        else:
+            assert got == want, f"{ptr} as sent: expected {want!r}, got {got!r}"
+
+
+def expect_all_match(items: list, ptr: str, match: str, value: Any) -> None:
+    def ok(i: Any) -> bool:
+        v = read_pointer(i, ptr)
+        if match == "contains":
+            return isinstance(v, list) and str(value) in [str(x) for x in v]
+        return str(v) == str(value)
+
+    bad = [i for i in items if not ok(i)]
+    assert not bad, f"{len(bad)} element(s) do not match {ptr} {match} {value}"
+
+
+def expect_unique_by(items: list, ptr: str) -> None:
+    seen, dups = set(), []
+    for i in items:
+        k = _id_of(i, ptr)
+        if k in seen:
+            dups.append(k)
+        seen.add(k)
+    assert not dups, f"duplicates by {ptr}: {dups}"
+
+
+def expect_sorted_by(items: list, ptr: str, order: str) -> None:
+    """Order by plain comparison (code points for strings, numeric for numbers): the API must document this order."""
+    for n in range(1, len(items)):
+        a, b = read_pointer(items[n - 1], ptr), read_pointer(items[n], ptr)
+        ok = not (b < a) if order == "asc" else not (b > a)
+        assert ok, f"{ptr} {order} at position {n}: {a} then {b}"
+
+
+def expect_page_size(items: list, limit: int) -> None:
+    assert len(items) <= limit, f"page size {len(items)} > {limit}"
+
+
+def expect_no_duplicate_across_pages(pages: list, id_ptr: str) -> None:
+    expect_unique_by([i for p in pages for i in p], id_ptr)
+
+
+def _leaves(v: Any, prefix: str = "") -> list:
+    if isinstance(v, dict) and v:
+        return [x for k, item in v.items() for x in _leaves(item, prefix + "/" + _esc(str(k)))]
+    if isinstance(v, list) and v:
+        return [x for i, item in enumerate(v) for x in _leaves(item, prefix + "/" + str(i))]
+    return [prefix]
+
+
+def expect_matches_fixture(items: list, f: dict) -> None:
+    """Approved fixture (strategy B): every expected element is listed, each field compared by its policy."""
+    policies = f.get("policies") or {}
+
+    def policy_of(leaf: str) -> str:
+        hits = sorted((p for p in policies if leaf == p or leaf.startswith(p + "/")), key=len, reverse=True)
+        return policies[hits[0]] if hits else f.get("default") or "exact"
+
+    for want in f["expected"]:
+        rid = read_pointer(want, f["id"])
+        got = expect_contains(items, f["id"], rid, "approved fixture element")
+        for leaf in _leaves(want):
+            policy = policy_of(leaf)
+            a, b = read_pointer(got, leaf), read_pointer(want, leaf)
+            at = f"element {rid} {leaf}"
+            if policy == "ignore":
+                continue
+            if policy == "schema":
+                assert a is not None, f"{at} is present"
+            elif policy.startswith("tolerance:"):
+                t = float(policy[len("tolerance:"):])
+                assert abs(float(a) - float(b)) <= t, f"{at} within {t} of {b} (got {a})"
+            else:
+                assert a == b, f"{at} as approved: expected {b!r}, got {a!r}"
+    if f.get("exhaustive"):
+        assert len(items) == len(f["expected"]), f"the collection holds exactly the approved elements: {len(items)} != {len(f['expected'])}"
+
+
+def poll(fn, done, timeout_ms: int, interval_ms: int):
+    """Bounded polling for documented eventual consistency: returns the last value; never waits past the timeout."""
+    import time
+
+    end = time.monotonic() + timeout_ms / 1000
+    v = fn()
+    while not done(v) and time.monotonic() < end:
+        time.sleep(interval_ms / 1000)
+        v = fn()
+    return v
+
+
+def with_value(payload: Any, ptr: str, value: Any) -> Any:
+    out = copy.deepcopy(payload)
+    keys = [k.replace("~1", "/").replace("~0", "~") for k in ptr.split("/")[1:]]
+    node = out
+    for k in keys[:-1]:
+        node = node.setdefault(k, {})
+    node[keys[-1]] = value
+    return out
+
+
 def fill_vars(value: Any, saved: dict) -> Any:
     """Scenario values: "{name}" alone is replaced by the saved value itself, inside a longer string by its text."""
     import re

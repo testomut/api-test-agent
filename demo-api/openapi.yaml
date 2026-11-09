@@ -49,6 +49,29 @@ paths:
             minimum: 1
             maximum: 100
             default: 20
+        - name: offset
+          in: query
+          required: false
+          description: Items to skip (offset pagination).
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+        - name: tag
+          in: query
+          required: false
+          description: Only items carrying this tag.
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 30
+        - name: sort
+          in: query
+          required: false
+          description: Order of the items; a leading "-" is descending.
+          schema:
+            type: string
+            enum: [name, -name, price, -price]
       responses:
         '200':
           description: Items page

@@ -23,3 +23,38 @@ export async function openDraftPr(o: { files: string[]; title: string; bodyFile:
     git('switch', base);
   }
 }
+
+const ghOut = (args: string[]) => execFileSync('gh', args, { encoding: 'utf8' }).trim();
+
+/**
+ * One Draft PR per bot branch: commits the files on `branch` (recreated from the current HEAD), force-pushes it
+ * with a lease, and updates the open PR of that branch instead of opening a second one. Never merges.
+ * Returns undefined when the files have no changes to commit.
+ */
+export function upsertDraftPr(o: { branch: string; files: string[]; title: string; bodyFile: string; commitMessage: string[] }): { url: string; updated: boolean } | undefined {
+  const base = git('rev-parse', '--abbrev-ref', 'HEAD');
+  if (base === o.branch) throw new Error(`Run from the base branch, not from ${o.branch}.`);
+  const existing = ghOut(['pr', 'list', '--head', o.branch, '--state', 'open', '--json', 'url', '--jq', '.[0].url']) || undefined;
+  try {
+    git('fetch', '-q', 'origin', o.branch);
+  } catch {
+    /* the branch does not exist on the remote yet */
+  }
+  git('switch', '-q', '-C', o.branch);
+  try {
+    const present = o.files.filter((f) => existsSync(f));
+    const gone = o.files.filter((f) => !existsSync(f));
+    if (present.length) git('add', '--', ...present);
+    if (gone.length) git('rm', '--cached', '--ignore-unmatch', '-q', '--', ...gone);
+    if (!git('diff', '--cached', '--name-only')) return undefined;
+    git('commit', '-q', ...o.commitMessage.flatMap((m) => ['-m', m]));
+    git('push', '-q', '--force-with-lease', '-u', 'origin', o.branch);
+    if (existing) {
+      ghOut(['pr', 'edit', existing, '--title', o.title, '--body-file', o.bodyFile]);
+      return { url: existing, updated: true };
+    }
+    return { url: ghOut(['pr', 'create', '--draft', '--base', base, '--head', o.branch, '--title', o.title, '--body-file', o.bodyFile]), updated: false };
+  } finally {
+    git('switch', '-q', base);
+  }
+}

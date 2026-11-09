@@ -30,6 +30,10 @@ import { accountNotice, ACCOUNT_MODES, checkRegisterConfig, missingLoginVars, pa
 import { AiRunner, describeAiError, RUNNERS, type RunnerKind } from './ai/runner.js';
 import { proposeDependencies } from './ai/dependencies.js';
 import { analyzeProject } from './discover/analyze.js';
+import { loadApproved, type LoadedFixture } from './fixtures/fixtures.js';
+import { candidateSummary, captureFixture } from './fixtures/capture.js';
+import { maintain } from './maintain.js';
+import { upsertDraftPr } from './pr.js';
 
 const VERSION = '0.1.3';
 const log = (m: string) => process.stderr.write(m + '\n');
@@ -218,6 +222,7 @@ common(program.command('generate').description('audit, then generate Playwright 
   .option('--tests-dir <dir>', 'where generated tests are written (default: API_TESTS_DIR or tests/api)')
   .option('--deps <file>', 'JSON file with human-confirmed dependencies')
   .option('--scenarios <file>', 'reviewed business scenarios (schemas/scenarios.schema.json); validated against the spec')
+  .option('--fixtures <dir>', 'approved fixtures (strategy B): <dir>/<operationId>.json, compared field by field by policy')
   .option('--max-cases <n>', 'request-body negative cases per operation; the rest is reported as CASE_LIMIT_REACHED', '60')
   .addOption(new Option('--lang <lang>', 'language of generated tests (default: API_TESTS_LANG or typescript)').choices(['typescript', 'python']))
   .option('--run', 'run the generated tests once against --base-url (needs --allow-write)', false)
@@ -226,7 +231,7 @@ common(program.command('generate').description('audit, then generate Playwright 
   .addOption(new Option('--ai-runner <runner>', 'console tool: claude, codex, or command (API_AI_COMMAND). Default: API_AI or claude').choices(RUNNERS))
   .option('--ai-max-calls <n>', 'AI call budget per run', '10')
   .option('--ai-model <id>', 'model name passed to the console tool (default: its own default)')
-  .action(async (specArg: string | undefined, o: CommonOpts & { testsDir?: string; deps?: string; run: boolean; draftPr: boolean; lang?: 'typescript' | 'python'; ai: boolean; aiMaxCalls: string; maxCases: string; scenarios?: string; aiModel?: string; aiRunner?: RunnerKind }) => {
+  .action(async (specArg: string | undefined, o: CommonOpts & { testsDir?: string; deps?: string; run: boolean; draftPr: boolean; lang?: 'typescript' | 'python'; ai: boolean; aiMaxCalls: string; maxCases: string; scenarios?: string; aiModel?: string; aiRunner?: RunnerKind; fixtures?: string }) => {
     const location = await resolveInputs(specArg, o);
     o.testsDir ??= cfg.testsDir;
     o.lang ??= cfg.testsLang;
@@ -249,7 +254,8 @@ common(program.command('generate').description('audit, then generate Playwright 
       scenarios = checked.scenarios;
       log(`Scenarios: ${scenarios.length} reviewed business scenario(s) from ${o.scenarios}`);
     }
-    const gen = await generate(r.spec, r.ops, { outDir: o.testsDir!, deps, version: VERSION, lang: o.lang, maxCases, scenarios });
+    const fx = o.fixtures ? await approvedFixtures(o.fixtures, r.spec, r.ops) : undefined;
+    const gen = await generate(r.spec, r.ops, { outDir: o.testsDir!, deps, version: VERSION, lang: o.lang, maxCases, scenarios, ...(fx ?? {}) });
     for (const s of gen.scenarios) log(`  ${s.status.padEnd(9)} ${s.name}`);
     for (const f of gen.removed) log(`  REMOVED   ${relative(process.cwd(), f).replace(/\\/g, '/')} (generated earlier, no longer produced)`);
     if (o.run) {
@@ -546,6 +552,107 @@ async function aiProposals(doc: any, ops: Operation[], outDir: string, opts: { m
   }
   log(`  ${advisor.summary()}`);
 }
+
+/** Approved fixtures of a directory; invalid ones are logged and become INVALID_REVIEWED_CONFIG gaps. */
+async function approvedFixtures(dir: string, spec: LoadedSpec, ops: Operation[]): Promise<{ fixtures: LoadedFixture[]; fixtureErrors: { file: string; operationId?: string; errors: string[] }[] }> {
+  const r = await loadApproved(dir, spec.doc, ops);
+  log(`Fixtures: ${r.fixtures.length} approved fixture(s) from ${dir}${r.errors.length ? `, ${r.errors.length} invalid (not used)` : ''}`);
+  for (const e of r.errors) log(`  INVALID   ${e.file}: ${e.errors.join('; ')}`);
+  return { fixtures: r.fixtures, fixtureErrors: r.errors };
+}
+
+async function reviewedInputs(o: { deps?: string; scenarios?: string; fixtures?: string }, spec: LoadedSpec, ops: Operation[]) {
+  const deps = o.deps ? JSON.parse(await readFile(o.deps, 'utf8')) : undefined;
+  let scenarios: ResolvedScenario[] | undefined;
+  if (o.scenarios) {
+    const checked = validateScenarios(JSON.parse(await readFile(o.scenarios, 'utf8')), ops);
+    if (checked.errors.length) throw new Error(`${o.scenarios} is invalid:\n${checked.errors.map((e) => `  ${e.pointer || '(root)'}: ${e.reason}`).join('\n')}`);
+    scenarios = checked.scenarios;
+  }
+  const fx = o.fixtures ? await approvedFixtures(o.fixtures, spec, ops) : {};
+  return { deps, scenarios, ...fx };
+}
+
+program
+  .command('maintain')
+  .description('after a spec change: diff, regenerate (deterministic), validate, then one Draft PR per suite with a summary; never merges')
+  .argument('[spec]', 'the new OpenAPI spec (default: API_SPEC_URL)')
+  .option('--base <fileOrUrl>', 'the old spec; default: the spec at the Git merge base')
+  .option('--tests-dir <dir>', 'generated suite', cfg.testsDir)
+  .addOption(new Option('--lang <lang>', 'language of the suite').choices(['typescript', 'python']))
+  .option('--deps <file>', 'reviewed dependencies')
+  .option('--scenarios <file>', 'reviewed business scenarios')
+  .option('--fixtures <dir>', 'approved fixtures')
+  .option('--max-cases <n>', 'request-body negative cases per operation', '60')
+  .option('-o, --out <dir>', 'report directory', 'reports/api-agent/maintain')
+  .option('--draft-pr', 'commit to the bot branch and open or update its Draft PR (gh)', false)
+  .option('--allow-network', 'allow URL specs', false)
+  .action(async (specArg: string | undefined, o: { base?: string; testsDir: string; lang?: 'typescript' | 'python'; deps?: string; scenarios?: string; fixtures?: string; maxCases: string; out: string; draftPr: boolean; allowNetwork: boolean }) => {
+    const location = specArg ?? (await findSpec(cfg, log));
+    if (!location) throw new Error('No spec found: pass it as an argument or set API_SPEC_URL.');
+    const { spec, ops } = await load(location);
+    const inputs = await reviewedInputs(o, spec, ops);
+    const r = await maintain({
+      location, spec, ops, testsDir: o.testsDir, base: o.base, out: o.out, draftPr: o.draftPr, allowNetwork: o.allowNetwork, log,
+      generate: { version: VERSION, lang: o.lang ?? cfg.testsLang, maxCases: Number(o.maxCases), ...inputs },
+    });
+    log(`Summary: ${r.summaryFile}`);
+    if (!r.valid) process.exitCode = 1;
+  });
+
+const fixturesCmd = program.command('fixtures').description('approved fixtures (strategy B): capture candidates, propose refreshes for review');
+const captureOptions = (c: Command) =>
+  c
+    .argument('[spec]', 'OpenAPI spec (default: API_SPEC_URL)')
+    .requiredOption('--operation <operationId>', 'the GET list operation to capture')
+    .option('-u, --base-url <url>', 'TEST environment to read from (default: API_BASE_URL)')
+    .option('--query <k=v>', 'query parameter of the read (repeatable)', collect, [])
+    .option('--items <pointer>', 'JSON pointer to the array in the response')
+    .option('--id <pointer>', 'field that identifies an element, e.g. /id')
+    .option('--deps <file>', 'reviewed deps file: its "collection" mapping supplies items / id / policies / paging')
+    .option('--approved <dir>', 'approved fixtures (read only)', 'fixtures/approved')
+    .option('--candidates <dir>', 'where candidates are written', 'fixtures/candidates');
+type CaptureCli = { operation: string; baseUrl?: string; query: string[]; items?: string; id?: string; deps?: string; approved: string; candidates: string };
+async function capture(specArg: string | undefined, o: CaptureCli) {
+  const location = specArg ?? (await findSpec(cfg, log));
+  if (!location) throw new Error('No spec found: pass it as an argument or set API_SPEC_URL.');
+  const baseUrl = o.baseUrl ?? cfg.baseUrl;
+  if (!baseUrl) throw new Error('Pass --base-url (a TEST environment) or set API_BASE_URL.');
+  const { spec, ops } = await load(location);
+  const deps = o.deps ? JSON.parse(await readFile(o.deps, 'utf8')) : undefined;
+  const r = await captureFixture({
+    doc: spec.doc, ops, baseUrl, operationId: o.operation, approvedDir: o.approved, candidatesDir: o.candidates,
+    query: Object.fromEntries(o.query.map((q) => [q.split('=')[0], q.split('=').slice(1).join('=')])),
+    ...(o.items !== undefined ? { items: o.items } : {}),
+    ...(o.id ? { id: o.id } : {}),
+    collections: (deps?.scenarios ?? []).map((s: any) => s.collection).filter(Boolean),
+    headers: process.env.API_TOKEN ? { authorization: `Bearer ${process.env.API_TOKEN}` } : {},
+  });
+  log(`Candidate: ${r.candidateFile} (${r.candidate.expected.length} element(s)); approved fixtures are never written.`);
+  if (r.diff) log(`Against ${r.approvedFile}: added ${r.diff.added.length}, removed ${r.diff.removed.length}, fields changed ${r.diff.changed.length}`);
+  return r;
+}
+captureOptions(fixturesCmd.command('capture').description('read a collection from a test environment and write a CANDIDATE fixture (never an approved one)')).action(async (specArg: string | undefined, o: CaptureCli) => {
+  await capture(specArg, o);
+});
+captureOptions(fixturesCmd.command('refresh').description('capture a candidate and, when it differs from the approved fixture, propose it in a Draft PR (one per operation)'))
+  .option('--draft-pr', 'commit the candidate to the bot branch and open or update its Draft PR (gh)', false)
+  .option('-o, --out <dir>', 'report directory', 'reports/api-agent/fixtures')
+  .action(async (specArg: string | undefined, o: CaptureCli & { draftPr: boolean; out: string }) => {
+    const r = await capture(specArg, o);
+    if (r.diff && !r.diff.added.length && !r.diff.removed.length && !r.diff.changed.length) {
+      log('The candidate matches the approved fixture under its policies: nothing to refresh.');
+      return;
+    }
+    await mkdir(o.out, { recursive: true });
+    const body = join(o.out, `${o.operation}.md`);
+    await writeFile(body, candidateSummary(r));
+    log(`Review summary: ${body}`);
+    if (o.draftPr) {
+      const pr = upsertDraftPr({ branch: `api-agent/fixtures-${o.operation}`, files: [r.candidateFile], title: `test(api): fixture candidate for ${o.operation} (review before approving)`, bodyFile: body, commitMessage: [`test(api): fixture candidate for ${o.operation}`, 'Captured by api-test-agent. The approved fixture is unchanged until a person approves this candidate.'] });
+      log(pr ? `Draft PR ${pr.updated ? 'updated' : 'opened'}: ${pr.url}` : 'Nothing new to commit: Draft PR unchanged.');
+    }
+  });
 
 program.parseAsync().catch((err) => {
   log(err instanceof UnsupportedSpecError ? `Unsupported spec: ${err.message}` : `Error: ${err?.message ?? err}`);
