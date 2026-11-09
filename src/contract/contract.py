@@ -203,6 +203,19 @@ def poll(fn, done, timeout_ms: int, interval_ms: int):
     return v
 
 
+def without_fields(payload: Any, ptrs: list) -> Any:
+    """A copy of a payload without the fields at these JSON pointers (array elements by index)."""
+    out = copy.deepcopy(payload)
+    for ptr in ptrs:
+        keys = [_unesc(k) for k in ptr.split("/")[1:]]
+        node = out
+        for k in keys[:-1]:
+            node = node[int(k)] if isinstance(node, list) else (node or {}).get(k)
+        if isinstance(node, dict):
+            node.pop(keys[-1], None)
+    return out
+
+
 def with_value(payload: Any, ptr: str, value: Any) -> Any:
     out = copy.deepcopy(payload)
     keys = [k.replace("~1", "/").replace("~0", "~") for k in ptr.split("/")[1:]]

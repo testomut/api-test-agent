@@ -20,7 +20,56 @@ export interface ErrorPlan {
   preconditionFailed?: { header: string; value: string };
   /** 409: the same create payload twice, on fields a reviewed deps file names (conflictOn). */
   conflict?: { fields: string[] };
+  /**
+   * 401 / 403 with a credential a reviewed deps file names by its environment variable ("auth"): an expired one
+   * (401) or a valid one of an account that must be refused (403). The test is skipped when the variable is unset.
+   */
+  envCredentials?: EnvCredential[];
   gaps: CoverageGap[];
+}
+
+export interface EnvCredential {
+  kind: 'expired' | 'forbidden';
+  status: '401' | '403';
+  env: string;
+  /** Where the credential goes: a header (with a prefix such as "Bearer ") or a query parameter. */
+  header?: string;
+  query?: string;
+  prefix: string;
+  /** forbidden: the documented path values are used (a missing resource must not answer before the refusal). */
+  knownPath: boolean;
+}
+
+/** deps file "auth": credentials the reviewer provides through environment variables (never in the file). */
+export interface AuthConfig {
+  forbidden?: { credentialEnv: string; operations: string[] };
+  expired?: { credentialEnv: string };
+}
+
+/** Checks a deps "auth" section against the spec; problems are INVALID_REVIEWED_CONFIG gaps of the operation named. */
+export function checkAuthConfig(auth: AuthConfig | undefined, ops: Operation[]): string[] {
+  if (!auth) return [];
+  const errors: string[] = [];
+  const envName = /^[A-Z][A-Z0-9_]*$/;
+  if (auth.forbidden) {
+    if (!envName.test(String(auth.forbidden.credentialEnv))) errors.push('auth.forbidden.credentialEnv must name an environment variable (e.g. API_FORBIDDEN_TOKEN)');
+    for (const id of auth.forbidden.operations ?? []) if (!ops.some((o) => o.operationId === id)) errors.push(`auth.forbidden: operation "${id}" is not in the spec`);
+  }
+  if (auth.expired && !envName.test(String(auth.expired.credentialEnv))) errors.push('auth.expired.credentialEnv must name an environment variable (e.g. API_EXPIRED_TOKEN)');
+  return errors;
+}
+
+/** Where a credential of the operation's (single) security scheme goes. */
+function placement(doc: OpenApiDoc, op: Operation): { header?: string; query?: string; prefix: string } | string {
+  const req = op.security[0] ?? [];
+  if (req.length !== 1) return req.length ? 'several schemes must be satisfied together' : 'the operation needs no credentials';
+  const s = (doc as any).components?.securitySchemes?.[req[0]];
+  const type = String(s?.type ?? '').toLowerCase();
+  if (type === 'http' && String(s.scheme).toLowerCase() === 'bearer') return { header: 'Authorization', prefix: 'Bearer ' };
+  if (type === 'oauth2' || type === 'openidconnect') return { header: 'Authorization', prefix: 'Bearer ' };
+  if (type === 'apikey' && s.in === 'header') return { header: s.name, prefix: '' };
+  if (type === 'apikey' && s.in === 'query') return { query: s.name, prefix: '' };
+  return `security scheme "${req[0]}" (${type || 'unknown'}) takes no single token`;
 }
 
 const INVALID_TOKEN = 'api-agent-invalid-token';
@@ -42,6 +91,8 @@ export interface ErrorInput {
   reachable: boolean;
   /** The operation is the first one of its path documenting 405 (one case per path). */
   firstWith405: boolean;
+  /** Reviewed deps "auth" section. */
+  auth?: AuthConfig;
 }
 
 export function errorPlan(i: ErrorInput): ErrorPlan {
@@ -98,7 +149,26 @@ export function errorPlan(i: ErrorInput): ErrorPlan {
     else gap('UNCONFIRMED_BUSINESS_RULE', '409', i.role === 'create' ? 'which fields conflict is not confirmed: add "conflictOn" to the deps file' : 'what makes this operation conflict is not documented');
   }
 
-  if (codes.has('403')) gap('UNCONFIRMED_BUSINESS_RULE', '403', 'needs a reviewed role / scope configuration (an account that must be refused)');
+  // 401 with an expired credential (deps auth.expired): the same safe request as the invalid-credential case.
+  const envCredentials: EnvCredential[] = [];
+  if (i.auth?.expired && plan.invalidCredentials) {
+    const at = placement(doc, op);
+    if (typeof at === 'string') gap('UNSUPPORTED_SCHEMA_KEYWORD', '401', `expired credential: ${at}`);
+    else envCredentials.push({ kind: 'expired', status: '401', env: i.auth.expired.credentialEnv, ...at, knownPath: false });
+  }
+  // 403 with a valid credential of an account that must be refused (deps auth.forbidden), for the operations named.
+  const listed = !!op.operationId && (i.auth?.forbidden?.operations ?? []).includes(op.operationId);
+  if (listed && !codes.has('403')) plan.gaps.push({ code: 'INVALID_REVIEWED_CONFIG', location: 'request.security', reason: `deps auth.forbidden names ${op.operationId}, but it documents no 403` });
+  if (codes.has('403')) {
+    const at = placement(doc, op);
+    const unknownPath = op.params.filter((p) => p.in === 'path' && p.knownValue === undefined);
+    if (!listed) gap('UNCONFIRMED_BUSINESS_RULE', '403', 'needs a reviewed role / scope configuration: deps "auth.forbidden" (an account that must be refused)');
+    else if (!['get', 'head'].includes(op.method)) gap('UNSAFE_LIVE_CHECK', '403', 'a write with an account that must be refused could still change data if the API lets it through');
+    else if (unknownPath.length) gap('MISSING_RESOURCE_SOURCE', '403', `no value for ${unknownPath.map((p) => `path "${p.name}"`).join(', ')}: a missing resource could answer before the refusal`);
+    else if (typeof at === 'string') gap('UNSUPPORTED_SCHEMA_KEYWORD', '403', at);
+    else envCredentials.push({ kind: 'forbidden', status: '403', env: i.auth!.forbidden!.credentialEnv, ...at, knownPath: true });
+  }
+  if (envCredentials.length) plan.envCredentials = envCredentials;
   if (codes.has('429')) gap('UNSAFE_LIVE_CHECK', '429', 'rate limiting is not exercised (it would load the target)');
   for (const c of codes) if (/^4\d\d$/.test(c) && !HANDLED.has(c)) gap('UNREACHABLE_RESPONSE_STATUS', c, `no deterministic request triggers ${c}`);
   return plan;

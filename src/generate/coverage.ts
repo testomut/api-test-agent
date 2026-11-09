@@ -47,6 +47,10 @@ export interface Exercised {
   invalidInput: boolean; // there are body / parameter cases
   errors?: ErrorPlan;
   deleteTwice: boolean;
+  /** Code of the reason the success call is not sent (positiveCode), when it is not. */
+  positiveCode?: string | null;
+  /** False when no request is sent at all (a write without confirmed cleanup): no status of it is exercised. */
+  reachable?: boolean;
 }
 
 /** Documented statuses no generated test exercises (2xx counts as exercised by the success call). */
@@ -60,11 +64,21 @@ export function uncheckedStatuses(op: Operation, x: Exercised): { status: string
   if (x.errors?.conflict) hit.add('409');
   if (x.errors?.preconditionFailed) hit.add('412');
   if (x.errors?.unsupportedMediaType) hit.add('415');
+  for (const c of x.errors?.envCredentials ?? []) hit.add(c.status);
   // The precise reason when an error gap names this status; otherwise a code by status class.
   const reason = (status: string) => x.errors?.gaps.find((g) => g.location === `response.status#/${status}`)?.code;
   return op.responses
     .filter((r) => !hit.has(r.status.toUpperCase()))
-    .map((r) => ({ status: r.status, code: reason(r.status) ?? (/^(5|default)/i.test(r.status) ? 'UNREACHABLE_RESPONSE_STATUS' : /^4/.test(r.status) ? 'NO_DOCUMENTED_REJECTION' : 'UNCONFIRMED_BUSINESS_RULE') }));
+    .map((r) => ({ status: r.status, code: reason(r.status) ?? codeFor(r.status, x) }));
+}
+
+/** Why a documented status is not exercised, when no error gap names it. */
+function codeFor(status: string, x: Exercised): string {
+  if (/^(5|default)/i.test(status)) return 'UNREACHABLE_RESPONSE_STATUS';
+  // Nothing is sent to this operation: every status has the success call's reason (e.g. MISSING_CLEANUP).
+  if (x.reachable === false && x.positiveCode) return x.positiveCode;
+  if (/^2/.test(status) && x.positiveCode) return x.positiveCode;
+  return /^4/.test(status) ? 'NO_DOCUMENTED_REJECTION' : 'UNCONFIRMED_BUSINESS_RULE';
 }
 
 /** Request media types the suite never sends (it sends JSON), and security alternatives beyond the one it uses. */

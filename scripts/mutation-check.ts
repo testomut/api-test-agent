@@ -13,12 +13,14 @@ import { existsSync, rmSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { findPython } from '../src/generate/generate.js';
 
-export const FAULTS = ['ignore-filter', 'wrong-sort', 'hide-created', 'duplicate', 'wrong-field', 'bad-pagination'] as const;
+export const FAULTS = ['ignore-filter', 'wrong-sort', 'hide-created', 'duplicate', 'wrong-field', 'bad-pagination', 'require-optional', 'accept-expired', 'ignore-suspension'] as const;
 
 const args = process.argv.slice(2);
 const lang = args.includes('--lang') ? args[args.indexOf('--lang') + 1] : 'typescript';
-const targets = args.filter((a, i) => !a.startsWith('--') && args[i - 1] !== '--lang' && args[i - 1] !== '--port');
+const targets = args.filter((a, i) => !a.startsWith('--') && !['--lang', '--port', '--faults', '--label'].includes(args[i - 1]));
 const basePort = Number(args.includes('--port') ? args[args.indexOf('--port') + 1] : 3200);
+/** --faults a,b: only these fault modes (each must be caught by the targets given). */
+const only = args.includes('--faults') ? args[args.indexOf('--faults') + 1].split(',') : undefined;
 if (!targets.length) {
   console.error('usage: mutation-check.ts [--lang typescript|python] [--port 3200] <generated test folder or file>...');
   process.exit(2);
@@ -70,7 +72,9 @@ async function withServer<T>(fault: string, port: number, fn: (url: string) => T
 }
 
 const rows: { fault: string; passed: number; failed: number; skipped: number; ok: boolean }[] = [];
-for (const [i, fault] of ['', ...FAULTS].entries()) {
+const faults = only ? FAULTS.filter((f) => only.includes(f)) : FAULTS;
+if (only && faults.length !== only.length) throw new Error(`unknown fault in --faults ${only.join(',')}: known ${FAULTS.join(', ')}`);
+for (const [i, fault] of ['', ...faults].entries()) {
   const r = await withServer(fault, basePort + i, runTests);
   const ok = fault ? r.failed > 0 : r.failed === 0 && r.passed > 0;
   rows.push({ fault: fault || '(none)', passed: r.passed, failed: r.failed, skipped: r.skipped, ok });
@@ -80,6 +84,7 @@ console.log(`\nFault injection (${lang}): ${targets.join(', ')}`);
 console.log('fault            passed  failed  skipped  verdict');
 for (const r of rows) console.log(`${r.fault.padEnd(16)} ${String(r.passed).padStart(6)}  ${String(r.failed).padStart(6)}  ${String(r.skipped).padStart(7)}  ${r.fault === '(none)' ? (r.ok ? 'clean' : 'FAILS WITHOUT A FAULT') : r.ok ? 'detected' : 'MISSED'}`);
 const detected = rows.filter((r) => r.fault !== '(none)' && r.ok).length;
-console.log(`detected ${detected}/${FAULTS.length} injected defects`);
-if (existsSync('reports')) writeFileSync(`reports/mutation-${lang}.json`, JSON.stringify({ lang, targets, rows, detected, injected: FAULTS.length }, null, 2) + '\n');
+console.log(`detected ${detected}/${faults.length} injected defects`);
+const label = args.includes('--label') ? args[args.indexOf('--label') + 1] : lang;
+if (existsSync('reports')) writeFileSync(`reports/mutation-${label}.json`, JSON.stringify({ lang, targets, rows, detected, injected: faults.length }, null, 2) + '\n');
 process.exit(rows.every((r) => r.ok) ? 0 : 1);

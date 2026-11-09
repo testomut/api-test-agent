@@ -44,6 +44,8 @@ export interface Candidate {
 }
 
 export interface DepsFile {
+  /** Reviewed credentials for 401 / 403 cases, by environment variable name (never the values). */
+  auth?: import('./error-cases.js').AuthConfig;
   scenarios: {
     create: string;
     idFrom: string;

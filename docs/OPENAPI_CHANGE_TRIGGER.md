@@ -291,6 +291,9 @@ v3  functional/positive:  collection-contains, fixture   operation
                           filter, pagination             request.query#/<parameter>
                           sort                           request.query#/<parameter>/<documented value>
                           unique                         response.body#<items pointer>/*<field>
+v4  functional/positive:  optional-omitted               request.body#
+                          variant                        request.body#<pointer>/@<branch>
+    functional/negative:  expired-credentials            request.security
 ```
 
 This is the architecture's vocabulary. The generator may support only a subset, but it never creates unknown rules. `crud` is only for a general resource lifecycle; `business-rule` covers positive and negative business scenarios, including state transitions. A separate `state-transition` rule may come in a later vocabulary version if `business-rule` proves too broad.
