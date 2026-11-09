@@ -1,5 +1,5 @@
 import type { Operation } from '../types.js';
-import { hasFill, roleOf, scenarioCases, uniqueNote, type ChainPlan, type Meta, type SuiteInput, type SuiteType } from './templates.js';
+import { hasFill, queryVariants, roleOf, scenarioCases, uniqueNote, type ChainPlan, type Meta, type SuiteInput, type SuiteType } from './templates.js';
 
 /**
  * pytest + requests output. Same cases and safety rules as the TypeScript templates;
@@ -234,6 +234,17 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "api_case_id(id): stable case ID from _support/cases.json")
 
 
+def pytest_collection_modifyitems(config, items):
+    # api-test-agent sets API_AGENT_CASES_OUT to check that every collected test has its own case ID.
+    out = os.environ.get("API_AGENT_CASES_OUT")
+    if not out:
+        return
+    with open(out, "w", encoding="utf-8") as f:
+        for item in items:
+            mark = item.get_closest_marker("api_case_id")
+            f.write(json.dumps({"test": item.nodeid, "caseId": mark.args[0] if mark else None}) + "\\n")
+
+
 class ApiClient(requests.Session):
     """requests.Session with a base URL, JSON accept header and a default timeout."""
 
@@ -400,6 +411,15 @@ export function renderPyFunctional(s: SuiteInput, meta: Meta): string {
         return a;
       }, s.ids?.functional.success),
     );
+  }
+  // One physical test (and case ID) per documented query value, as in the TypeScript suite.
+  const variants = s.positive && !plan && op.method === 'get' ? queryVariants(op) : [];
+  if (variants.length) {
+    const base = Object.fromEntries(op.params.filter((p) => p.in === 'query' && p.required && p.knownValue !== undefined).map((p) => [p.name, p.knownValue]));
+    L.push('QUERY_VALUES = [');
+    variants.forEach((v, n) => L.push(`    pytest.param(${pyLit({ ...base, [v.name]: v.value }, 4)}, id=${str(`${v.name}=${String(v.value)}`)}${paramMarks(s.ids?.functional.variants[n])}),`));
+    L.push(']', '', '', POS, '@pytest.mark.parametrize("params", QUERY_VALUES)', 'def test_accepts_documented_query_value(api, params):');
+    L.push(`    res = api.${op.method}(${pathExpr(op)}, params=params)`, `    ${assertSuccess(op)}`, '', '');
   }
   if (s.notFound) L.push(...pyNotFound(s, 'test_returns_documented_404_for_unknown_id', withId(NEG, s.ids?.functional.notFound), statusIs(op, '404')));
   if (s.unauthorized) L.push(...pyAnonymous(s, 'test_returns_documented_401_without_credentials', withId(NEG, s.ids?.functional.unauthorized), statusIs(op, '401')));

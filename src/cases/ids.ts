@@ -10,7 +10,8 @@ import { base32 } from '../change/normalize.js';
 export type SuiteType = 'functional' | 'contract' | 'scenario';
 export type Polarity = 'positive' | 'negative';
 
-export const CASE_RULE_VOCABULARY_VERSION = 1;
+/** v2 adds functional/positive `accepted-value` (one case per documented parameter value). Registries of v1 stay readable. */
+export const CASE_RULE_VOCABULARY_VERSION = 2;
 
 const CONSTRAINT_RULES = [
   'required', 'nullable', 'type', 'format', 'pattern', 'minimum', 'maximum', 'exclusiveMinimum', 'exclusiveMaximum', 'multipleOf',
@@ -19,7 +20,7 @@ const CONSTRAINT_RULES = [
 
 /** Built-in vocabulary v1, by suiteType/polarity. */
 export const VOCABULARY_V1: Record<string, readonly string[]> = {
-  'functional/positive': ['documented-success'],
+  'functional/positive': ['documented-success', 'accepted-value'],
   'functional/negative': ['not-found', 'unauthorized', 'forbidden'],
   'contract/positive': ['documented', 'schema'],
   'contract/negative': [...CONSTRAINT_RULES, 'content-type'],
@@ -56,6 +57,9 @@ export const location = {
   requestContentType: () => 'request.content-type',
   query: (name: string) => `request.query#/${encodeSegment(name)}`,
   path: (name: string) => `request.path#/${encodeSegment(name)}`,
+  /** One documented value of a parameter: `request.query#/<name>/<value>` (string, number or boolean as in the spec). */
+  paramValue: (where: 'query' | 'path' | 'header' | 'cookie', name: string, value: string | number | boolean) =>
+    `request.${where}#/${encodeSegment(where === 'header' ? name.toLowerCase() : name)}/${encodeSegment(String(value))}`,
   header: (name: string) => `request.header#/${encodeSegment(name.toLowerCase())}`,
   cookie: (name: string) => `request.cookie#/${encodeSegment(name)}`,
   /** `pointer` is already a case pointer ('' = body root). */
@@ -81,7 +85,7 @@ export interface CaseIdError {
 }
 
 const UID = /^(op|scn)_[A-Z2-7]{12,52}$/;
-const LOCATION = /^(operation|lifecycle|request\.security|request\.content-type|request\.(query|path|header|cookie)#\/[^/]*|request\.body#(\/[^/]*)*|response\.body#(\/[^/]*)*|response\.status#\/[^/]+|response\.content-type#\/[^/]+)$/;
+const LOCATION = /^(operation|lifecycle|request\.security|request\.content-type|request\.(query|path|header|cookie)#\/[^/]*(\/[^/]*)?|request\.body#(\/[^/]*)*|response\.body#(\/[^/]*)*|response\.status#\/[^/]+|response\.content-type#\/[^/]+)$/;
 
 /** Splits on the five structural colons and checks encoding, vocabulary and the allowed combination (no spec needed). */
 export function parseCaseId(id: string): { ok: true; parts: CaseParts } | { ok: false; error: CaseIdError } {
@@ -112,16 +116,17 @@ export function checkCombination(p: CaseParts): CaseIdError | undefined {
   const subject = (why: string): CaseIdError => ({ code: 'INVALID_CASE_SUBJECT', reason: why });
   switch (`${p.suiteType}/${p.polarity}`) {
     case 'functional/positive':
+      if (p.rule === 'accepted-value') return /^request\.(query|path|header|cookie)#\/[^/]*\/[^/]*$/.test(loc) ? undefined : bad('accepted-value names a parameter and its value: request.<in>#/<name>/<value>');
       return loc === 'operation' ? undefined : bad(`documented-success is checked on "operation", not "${loc}"`);
     case 'functional/negative':
-      if (p.rule === 'not-found') return loc.startsWith('request.path#/') ? undefined : bad('not-found is checked on a path parameter');
+      if (p.rule === 'not-found') return /^request\.path#\/[^/]*$/.test(loc) ? undefined : bad('not-found is checked on a path parameter');
       return loc === 'request.security' ? undefined : bad(`${p.rule} is checked on "request.security"`);
     case 'contract/positive':
       if (p.rule === 'schema') return loc.startsWith('response.body#') ? undefined : bad('schema is checked on a response body location');
       return loc.startsWith('response.status#/') || loc.startsWith('response.content-type#/') ? undefined : bad('documented is checked on a response status or content type');
     case 'contract/negative':
       if (p.rule === 'content-type') return loc === 'request.content-type' ? undefined : bad('content-type is checked on "request.content-type"');
-      return /^request\.(body|query|path|header|cookie)#/.test(loc) ? undefined : bad('a constraint rule is checked on a request field or parameter');
+      return /^request\.body#/.test(loc) || /^request\.(query|path|header|cookie)#\/[^/]*$/.test(loc) ? undefined : bad('a constraint rule is checked on a request field or one parameter');
     default: // scenario
       if (loc === 'lifecycle') return p.subjectUid.startsWith('scn_') ? undefined : subject('a lifecycle scenario needs a scn_ subject');
       if (loc === 'operation' && p.polarity === 'negative' && p.rule === 'business-rule') return p.subjectUid.startsWith('op_') ? undefined : subject('a single-operation scenario needs an op_ subject');

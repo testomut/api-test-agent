@@ -23,7 +23,8 @@ export interface ScenarioDefinition {
 }
 
 export interface SuiteCaseIds {
-  functional: { success?: string; notFound?: string; unauthorized?: string };
+  /** `variants`: one case per documented query value, in the order of `AssignInput.queryVariants`. */
+  functional: { success?: string; notFound?: string; unauthorized?: string; variants: string[] };
   contract: { success?: string; notFound?: string; unauthorized?: string; body: string[]; query: string[] };
   scenario: { createRead?: string; updateRead?: string; deleteGone?: string };
   /** Every case of this operation, by suite, with metadata for cases.json. */
@@ -42,6 +43,8 @@ export interface AssignInput {
   notFound?: { param: string };
   unauthorized: boolean;
   scenarios: { createRead: boolean; updateRead: boolean; deleteGone: boolean };
+  /** Documented query values the suite sends one by one (functional positive), each its own physical test. */
+  queryVariants?: { name: string; value: string | number | boolean }[];
 }
 
 export function assignCaseIds(s: AssignInput, uidOf: (op: Operation) => string): SuiteCaseIds {
@@ -58,7 +61,7 @@ export function assignCaseIds(s: AssignInput, uidOf: (op: Operation) => string):
     return id;
   };
   const ok = successStatus(s.op);
-  const ids: SuiteCaseIds = { functional: {}, contract: { body: [], query: [] }, scenario: {}, records, scenarios };
+  const ids: SuiteCaseIds = { functional: { variants: [] }, contract: { body: [], query: [] }, scenario: {}, records, scenarios };
   const rel = related.length ? { relatedOperationUids: related } : {};
 
   if (s.positive) {
@@ -71,6 +74,9 @@ export function assignCaseIds(s: AssignInput, uidOf: (op: Operation) => string):
       // No body documented for the success response: what the test checks is that the status is documented.
       ids.contract.success = add('contract', { subjectUid: uid, polarity: 'positive', location: location.status(ok?.status ?? '200'), rule: 'documented' }, rel);
     }
+  }
+  for (const v of s.queryVariants ?? []) {
+    ids.functional.variants.push(add('functional', { subjectUid: uid, polarity: 'positive', location: location.paramValue('query', v.name, v.value), rule: 'accepted-value' }));
   }
   if (s.notFound) {
     ids.functional.notFound = add('functional', { subjectUid: uid, polarity: 'negative', location: location.path(s.notFound.param), rule: 'not-found' });

@@ -13,7 +13,7 @@ import { buildRegistry, canonicalJson, fileHash, readRegistry, resolveOperationU
 import { headRevision } from '../change/baseline.js';
 import { isUrl } from '../change/network.js';
 import { bodyCases, documentedRejections, nonexistentIdExpr, queryCases } from './negative.js';
-import { CONTRACT_ASSERT, SUITE_TYPES, TS_FILES, operationFolder, renderContract, renderFunctional, renderResourceHelpers, renderScenarios, scenarioCases, suiteCounts, type ChainPlan, type Meta, type SuiteInput, type SuiteType } from './templates.js';
+import { CONTRACT_ASSERT, SUITE_TYPES, TS_FILES, operationFolder, queryVariants, renderContract, renderFunctional, renderResourceHelpers, renderScenarios, scenarioCases, suiteCounts, type ChainPlan, type Meta, type SuiteInput, type SuiteType } from './templates.js';
 import { API_BASE, buildApiIndex, renderApiBaseClass, renderApiChildClass, renderApis } from './api-objects.js';
 import { PY_FILES, pyName, renderConftest, renderPyContract, renderPyFunctional, renderPyResource, renderPyScenarios, resourceModule } from './python.js';
 
@@ -52,6 +52,8 @@ export interface GenerateResult {
   coverage: Coverage[];
   /** Test data the generated cleanup could not remove during --run (it stays on the target). */
   cleanupFailures: CleanupFailure[];
+  /** After --run: every physical test has its own registered case ID. */
+  caseIdCheck?: CaseIdCheck;
 }
 
 export interface CleanupFailure {
@@ -291,7 +293,8 @@ export async function generate(spec: LoadedSpec, ops: Operation[], o: GenerateOp
     // --- suites
     const input: SuiteInput = { op, refs, plan, helpers, positive: !posReason, validation: rej.validation, bodyCases: bCases, queryCases: qCases, notFound, unauthorized };
     const counts = suiteCounts(input);
-    const ids = assignCaseIds({ op, chain: plan?.chain, positive: input.positive, bodyCases: bCases, queryCases: qCases, notFound, unauthorized, scenarios: scenarioCases(input) }, uidOf);
+    const variants = input.positive && !plan && op.method === 'get' ? queryVariants(op) : [];
+    const ids = assignCaseIds({ op, chain: plan?.chain, positive: input.positive, bodyCases: bCases, queryCases: qCases, notFound, unauthorized, scenarios: scenarioCases(input), queryVariants: variants }, uidOf);
     input.ids = ids;
     // Explicit per-operation coverage and gaps, independent of test execution status.
     coverage.push({ operation: op.key, counts, positiveBlocked: posReason ?? null, negativeGaps: why, lifecycle: plan ? plan.chain.name : null });
@@ -476,8 +479,15 @@ export async function runGenerated(result: GenerateResult, env: { baseUrl: strin
   const cleanupLog = resolve(outDir, 'cleanup-failures.jsonl');
   await mkdir(dirname(cleanupLog), { recursive: true });
   await rm(cleanupLog, { force: true });
-  const runEnv = { ...process.env, API_BASE_URL: env.baseUrl, API_AGENT_CLEANUP_LOG: cleanupLog };
+  const casesOut = resolve(outDir, 'collected-cases.jsonl');
+  await rm(casesOut, { force: true });
+  const runEnv = { ...process.env, API_BASE_URL: env.baseUrl, API_AGENT_CLEANUP_LOG: cleanupLog, API_AGENT_CASES_OUT: casesOut };
   await (lang === 'python' ? runPytest(specs, runEnv, outDir) : runPlaywright(specs, runEnv, outDir));
+  // Every physical test that ran (or was collected) must carry its own case ID from the registry.
+  const collected = lang === 'python' ? await readCollected(casesOut) : await playwrightCaseIds(resolve(outDir, 'playwright-results.json'));
+  const registryFile = result.files.find((f) => /[\\/]_support[\\/]cases\.json$/.test(f));
+  const registered = registryFile && existsSync(registryFile) ? new Set(Object.keys(JSON.parse(await readFile(registryFile, 'utf8')).cases ?? {})) : new Set<string>();
+  result.caseIdCheck = checkCaseIds(collected, registered);
   result.cleanupFailures = existsSync(cleanupLog)
     ? (await readFile(cleanupLog, 'utf8')).split('\n').filter((l) => l.trim()).flatMap((l) => {
         try {
@@ -487,6 +497,52 @@ export async function runGenerated(result: GenerateResult, env: { baseUrl: strin
         }
       })
     : [];
+}
+
+export interface CaseIdCheck {
+  tests: number;
+  /** Tests without a case ID. */
+  missing: string[];
+  /** Case IDs carried by more than one physical test. */
+  duplicates: string[];
+  /** Case IDs that are not in _support/cases.json. */
+  unregistered: string[];
+}
+
+export function checkCaseIds(tests: { test: string; caseId: string | null }[], registered: Set<string>): CaseIdCheck {
+  const count = new Map<string, number>();
+  for (const t of tests) if (t.caseId) count.set(t.caseId, (count.get(t.caseId) ?? 0) + 1);
+  return {
+    tests: tests.length,
+    missing: tests.filter((t) => !t.caseId).map((t) => t.test),
+    duplicates: [...count].filter(([, n]) => n > 1).map(([id]) => id),
+    unregistered: [...count.keys()].filter((id) => !registered.has(id)),
+  };
+}
+
+async function readCollected(file: string): Promise<{ test: string; caseId: string | null }[]> {
+  if (!existsSync(file)) return [];
+  return (await readFile(file, 'utf8')).split('\n').filter((l) => l.trim()).map((l) => JSON.parse(l));
+}
+
+/** Case IDs from the Playwright JSON report: the `caseId` annotation of every test. */
+async function playwrightCaseIds(file: string): Promise<{ test: string; caseId: string | null }[]> {
+  if (!existsSync(file)) return [];
+  const report = JSON.parse(await readFile(file, 'utf8'));
+  const out: { test: string; caseId: string | null }[] = [];
+  const walk = (suite: any, file?: string) => {
+    const f = suite.file ?? file;
+    for (const spec of suite.specs ?? []) {
+      for (const t of spec.tests ?? []) {
+        const annotations = [...(t.annotations ?? []), ...(t.results ?? []).flatMap((r: any) => r.annotations ?? [])];
+        const id = annotations.find((a: any) => a.type === 'caseId')?.description ?? null;
+        out.push({ test: `${f} › ${spec.title}`, caseId: id });
+      }
+    }
+    for (const s of suite.suites ?? []) walk(s, f);
+  };
+  for (const s of report.suites ?? []) walk(s);
+  return out;
 }
 
 /** Groups cleanup failures by operation and status: "DELETE /brands/{brandId} → 403: 13 record(s)". */

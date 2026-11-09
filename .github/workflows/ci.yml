@@ -65,6 +65,16 @@ jobs:
             if (JSON.stringify(bad) !== JSON.stringify(["stats/get/contract"]) || passed < 10) process.exit(1);
           '
 
+      - name: Self-check - every physical test has its own registered case ID; registry and manifest are valid
+        run: |
+          node -e '
+            const c = require("./reports/generate/report.json").generated.caseIdCheck;
+            console.log(JSON.stringify(c));
+            if (!c || c.tests < 10 || c.missing.length || c.duplicates.length || c.unregistered.length) process.exit(1);
+          '
+          npx tsx src/cli.ts registry validate tests/api/_support/cases.json --spec demo-api/openapi.yaml --require-spec > /dev/null
+          npx tsx src/cli.ts manifest validate --tests-dir tests/api
+
       - name: Generate Python tests (pytest + requests) and run them once
         run: |
           pip install pytest requests jsonschema
@@ -75,7 +85,17 @@ jobs:
             const passed = r.generated.scenarios.filter(s => s.status === "PASS").length;
             console.log("failing:", bad, "passed:", passed);
             if (JSON.stringify(bad) !== JSON.stringify(["stats/get/contract"]) || passed < 10) process.exit(1);
+            const c = r.generated.caseIdCheck;
+            console.log(JSON.stringify(c));
+            if (!c || c.tests < 10 || c.missing.length || c.duplicates.length || c.unregistered.length) process.exit(1);
+            // TypeScript and Python generate the same active cases (retired ones are history).
+            const active = (f) => Object.entries(require(f).cases).filter(([, c]) => c.status !== "retired").map(([id]) => id).sort();
+            const ts = active("./tests/api/_support/cases.json");
+            const py = active("./tests/api-python/_support/cases.json");
+            if (JSON.stringify(ts) !== JSON.stringify(py)) { console.log("TS/Python case sets differ"); process.exit(1); }
           '
+          npx tsx src/cli.ts registry validate tests/api-python/_support/cases.json --spec demo-api/openapi.yaml --require-spec > /dev/null
+          npx tsx src/cli.ts manifest validate --tests-dir tests/api-python
 
       - name: Analyse the legacy example project (init + run)
         working-directory: examples/legacy-project

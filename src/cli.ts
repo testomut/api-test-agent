@@ -242,6 +242,14 @@ common(program.command('generate').description('audit, then generate Playwright 
       log('Running generated tests once (assertions are never changed to pass)…');
       await runGenerated(gen, { baseUrl: o.baseUrl! }, o.out, o.lang);
       for (const s of gen.scenarios.filter((x) => x.file)) log(`  ${s.status.padEnd(9)} ${s.name}`);
+      const ids = gen.caseIdCheck;
+      if (ids) {
+        const bad = ids.missing.length + ids.duplicates.length + ids.unregistered.length;
+        log(`Case IDs: ${ids.tests} test(s)${bad ? ` · WARNING: ${ids.missing.length} without an ID, ${ids.duplicates.length} duplicated, ${ids.unregistered.length} not in cases.json` : ', each with its own registered ID'}`);
+        for (const t of ids.missing.slice(0, 10)) log(`  NO ID     ${t}`);
+        for (const d of ids.duplicates.slice(0, 10)) log(`  DUPLICATE ${d}`);
+        for (const u of ids.unregistered.slice(0, 10)) log(`  UNREGISTERED ${u}`);
+      }
       if (gen.cleanupFailures.length) {
         log(`WARNING: cleanup could not remove ${gen.cleanupFailures.length} record(s); they stay on ${o.baseUrl}:`);
         for (const line of cleanupSummary(gen.cleanupFailures)) log(`  LEFT      ${line}`);
@@ -259,6 +267,7 @@ common(program.command('generate').description('audit, then generate Playwright 
         files: gen.files.map((f) => resolve(f).replace(process.cwd() + (process.platform === 'win32' ? '\\' : '/'), '').replace(/\\/g, '/')),
         scenarios: gen.scenarios.map(({ name, status, reason, operations }) => ({ name, status, reason, operations })),
         cleanupFailures: gen.cleanupFailures,
+        ...(gen.caseIdCheck ? { caseIdCheck: gen.caseIdCheck } : {}),
       },
     });
     const files = await writeReport(report, o.out);

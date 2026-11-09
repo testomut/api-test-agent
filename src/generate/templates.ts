@@ -63,9 +63,10 @@ export function queryVariants(op: Operation): Array<{ name: string; value: strin
   return op.params.filter((p) => p.in === 'query' && !p.required).flatMap((p) => {
     const schema = p.schema ?? {};
     const values = Array.isArray(schema.enum) ? schema.enum : [];
-    return values.filter((v): v is string | number | boolean =>
-      typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean'
-    ).slice(0, 5).map((value) => ({ name: p.name, value }));
+    const kept = values.filter((v): v is string | number | boolean => typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean');
+    // One physical test per value, each with its own case ID: values equal as strings would share an ID.
+    const unique = kept.filter((v, i) => kept.findIndex((x) => String(x) === String(v)) === i);
+    return unique.slice(0, 5).map((value) => ({ name: p.name, value }));
   }).slice(0, 15);
 }
 
@@ -354,16 +355,16 @@ export function renderFunctional(s: SuiteInput, meta: Meta): string {
   if (s.positive && !plan && op.method === 'get') {
     const ref = s.refs.get(op)!;
     const base = requiredQuery(op);
-    for (const variant of queryVariants(op)) {
+    queryVariants(op).forEach((variant, n) => {
       const params = { ...base, [variant.name]: variant.value };
       L.push(
-        `  test(${q(`accepts documented ${variant.name}=${String(variant.value)}`)}, ${testOptions('positive', s.ids?.functional.success)}, async ({ ${fx} }) => {`,
+        `  test(${q(`accepts documented ${variant.name}=${String(variant.value)}`)}, ${testOptions('positive', s.ids?.functional.variants[n])}, async ({ ${fx} }) => {`,
         `    const res = await ${apiCall(ref, fx, pathArgs(op, ref), `{ params: ${JSON.stringify(params)} }`)};`,
         `    ${expectSuccess(op)}`,
         `  });`,
         '',
       );
-    }
+    });
   }
   if (s.notFound) {
     L.push(`  test('returns documented 404 for an id that does not exist', ${testOptions('negative', s.ids?.functional.notFound)}, async ({ ${fx} }) => {`, ...notFoundCall(s, fx), `    expectStatus(res, ['404'], '${op.method}', ${q(op.path)});`, `  });`, '');

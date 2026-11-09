@@ -1,5 +1,5 @@
 {
-  "caseRegistryHash": "37bb92bb8ccf1d6d2643ea93e47adf3d78bf2df717b5c0f8bf6923f42ab643c1",
+  "caseRegistryHash": "351fb71f8b54ff5394019b8e29ae73c62398b2f91669315594bbbccb061cb8ec",
   "files": {
     "_support/api/generated/AdminApiBase.ts": {
       "ownership": "generated",
@@ -55,7 +55,7 @@
     },
     "_support/openapi.snapshot.meta.json": {
       "ownership": "generated",
-      "sha256": "d76615ab812db149bbc2fa0f3c6c54fcd33dd32425f30a112183076446a41a2c"
+      "sha256": "96f6872343f76e0718b009caafc62f280eded6df36ad52cbff911ff9b42edbcf"
     },
     "_support/openapi.snapshot.ts": {
       "ownership": "generated",
@@ -85,7 +85,7 @@
     },
     "items/delete-by-id/contract.spec.ts": {
       "caseIds": [
-        "ata:op_EDRRXKOK26ZL:contract:positive:response.body#:schema",
+        "ata:op_EDRRXKOK26ZL:contract:positive:response.status#/204:documented",
         "ata:op_EDRRXKOK26ZL:contract:positive:response.status#/404:documented"
       ],
       "operationUids": [
@@ -93,7 +93,7 @@
         "op_UPN7JLUXYUZ7"
       ],
       "ownership": "generated",
-      "sha256": "8fe5d6a0c20e08c655890970e0e5fbe2ba95433a08c265830d32dc644898382b",
+      "sha256": "36d18c0e4bb64b7b82cf35fed29edea67c5c62ccd54354f608485b3187f23457",
       "suiteType": "contract"
     },
     "items/delete-by-id/functional.spec.ts": {
@@ -346,7 +346,7 @@
   "schemaVersion": 1,
   "spec": {
     "hash": "d7b3b546ce170690",
-    "revision": "8ee4d7f0ebae3dc6c359ad03e9879676cc689ac7",
+    "revision": "4c34a850465f66f749be62929c9df568b247a6d7",
     "source": "demo-api/openapi.yaml"
   }
 }

@@ -1,5 +1,5 @@
 {
-  "caseRuleVocabularyVersion": 1,
+  "caseRuleVocabularyVersion": 2,
   "cases": {
     "ata:op_4PIO72ZI3SIY:contract:negative:request.query#/limit:maximum": {
       "location": "request.query#/limit",
@@ -90,6 +90,17 @@
         "op_UPN7JLUXYUZ7"
       ],
       "rule": "schema",
+      "status": "retired",
+      "subjectUid": "op_EDRRXKOK26ZL",
+      "suiteType": "contract"
+    },
+    "ata:op_EDRRXKOK26ZL:contract:positive:response.status#/204:documented": {
+      "location": "response.status#/204",
+      "polarity": "positive",
+      "relatedOperationUids": [
+        "op_UPN7JLUXYUZ7"
+      ],
+      "rule": "documented",
       "subjectUid": "op_EDRRXKOK26ZL",
       "suiteType": "contract"
     },
