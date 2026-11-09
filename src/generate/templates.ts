@@ -128,7 +128,7 @@ export function renderResourceHelpers(plan: ChainPlan, refs: Map<Operation, ApiR
     ...uniqueNote(c, plan.uniqueCreate, '// '),
     ...(hasFill(plan)
       ? [
-          `/** deps file "fill": ${chain.fill!.map((f) => f.field).join(', ')} come from existing data at run time, never created by the test. */`,
+          `/** deps file "fill": ${chain.fill!.map((f) => f.field).join(', ')}: taken from existing data at run time, never created by the test. */`,
           `export async function newCreatePayload(api: Apis): Promise<Record<string, unknown>> {`,
           `  const payload: Record<string, unknown> = { ...unique(createPayload, ${JSON.stringify(plan.uniqueCreate)}) };`,
           ...chain.fill!.flatMap((f, i) => {

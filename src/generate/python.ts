@@ -108,7 +108,7 @@ class ${cls}:
         self.contract = contract
 
 ${hasFill(plan) ? `    def new_create_payload(self):
-        """deps file "fill": ${chain.fill!.map((f) => f.field).join(', ')} come from existing data at run time, never created by the test."""
+        """deps file "fill": ${chain.fill!.map((f) => f.field).join(', ')}: taken from existing data at run time, never created by the test."""
         payload = _unique(CREATE_PAYLOAD, UNIQUE_CREATE)
 ${chain.fill!.map((f) => `        source = self.api.${f.from!.method}(${str(f.from!.path.replace(/^\//, ''))})
         assert source.ok, f"${f.from!.key} answers (to fill ${f.field}): {source.status_code}"

@@ -481,6 +481,7 @@ describe('deps "fill": values from existing data', () => {
     await generate(spec, buildCatalog(d), { outDir: dir, version: 'test', deps: deps({ name: { from: 'getHealth', pointer: '/status' } }) });
     const helper = await readFileP(joinP(dir, '_support/items.resource.ts'), 'utf8');
     expect(helper).toContain('$.name: filled at run time from GET /health #/status');
+    expect(helper).toContain('deps file "fill": name: taken from existing data at run time');
     expect(helper).toContain('export async function newCreatePayload(api: Apis)');
     expect(helper).toContain('const source0 = await api.health.getHealth();');
     expect(helper).toContain("payload['name'] = readPointer(await source0.json(), '/status');");
