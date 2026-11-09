@@ -10,7 +10,16 @@ export interface ChainPlan {
   createSources: string[];
   updatePayload?: unknown;
   updateSources: string[];
+  /** String fields that get a per-call suffix because the operation documents 409 (field → maxLength or null). */
+  uniqueCreate: Record<string, number | null>;
+  uniqueUpdate: Record<string, number | null>;
   assumptions: string[];
+}
+
+/** One comment line per payload whose fields are made unique, citing the documented 409. */
+export function uniqueNote(op: Operation, fields: Record<string, number | null>, prefix: string): string[] {
+  const names = Object.keys(fields);
+  return names.length ? [`${prefix}${op.key} documents 409 (conflict): ${names.join(', ')} get a unique suffix on every call, so repeated runs do not collide.`] : [];
 }
 
 export interface Meta {
@@ -96,13 +105,29 @@ export function renderResourceHelpers(plan: ChainPlan, refs: Map<Operation, ApiR
     `import { expectContract, readPointer } from './contract-assert.js';`,
     `import type { Apis } from './api/generated/apis.js';`,
     '',
+    `/** The documented example payloads, unchanged. Requests use newCreatePayload() / newUpdatePayload(). */`,
     `export const createPayload = ${lit(plan.createPayload)};`,
     '',
   ];
   if (plan.updatePayload !== undefined) L.push(`export const updatePayload = ${lit(plan.updatePayload)};`, '');
   L.push(
+    `/** Copy of a payload with the given string fields suffixed (field → maxLength or null; the example is shortened to fit). */`,
+    `function unique<T>(payload: T, fields: Record<string, number | null>): T {`,
+    `  const out = structuredClone(payload) as Record<string, unknown>;`,
+    `  const suffix = '-' + Math.random().toString(36).slice(2, 8).padEnd(6, '0');`,
+    `  for (const [key, max] of Object.entries(fields)) {`,
+    `    const value = out?.[key];`,
+    `    if (typeof value === 'string') out[key] = (max === null ? value : value.slice(0, Math.max(0, max - suffix.length))) + suffix;`,
+    `  }`,
+    `  return out as T;`,
+    `}`,
+    '',
+    ...uniqueNote(c, plan.uniqueCreate, '// '),
+    `export const newCreatePayload = () => unique(createPayload, ${JSON.stringify(plan.uniqueCreate)});`,
+    ...(plan.updatePayload !== undefined ? [...uniqueNote(chain.update!, plan.uniqueUpdate, '// '), `export const newUpdatePayload = () => unique(updatePayload, ${JSON.stringify(plan.uniqueUpdate)});`] : []),
+    '',
     `/** ${c.key}: creates a resource for a test and returns its id (at $response.body#${chain.idPointer}). */`,
-    `export async function create(api: Apis, data: unknown = createPayload): Promise<{ id: string; body: unknown }> {`,
+    `export async function create(api: Apis, data: unknown = newCreatePayload()): Promise<{ id: string; body: unknown }> {`,
     `  const res = await ${apiCall(cr, 'api', pathArgs(c, cr), '{ data }')};`,
     `  ${expectSuccess(c)}`,
     `  const body = await expectContract(res, '${c.method}', ${q(c.path)});`,
@@ -213,7 +238,7 @@ function positiveTest(s: SuiteInput, title: string, assert: (indent: string) => 
   if (role === 'create') {
     return [
       `  test(${q(title)}, ${POS}, async ({ api }) => {`,
-      `    const res = await ${call('id', '{ data: resource.createPayload }')};`,
+      `    const res = await ${call('id', '{ data: resource.newCreatePayload() }')};`,
       `    try {`,
       ...assert('      '),
       `    } finally {`,
@@ -222,7 +247,7 @@ function positiveTest(s: SuiteInput, title: string, assert: (indent: string) => 
       `  });`,
     ];
   }
-  const body = role === 'update' ? '{ data: resource.updatePayload }' : undefined;
+  const body = role === 'update' ? '{ data: resource.newUpdatePayload() }' : undefined;
   return [
     `  test(${q(title)}, ${POS}, async ({ api }) => {`,
     `    const { id } = await resource.create(api);`,
@@ -251,7 +276,7 @@ function notFoundCall(s: SuiteInput, fx: string): string[] {
   const { op, refs, plan } = s;
   const ref = refs.get(op)!;
   const chain = plan?.chain;
-  const body = plan?.updatePayload !== undefined && chain?.update === op ? `{ data: resource.updatePayload }` : undefined;
+  const body = plan?.updatePayload !== undefined && chain?.update === op ? `{ data: resource.newUpdatePayload() }` : undefined;
   return [`    const missingId = String(${s.notFound!.idExpr});`, `    const res = await ${apiCall(ref, fx, pathArgs(op, ref, chain?.param ?? s.notFound!.param, 'missingId'), body)};`];
 }
 const anonymousCall = (s: SuiteInput) => {
@@ -395,12 +420,13 @@ export function renderScenarios(s: SuiteInput, meta: Meta): string {
       `  test('the update is visible through ${r.operationId ?? r.key}', ${POS}, async ({ api }) => {`,
       `    const { id } = await resource.create(api);`,
       `    try {`,
-      `      const res = await ${call(op, '{ data: resource.updatePayload }')};`,
+      `      const payload = resource.newUpdatePayload();`,
+      `      const res = await ${call(op, '{ data: payload }')};`,
       `      ${expectSuccess(op)}`,
       `      // ASSUMPTION: the read operation returns the updated values.`,
       `      const read = await ${call(r)};`,
       `      ${expectSuccess(r, 'read')}`,
-      `      expect(await read.json()).toMatchObject(resource.updatePayload);`,
+      `      expect(await read.json()).toMatchObject(payload);`,
       `    } finally {`,
       `      await resource.remove(api, id);`,
       `    }`,

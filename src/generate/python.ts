@@ -1,5 +1,5 @@
 import type { Operation } from '../types.js';
-import { roleOf, scenarioCases, type ChainPlan, type Meta, type SuiteInput, type SuiteType } from './templates.js';
+import { roleOf, scenarioCases, uniqueNote, type ChainPlan, type Meta, type SuiteInput, type SuiteType } from './templates.js';
 
 /**
  * pytest + requests output. Same cases and safety rules as the TypeScript templates;
@@ -76,26 +76,48 @@ export function renderPyResource(plan: ChainPlan, meta: Meta): string {
 
 Dependency source: ${chain.source}
 CREATE_PAYLOAD sources: ${plan.createSources.join('; ') || 'none'}${plan.updatePayload !== undefined ? `\nUPDATE_PAYLOAD sources: ${plan.updateSources.join('; ')}` : ''}
+${[...uniqueNote(c, plan.uniqueCreate, ''), ...(chain.update ? uniqueNote(chain.update, plan.uniqueUpdate, '') : [])].join('\n')}
 """
+import copy
+import uuid
 from urllib.parse import quote
 
 from contract import read_pointer
 
+# The documented example payloads, unchanged. Requests use new_create_payload() / new_update_payload().
 CREATE_PAYLOAD = ${pyLit(plan.createPayload)}
-${plan.updatePayload !== undefined ? `\nUPDATE_PAYLOAD = ${pyLit(plan.updatePayload)}\n` : ''}
+UNIQUE_CREATE = ${pyLit(plan.uniqueCreate)}
+${plan.updatePayload !== undefined ? `\nUPDATE_PAYLOAD = ${pyLit(plan.updatePayload)}\nUNIQUE_UPDATE = ${pyLit(plan.uniqueUpdate)}\n` : ''}
+
+def _unique(payload, fields):
+    """Copy of a payload with the given string fields suffixed (field -> max length or None)."""
+    out = copy.deepcopy(payload)
+    suffix = "-" + uuid.uuid4().hex[:6]
+    for key, max_len in fields.items():
+        if isinstance(out, dict) and isinstance(out.get(key), str):
+            base = out[key] if max_len is None else out[key][: max(0, max_len - len(suffix))]
+            out[key] = base + suffix
+    return out
+
 
 class ${cls}:
     """${c.key} creates, ${d.key} removes."""
-
-    create_payload = CREATE_PAYLOAD${plan.updatePayload !== undefined ? '\n    update_payload = UPDATE_PAYLOAD' : ''}
 
     def __init__(self, api, contract):
         self.api = api
         self.contract = contract
 
+    @staticmethod
+    def new_create_payload():
+        return _unique(CREATE_PAYLOAD, UNIQUE_CREATE)
+${plan.updatePayload !== undefined ? `
+    @staticmethod
+    def new_update_payload():
+        return _unique(UPDATE_PAYLOAD, UNIQUE_UPDATE)
+` : ''}
     def create(self, data=None):
         """${c.key}: creates a resource for a test and returns (id, body)."""
-        res = self.api.${c.method}(${str(c.path.replace(/^\//, ''))}, json=CREATE_PAYLOAD if data is None else data)
+        res = self.api.${c.method}(${str(c.path.replace(/^\//, ''))}, json=self.new_create_payload() if data is None else data)
         ${assertSuccess(c)}
         body = self.contract.expect(res, ${str(c.method)}, ${str(c.path)})
         resource_id = read_pointer(body, ${str(chain.idPointer)})
@@ -302,9 +324,9 @@ function pyPositive(s: SuiteInput, name: string, assert: (indent: string) => str
     return [POS, `def ${name}(api, contract):`, `    res = api.${op.method}(${pathExpr(op)}${params})`, ...assert('    '), '', ''];
   }
   if (role === 'create') {
-    return [POS, `def ${name}(api, contract, ${res}):`, `    res = api.${op.method}(${pathExpr(op)}, json=${res}.create_payload)`, '    try:', ...assert('        '), '    finally:', `        ${res}.remove_if_created(res)`, '', ''];
+    return [POS, `def ${name}(api, contract, ${res}):`, `    res = api.${op.method}(${pathExpr(op)}, json=${res}.new_create_payload())`, '    try:', ...assert('        '), '    finally:', `        ${res}.remove_if_created(res)`, '', ''];
   }
-  const body = role === 'update' ? `, json=${res}.update_payload` : '';
+  const body = role === 'update' ? `, json=${res}.new_update_payload()` : '';
   // created_<res> removes the resource after the test (best effort: a deleted one is already gone).
   return [POS, `def ${name}(api, contract, ${res}, created_${res}):`, `    res = api.${op.method}(${pathExpr(op, chain!.param, `created_${res}`)}${body})`, ...assert('    '), '', ''];
 }
@@ -320,7 +342,7 @@ function pyNotFound(s: SuiteInput, name: string, mark: string, assert: string): 
     mark,
     `def ${name}(api, contract${body ? `, ${res}` : ''}):`,
     `    missing_id = ${pyNotFoundId(s.notFound!.idExpr)}`,
-    `    res = api.${op.method}(${pathExpr(op, chain?.param ?? s.notFound!.param, 'missing_id')}${body ? `, json=${res}.update_payload` : ''})`,
+    `    res = api.${op.method}(${pathExpr(op, chain?.param ?? s.notFound!.param, 'missing_id')}${body ? `, json=${res}.new_update_payload()` : ''})`,
     `    ${assert}`,
     '',
     '',
@@ -427,13 +449,14 @@ export function renderPyScenarios(s: SuiteInput, meta: Meta): string {
     L.push(
       POS,
       `def test_update_is_visible_through_read(api, ${res}, ${id}):`,
-      `    res = api.${op.method}(${pathExpr(op, chain.param, id)}, json=${res}.update_payload)`,
+      `    payload = ${res}.new_update_payload()`,
+      `    res = api.${op.method}(${pathExpr(op, chain.param, id)}, json=payload)`,
       `    ${assertSuccess(op)}`,
       '    # ASSUMPTION: the read operation returns the updated values.',
       `    read = api.${r.method}(${pathExpr(r, chain.param, id)})`,
       `    ${assertSuccess(r, 'read')}`,
       '    body = read.json()',
-      `    for key, value in ${res}.update_payload.items():`,
+      '    for key, value in payload.items():',
       '        assert body.get(key) == value, f"{key} after update"',
       '',
       '',

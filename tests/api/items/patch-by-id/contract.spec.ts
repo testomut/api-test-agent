@@ -16,7 +16,7 @@ test.describe('PATCH /items/{itemId} · contract', { tag: '@contract' }, () => {
   test('success response matches the documented contract', { tag: '@positive' }, async ({ api }) => {
     const { id } = await resource.create(api);
     try {
-      const res = await api.items.updateItem(id, { data: resource.updatePayload });
+      const res = await api.items.updateItem(id, { data: resource.newUpdatePayload() });
       await expectContract(res, 'patch', '/items/{itemId}');
     } finally {
       await resource.remove(api, id); // best effort: a deleted resource is already gone
@@ -25,7 +25,7 @@ test.describe('PATCH /items/{itemId} · contract', { tag: '@contract' }, () => {
 
   test('response for a missing id matches the documented contract', { tag: '@positive' }, async ({ api }) => {
     const missingId = String(randomUUID());
-    const res = await api.items.updateItem(missingId, { data: resource.updatePayload });
+    const res = await api.items.updateItem(missingId, { data: resource.newUpdatePayload() });
     await expectContract(res, 'patch', '/items/{itemId}');
   });
 

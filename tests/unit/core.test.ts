@@ -357,3 +357,50 @@ describe('positive tests need real data', () => {
     expect(r.scenarios.find((s) => s.name === 'users-logout/get/functional')!.reason).toMatch(/ends the session/);
   });
 });
+
+import { uniqueFields } from '../../src/generate/generate.js';
+
+describe('unique values for operations that document 409', () => {
+  const schema = {
+    type: 'object',
+    properties: {
+      name: { type: 'string', example: 'new brand' },
+      slug: { type: 'string', pattern: '^[a-z0-9-]+$', example: 'new-brand' },
+      code: { type: 'string', pattern: '^[A-Z]{3}$', example: 'ABC' },
+      kind: { type: 'string', enum: ['a', 'b'] },
+      email: { type: 'string', format: 'email' },
+      short: { type: 'string', maxLength: 10 },
+      count: { type: 'integer' },
+    },
+  };
+  const payload = { name: 'new brand', slug: 'new-brand', code: 'ABC', kind: 'a', email: 'a@example.com', short: 'abc', count: 1 };
+  const with409 = { ...op('POST /items'), responses: [...op('POST /items').responses, { status: '409' }] } as any;
+
+  it('suffixes only plain string fields, keeps enum / format / non-matching pattern, carries maxLength', () => {
+    expect(uniqueFields(demo, with409, schema, payload)).toEqual({ name: null, slug: null, short: 10 });
+  });
+
+  it('changes nothing when no conflict is documented', () => {
+    expect(uniqueFields(demo, op('POST /items'), schema, payload)).toEqual({});
+  });
+
+  it('generated helpers send a fresh payload on every call and say why', async () => {
+    const d = structuredClone(demo.doc) as any;
+    d.paths['/items'].post.responses['409'] = { description: 'Item name already exists' };
+    const dir = await mkdtemp(joinP(tmpdir(), 'ata-uq-'));
+    await generate({ ...demo, doc: d } as any, buildCatalog(d), { outDir: dir, version: 'test' });
+    const helper = await readFileP(joinP(dir, '_support/items.resource.ts'), 'utf8');
+    expect(helper).toContain('POST /items documents 409 (conflict): name get a unique suffix');
+    expect(helper).toContain('export const newCreatePayload = () => unique(createPayload, {"name":100});');
+    expect(helper).toContain('data: unknown = newCreatePayload()');
+    expect(await readFileP(joinP(dir, 'items/post/functional.spec.ts'), 'utf8')).toContain('{ data: resource.newCreatePayload() }');
+    const scenario = await readFileP(joinP(dir, 'items/patch-by-id/scenarios.spec.ts'), 'utf8');
+    expect(scenario).toMatch(/const payload = resource\.newUpdatePayload\(\);[\s\S]*toMatchObject\(payload\);/);
+
+    const py = await mkdtemp(joinP(tmpdir(), 'ata-uq-py-'));
+    await generate({ ...demo, doc: d } as any, buildCatalog(d), { outDir: py, version: 'test', lang: 'python' });
+    const pyHelper = await readFileP(joinP(py, '_support/items_resource.py'), 'utf8');
+    expect(pyHelper).toContain('UNIQUE_CREATE = {\n    "name": 100,\n}');
+    expect(await readFileP(joinP(py, 'items/post/test_functional.py'), 'utf8')).toContain('json=items.new_create_payload()');
+  });
+});

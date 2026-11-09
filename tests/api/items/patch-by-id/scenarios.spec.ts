@@ -12,12 +12,13 @@ test.describe('PATCH /items/{itemId} · scenarios', { tag: '@scenario' }, () => 
   test('the update is visible through getItem', { tag: '@positive' }, async ({ api }) => {
     const { id } = await resource.create(api);
     try {
-      const res = await api.items.updateItem(id, { data: resource.updatePayload });
+      const payload = resource.newUpdatePayload();
+      const res = await api.items.updateItem(id, { data: payload });
       expect(res.status(), 'documented success status of updateItem').toBe(200);
       // ASSUMPTION: the read operation returns the updated values.
       const read = await api.items.getItem(id);
       expect(read.status(), 'documented success status of getItem').toBe(200);
-      expect(await read.json()).toMatchObject(resource.updatePayload);
+      expect(await read.json()).toMatchObject(payload);
     } finally {
       await resource.remove(api, id);
     }

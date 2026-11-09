@@ -13,7 +13,7 @@ test.describe('PATCH /items/{itemId} · functional', { tag: '@functional' }, () 
   test('applies the documented example update', { tag: '@positive' }, async ({ api }) => {
     const { id } = await resource.create(api);
     try {
-      const res = await api.items.updateItem(id, { data: resource.updatePayload });
+      const res = await api.items.updateItem(id, { data: resource.newUpdatePayload() });
       expect(res.status(), 'documented success status of updateItem').toBe(200);
     } finally {
       await resource.remove(api, id); // best effort: a deleted resource is already gone
@@ -22,7 +22,7 @@ test.describe('PATCH /items/{itemId} · functional', { tag: '@functional' }, () 
 
   test('returns documented 404 for an id that does not exist', { tag: '@negative' }, async ({ api }) => {
     const missingId = String(randomUUID());
-    const res = await api.items.updateItem(missingId, { data: resource.updatePayload });
+    const res = await api.items.updateItem(missingId, { data: resource.newUpdatePayload() });
     expectStatus(res, ['404'], 'patch', '/items/{itemId}');
   });
 });
