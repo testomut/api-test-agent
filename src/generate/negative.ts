@@ -82,6 +82,15 @@ export function bodyCases(doc: OpenApiDoc, rawSchema: any, base: Record<string, 
     if (Array.isArray(p.enum) && p.enum.length && t === 'string') {
       cases.push({ title: `"${name}" not in enum`, source: `${at}.enum`, data: withValue('__not_in_enum__') });
     }
+    if ((t === 'number' || t === 'integer') && typeof p.exclusiveMinimum === 'number') {
+      cases.push({ title: `"${name}" violates exclusiveMinimum ${p.exclusiveMinimum}`, source: `${at}.exclusiveMinimum`, data: withValue(p.exclusiveMinimum) });
+    }
+    if ((t === 'number' || t === 'integer') && typeof p.exclusiveMaximum === 'number') {
+      cases.push({ title: `"${name}" violates exclusiveMaximum ${p.exclusiveMaximum}`, source: `${at}.exclusiveMaximum`, data: withValue(p.exclusiveMaximum) });
+    }
+    if (t === 'array' && typeof p.minItems === 'number' && p.minItems > 0) {
+      cases.push({ title: `"${name}" has fewer than minItems ${p.minItems}`, source: `${at}.minItems`, data: withValue([]) });
+    }
     if (t === 'array' && typeof p.maxItems === 'number') {
       const item = deref(doc, p.items);
       const sample = item?.example ?? (typeOf(item) === 'string' ? 'x' : typeOf(item) === 'number' || typeOf(item) === 'integer' ? 1 : undefined);
@@ -118,6 +127,11 @@ export function queryCases(op: Operation): NegCase[] {
       if (typeof s.minimum === 'number') cases.push({ title: `query "${p.name}" below minimum ${s.minimum}`, source: `${at}.minimum`, query: withValue(s.minimum - 1) });
       if (typeof s.maximum === 'number') cases.push({ title: `query "${p.name}" above maximum ${s.maximum}`, source: `${at}.maximum`, query: withValue(s.maximum + 1) });
     }
+    if (t === 'integer' || t === 'number') {
+      if (typeof s.exclusiveMinimum === 'number') cases.push({ title: `query "${p.name}" violates exclusiveMinimum ${s.exclusiveMinimum}`, source: `${at}.exclusiveMinimum`, query: withValue(s.exclusiveMinimum) });
+      if (typeof s.exclusiveMaximum === 'number') cases.push({ title: `query "${p.name}" violates exclusiveMaximum ${s.exclusiveMaximum}`, source: `${at}.exclusiveMaximum`, query: withValue(s.exclusiveMaximum) });
+    }
+    if (t === 'string' && typeof s.minLength === 'number' && s.minLength > 0) cases.push({ title: `query "${p.name}" shorter than minLength ${s.minLength}`, source: `${at}.minLength`, query: withValue('x'.repeat(s.minLength - 1)) });
     if (t === 'boolean') cases.push({ title: `query "${p.name}" is not a boolean`, source: `${at}.type`, query: withValue('not-a-boolean') });
     if (t === 'string' && Array.isArray(s.enum) && s.enum.length) cases.push({ title: `query "${p.name}" not in enum`, source: `${at}.enum`, query: withValue('__not_in_enum__') });
     if (t === 'string' && typeof s.maxLength === 'number') cases.push({ title: `query "${p.name}" longer than maxLength ${s.maxLength}`, source: `${at}.maxLength`, query: withValue('x'.repeat(s.maxLength + 1)) });
