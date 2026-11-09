@@ -404,3 +404,43 @@ describe('unique values for operations that document 409', () => {
     expect(await readFileP(joinP(py, 'items/post/test_functional.py'), 'utf8')).toContain('json=items.new_create_payload()');
   });
 });
+
+import { cleanupSummary } from '../../src/generate/generate.js';
+import { buildReport, toMarkdown } from '../../src/report/report.js';
+
+describe('test data left on the target', () => {
+  it('cleanup reports a record it could not remove (404 = already gone), in TypeScript and Python', async () => {
+    const dir = await mkdtemp(joinP(tmpdir(), 'ata-cl-'));
+    await generate(demo, ops, { outDir: dir, version: 'test' });
+    expect(await readFileP(joinP(dir, '_support/items.resource.ts'), 'utf8')).toContain(
+      "if (!res || (!res.ok() && res.status() !== 404)) reportCleanupFailure('DELETE /items/{itemId}', id, res ? res.status() : 'no response');",
+    );
+    expect(await readFileP(joinP(dir, '_support/contract-assert.ts'), 'utf8')).toContain('export function reportCleanupFailure(');
+    const py = await mkdtemp(joinP(tmpdir(), 'ata-cl-py-'));
+    await generate(demo, ops, { outDir: py, version: 'test', lang: 'python' });
+    expect(await readFileP(joinP(py, '_support/items_resource.py'), 'utf8')).toContain('report_cleanup_failure("DELETE /items/{itemId}", resource_id,');
+    expect(await readFileP(joinP(py, '_support/contract.py'), 'utf8')).toContain('def report_cleanup_failure(');
+  });
+
+  it('groups failures for the summary and lists every record in the report', () => {
+    const left = [
+      { operation: 'DELETE /brands/{brandId}', id: 'a', status: 403 },
+      { operation: 'DELETE /brands/{brandId}', id: 'b', status: 403 },
+      { operation: 'DELETE /categories/{categoryId}', id: 'c', status: 'no response' },
+    ];
+    expect(cleanupSummary(left)).toEqual(['DELETE /brands/{brandId} → 403: 2 record(s)', 'DELETE /categories/{categoryId} → no response: 1 record(s)']);
+    const md = toMarkdown(
+      buildReport({
+        mode: 'generate',
+        spec: { location: 'x', hash: 'h', version: '3.1.0', validationErrors: [] },
+        target: { baseUrl: 'http://x' },
+        lint: { errors: 0, warnings: 0, problems: [] },
+        ops: [],
+        findings: [],
+        generated: { files: [], scenarios: [], cleanupFailures: left },
+      } as any),
+    );
+    expect(md).toContain('## ⚠️ Test data left on the target');
+    expect(md).toContain('| `DELETE /brands/{brandId}` | 403 | `a` |');
+  });
+});

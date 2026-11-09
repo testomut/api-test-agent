@@ -29,7 +29,12 @@ export interface AuditReport {
     notChecked: number;
   };
   schemathesis?: { command: string; exitCode: number | null };
-  generated?: { files: string[]; scenarios: { name: string; status: Status; reason: string; operations: string[] }[] };
+  generated?: {
+    files: string[];
+    scenarios: { name: string; status: Status; reason: string; operations: string[] }[];
+    /** Test data cleanup could not remove during the run: it stays on the target. */
+    cleanupFailures?: { operation: string; id: string; status: number | string }[];
+  };
 }
 
 const CONTRACT_VERDICT: Status[] = ['PASS', 'CONTRACT_MISMATCH'];
@@ -117,6 +122,11 @@ export function toMarkdown(r: AuditReport): string {
     L.push('## Testability issues in the spec', '');
     for (const o of issues) for (const i of o.testabilityIssues) L.push(`- \`${o.key}\`: ${i}`);
     L.push('');
+  }
+  const left = r.generated?.cleanupFailures ?? [];
+  if (left.length) {
+    L.push('## ⚠️ Test data left on the target', '', `Cleanup could not remove ${left.length} record(s) created by the run. Remove them by hand, or fix the cleanup (e.g. an account allowed to delete) before running again.`, '');
+    L.push('| Cleanup operation | Status | Id |', '|---|---|---|', ...left.map((f) => `| \`${f.operation}\` | ${f.status} | \`${f.id}\` |`), '');
   }
   if (r.generated) {
     L.push('## Generated functional scenarios', '');

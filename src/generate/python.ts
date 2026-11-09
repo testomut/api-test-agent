@@ -82,7 +82,7 @@ import copy
 import uuid
 from urllib.parse import quote
 
-from contract import read_pointer
+from contract import read_pointer, report_cleanup_failure
 
 # The documented example payloads, unchanged. Requests use new_create_payload() / new_update_payload().
 CREATE_PAYLOAD = ${pyLit(plan.createPayload)}
@@ -125,11 +125,13 @@ ${plan.updatePayload !== undefined ? `
         return str(resource_id), body
 
     def remove(self, resource_id):
-        """${d.key}: best-effort cleanup, never fails the test."""
+        """${d.key}: best-effort cleanup, never fails the test. A record it cannot remove is reported (404 = already gone)."""
         try:
-            self.api.delete(${pathExpr(d, chain.param)})
+            res = self.api.delete(${pathExpr(d, chain.param)})
         except Exception:  # noqa: BLE001 - cleanup must not hide the real failure
-            pass
+            res = None
+        if res is None or (not res.ok and res.status_code != 404):
+            report_cleanup_failure(${str(d.key)}, resource_id, res.status_code if res is not None else "no response")
 
     def remove_if_created(self, res):
         """Cleanup for negative create cases: if the API wrongly accepted the payload, delete what it created."""

@@ -7,12 +7,25 @@ from __future__ import annotations
 
 import copy
 import json
+import os
+import sys
 from pathlib import Path
 from typing import Any
 
 from jsonschema import Draft7Validator, Draft202012Validator, FormatChecker
 
 _UNPARSEABLE = object()
+
+
+def report_cleanup_failure(operation: str, resource_id: str, status: Any) -> None:
+    """Test data that cleanup could not remove (it stays on the target). Never fails the test:
+    the agent sets API_AGENT_CLEANUP_LOG and lists these in its report; a standalone run prints a warning."""
+    log = os.environ.get("API_AGENT_CLEANUP_LOG")
+    if log:
+        with open(log, "a", encoding="utf-8") as f:
+            f.write(json.dumps({"operation": operation, "id": str(resource_id), "status": status}) + "\n")
+    else:
+        print(f"cleanup failed: {operation} {resource_id} -> {status} (test data left on the target)", file=sys.stderr)
 
 
 def _esc(part: str) -> str:
