@@ -99,12 +99,16 @@ export class ContractValidator {
     const raw = input.rawText ?? (typeof input.body === 'string' ? input.body : input.body === undefined ? '' : JSON.stringify(input.body));
     const content = resp.node?.content;
     const head = input.method.toLowerCase() === 'head';
-    if (!content || !Object.keys(content).length || NO_BODY_STATUS.has(input.status) || head) {
-      // No body is documented (or the status / method has none): one that arrives anyway breaks the contract.
+    // 204 / 205 / 304 and HEAD never carry a body (RFC 9110): one that arrives breaks the contract.
+    if (NO_BODY_STATUS.has(input.status) || head) {
       if (raw.trim().length && !head) {
-        const why = NO_BODY_STATUS.has(input.status) ? `status ${code} has no body` : `no content is documented for ${matched}`;
-        return { ok: false, bodyChecked: true, kind: 'unexpected-body', matchedStatus: matched, errors: [`A body was returned but ${why} (${raw.length} bytes)`] };
+        return { ok: false, bodyChecked: true, kind: 'unexpected-body', matchedStatus: matched, errors: [`A body was returned but status ${code} has no body (${raw.length} bytes)`] };
       }
+      return { ok: true, bodyChecked: false, errors: [], matchedStatus: matched };
+    }
+    // No content documented means "not described", not "no body": the body is not checked, and that is said.
+    if (!content || !Object.keys(content).length) {
+      if (raw.trim().length) notes.push(`${matched}: no content documented, body not checked (${raw.length} bytes)`);
       return { ok: true, bodyChecked: false, errors: [], matchedStatus: matched, ...(notes.length ? { notes } : {}) };
     }
 
