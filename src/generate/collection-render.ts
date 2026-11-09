@@ -2,7 +2,7 @@ import type { Operation } from '../types.js';
 import { apiCall } from './api-objects.js';
 import { requiredRequest } from './param-cases.js';
 import type { CollectionPlan, CollectionTest } from './collection-tests.js';
-import { expectSuccess, hasFill, optionsWith, pathArgs, testOptions, type ChainPlan, type SuiteInput } from './templates.js';
+import { expectSuccess, hasFill, isPublic, optionsWith, pathArgs, testOptions, type ChainPlan, type SuiteInput } from './templates.js';
 import type { LoadedFixture } from '../fixtures/fixtures.js';
 import { assertSuccess, pathExpr, pyLit, pyName, pyRequired, resourceModule, withId } from './python.js';
 
@@ -18,6 +18,11 @@ export interface CollectionInput {
 }
 
 const js = (v: unknown) => JSON.stringify(v);
+
+/** Read-only checks of a public list operation are sent without credentials (as its success test), never through a login. */
+const roFixture = (op: Operation) => (isPublic(op) ? 'publicApi: api' : 'api');
+const pyRoFixture = (op: Operation) => (isPublic(op) ? 'anonymous_api' : 'api');
+const pyRoAlias = (op: Operation) => (isPublic(op) ? ['    api = anonymous_api'] : []);
 const py = (v: unknown) => pyLit(v);
 const leaf = (ptr: string) => ptr.slice(1).replace(/~1/g, '/').replace(/~0/g, '~');
 
@@ -25,7 +30,7 @@ const leaf = (ptr: string) => ptr.slice(1).replace(/~1/g, '/').replace(/~0/g, '~
 function pageEntries(plan: CollectionPlan, i: string, size: string, q: (s: string) => string): string | undefined {
   const p = plan.c.page;
   if (p?.style === 'offset') return `${q(p.offsetParam)}: ${i} * ${size}, ${q(p.limitParam)}: ${size}`;
-  if (p?.style === 'page') return `${q(p.pageParam)}: ${i} + ${p.firstPage ?? 1}, ${q(p.sizeParam)}: ${size}`;
+  if (p?.style === 'page') return `${q(p.pageParam)}: ${i} + ${p.firstPage ?? 1}` + (p.sizeParam !== undefined ? `, ${q(p.sizeParam)}: ${size}` : '');
   return undefined;
 }
 
@@ -39,7 +44,7 @@ const filterValue = (t: CollectionTest, which: 'a' | 'b', lang: 'ts' | 'py') => 
 /* ------------------------------------------------------------------ TypeScript */
 
 export const tsCollectionImports = (suite: 'functional' | 'scenario') => [
-  'itemsOf', 'expectContains', 'expectFields', 'poll', 'readPointer', 'withValue',
+  'itemsOf', 'expectContains', 'expectFields', 'poll', 'readPointer', 'withValue', ...(suite === 'functional' ? ['expectSubsetOf'] : []),
   ...(suite === 'functional' ? ['expectNotContains', 'expectAllMatch', 'expectUniqueBy', 'expectSortedBy', 'expectPageSize', 'expectNoDuplicateAcrossPages'] : ['expectNotContains']),
 ];
 
@@ -156,13 +161,19 @@ export function tsCollectionTests(s: SuiteInput, ci: CollectionInput): string[] 
     } else if (t.kind === 'filter') {
       const f = t.filter!;
       L.push(
-        `  test(${js(t.title)}, ${opts}, async ({ api }) => {`,
-        `    const all = await listAll(api, {});`,
-        `    const value = all.flatMap((i) => { const v = readPointer(i, ${js(f.field)}); return ${f.match === 'contains' ? 'Array.isArray(v) ? v : []' : 'v === undefined || v === null ? [] : [v]'}; })[0];`,
-        `    test.skip(value === undefined, ${js(`no existing resource has a value in ${f.field} to filter by (read-only check)`)});`,
-        `    const items = await listAll(api, { ${js(f.param)}: value });`,
-        `    expect(items.length, 'the filter finds the resource the value came from').toBeGreaterThan(0);`,
-        `    expectAllMatch(items, ${js(f.field)}, ${js(f.match)}, value);`,
+        `  test(${js(t.title)}, ${opts}, async ({ ${roFixture(s.op)} }) => {`,
+        `    let all = await listAll(api, {});`,
+        `    // Up to 5 different values that existing resources have: each must find them, and only within the list.`,
+        `    const values = [...new Map(all.flatMap((i) => { const v = readPointer(i, ${js(f.field)}); return ${f.match === 'contains' ? 'Array.isArray(v) ? v : []' : 'v === undefined || v === null ? [] : [v]'}; }).map((v) => [String(v), v])).values()].slice(0, 5);`,
+        `    test.skip(!values.length, ${js(`no existing resource has a value in ${f.field} to filter by (read-only check)`)});`,
+        `    for (const value of values) {`,
+        `      const items = await listAll(api, { ${js(f.param)}: value as string });`,
+        `      expect(items.length, 'the filter finds the resources the value ' + String(value) + ' came from').toBeGreaterThan(0);`,
+        `      expectAllMatch(items, ${js(f.field)}, ${js(f.match)}, value);`,
+        `      // A filter narrows the list: a resource the unfiltered list does not show must not appear (re-read once: shared data moves).`,
+        `      if (items.some((i) => !all.some((a) => String(readPointer(a, ID)) === String(readPointer(i, ID))))) all = await listAll(api, {});`,
+        `      expectSubsetOf(items, all, ID, ${js(`${f.param}=`)} + String(value));`,
+        `    }`,
         `  });`,
         '',
       );
@@ -176,7 +187,7 @@ export function tsCollectionTests(s: SuiteInput, ci: CollectionInput): string[] 
     } else if (t.kind === 'sort') {
       const so = t.sort!;
       L.push(
-        `  test(${js(t.title)}, ${opts}, async ({ api }) => {`,
+        `  test(${js(t.title)}, ${opts}, async ({ ${roFixture(s.op)} }) => {`,
         `    const items = await listAll(api, { ${js(so.param)}: ${js(so.value)} });`,
         `    test.skip(items.length < 2, 'fewer than 2 resources: the order cannot be checked (read-only check)');`,
         `    expectSortedBy(items, ${js(so.field)}, ${js(so.order)});`,
@@ -195,7 +206,7 @@ export function tsCollectionTests(s: SuiteInput, ci: CollectionInput): string[] 
     } else if (t.kind === 'pagination') {
       const ps = plan.pageSize;
       L.push(
-        `  test(${js(t.title)}, ${opts}, async ({ api }) => {`,
+        `  test(${js(t.title)}, ${opts}, async ({ ${roFixture(s.op)} }) => {`,
         `    const pages = await listPages(api, {}, ${ps});`,
         `    test.skip(pages.flat().length <= ${ps}, 'not more than one page of resources (read-only check)');`,
         `    for (const page of pages) expectPageSize(page, ${ps});`,
@@ -210,7 +221,7 @@ export function tsCollectionTests(s: SuiteInput, ci: CollectionInput): string[] 
         `expectUniqueBy(items, ${js(t.unique)});`,
       ]));
     } else {
-      L.push(`  test(${js(t.title)}, ${opts}, async ({ api }) => {`, `    expectUniqueBy(await listAll(api, {}), ${js(t.unique)});`, `  });`, '');
+      L.push(`  test(${js(t.title)}, ${opts}, async ({ ${roFixture(s.op)} }) => {`, `    expectUniqueBy(await listAll(api, {}), ${js(t.unique)});`, `  });`, '');
     }
   });
   return L;
@@ -267,7 +278,7 @@ export function tsLifecycle(s: SuiteInput, ci: CollectionInput): string[] {
 
 /* ------------------------------------------------------------------ Python */
 
-const PY_IMPORTS = 'from contract import expect_all_match, expect_contains, expect_fields, expect_no_duplicate_across_pages, expect_not_contains, expect_page_size, expect_sorted_by, expect_unique_by, items_of, poll, with_value  # noqa: F401';
+const PY_IMPORTS = 'from contract import expect_all_match, expect_contains, expect_fields, expect_no_duplicate_across_pages, expect_not_contains, expect_page_size, expect_sorted_by, expect_subset_of, expect_unique_by, items_of, poll, with_value  # noqa: F401';
 
 export function pyCollectionPrelude(s: SuiteInput, ci: CollectionInput): string[] {
   const { plan } = ci;
@@ -408,17 +419,25 @@ export function pyCollectionTests(s: SuiteInput, ci: CollectionInput): string[] 
       const values = f.match === 'contains' ? 'v if isinstance(v, list) else []' : '[] if v is None else [v]';
       L.push(
         mark,
-        `def ${nameOf(`test_filter_${f.param}_returns_only_matching`)}(api):`,
+        `def ${nameOf(`test_filter_${f.param}_returns_only_matching`)}(${pyRoFixture(s.op)}):`,
+        ...pyRoAlias(s.op),
         '    candidates = []',
         '    for item in _list_all(api, {}):',
         `        v = read_pointer(item, ${py(f.field)})`,
         `        candidates.extend(${values})`,
         '    if not candidates:',
         `        pytest.skip(${py(`no existing resource has a value in ${f.field} to filter by (read-only check)`)})`,
-        '    value = candidates[0]',
-        `    found = _list_all(api, {${py(f.param)}: value})`,
-        '    assert found, "the filter finds the resource the value came from"',
-        `    expect_all_match(found, ${py(f.field)}, ${py(f.match)}, value)`,
+        '    base = _list_all(api, {})',
+        '    values = list({str(v): v for v in candidates}.values())[:5]',
+        '    for value in values:',
+        `        found = _list_all(api, {${py(f.param)}: value})`,
+        '        assert found, f"the filter finds the resources the value {value} came from"',
+        `        expect_all_match(found, ${py(f.field)}, ${py(f.match)}, value)`,
+        '        # A filter narrows the list: a resource the unfiltered list does not show must not appear (re-read once).',
+        '        known = {str(read_pointer(i, ID)) for i in base}',
+        '        if any(str(read_pointer(i, ID)) not in known for i in found):',
+        '            base = _list_all(api, {})',
+        `        expect_subset_of(found, base, ID, ${py(`${f.param}=`)} + str(value))`,
         '',
         '',
       );
@@ -434,7 +453,8 @@ export function pyCollectionTests(s: SuiteInput, ci: CollectionInput): string[] 
       const so = t.sort!;
       L.push(
         mark,
-        `def ${nameOf(`test_sort_${so.param}_${so.value.replace(/^-/, 'desc_')}`)}(api):`,
+        `def ${nameOf(`test_sort_${so.param}_${so.value.replace(/^-/, 'desc_')}`)}(${pyRoFixture(s.op)}):`,
+        ...pyRoAlias(s.op),
         `    found = _list_all(api, {${py(so.param)}: ${py(so.value)}})`,
         '    if len(found) < 2:',
         '        pytest.skip("fewer than 2 resources: the order cannot be checked (read-only check)")',
@@ -457,7 +477,8 @@ export function pyCollectionTests(s: SuiteInput, ci: CollectionInput): string[] 
       const ps = plan.pageSize;
       L.push(
         mark,
-        `def ${nameOf('test_pages_have_requested_size_and_never_repeat')}(api):`,
+        `def ${nameOf('test_pages_have_requested_size_and_never_repeat')}(${pyRoFixture(s.op)}):`,
+        ...pyRoAlias(s.op),
         `    pages = _list_pages(api, {}, ${ps})`,
         `    if sum(len(p) for p in pages) <= ${ps}:`,
         '        pytest.skip("not more than one page of resources (read-only check)")',
@@ -474,7 +495,7 @@ export function pyCollectionTests(s: SuiteInput, ci: CollectionInput): string[] 
         `expect_unique_by(found, ${py(t.unique)})`,
       ]));
     } else {
-      L.push(mark, `def ${nameOf(`test_unique_by_${leaf(t.unique!)}`)}(api):`, `    expect_unique_by(_list_all(api, {}), ${py(t.unique)})`, '', '');
+      L.push(mark, `def ${nameOf(`test_unique_by_${leaf(t.unique!)}`)}(${pyRoFixture(s.op)}):`, ...pyRoAlias(s.op), `    expect_unique_by(_list_all(api, {}), ${py(t.unique)})`, '', '');
     }
   });
   return L;
@@ -533,8 +554,9 @@ function fixturePage(f: LoadedFixture, i: string, q: (s: string) => string): { e
   const p = f.fixture.page;
   const size = p?.size ?? 50;
   const maxPages = Math.min(p?.maxPages ?? 20, 50);
+  if (p?.style === 'page' && p.sizeParam === undefined) return { entries: `${q(p.pageParam)}: ${i} + ${p.firstPage ?? 1}`, size, maxPages };
   if (p?.style === 'offset') return { entries: `${q(p.offsetParam)}: ${i} * ${size}, ${q(p.limitParam)}: ${size}`, size, maxPages };
-  if (p?.style === 'page') return { entries: `${q(p.pageParam)}: ${i} + ${p.firstPage ?? 1}, ${q(p.sizeParam)}: ${size}`, size, maxPages };
+  if (p?.style === 'page') return { entries: `${q(p.pageParam)}: ${i} + ${p.firstPage ?? 1}, ${q(p.sizeParam!)}: ${size}`, size, maxPages };
   return { size, maxPages };
 }
 
@@ -554,7 +576,7 @@ export function tsFixtureTest(s: SuiteInput, f: LoadedFixture): string[] {
   const pg = fixturePage(f, 'i', js);
   const call = (extra: string) => `await ${apiCall(ref, 'api', pathArgs(op, ref), `{ params: { ...${js(req)}, ...approved.query, ${extra} } as Record<string, string | number | boolean> }`)}`;
   return [
-    `  test(${js(`matches the approved fixture ${fixturePath(f)}`)}, ${testOptions('positive', s.ids?.functional.fixture)}, async ({ api }) => {`,
+    `  test(${js(`matches the approved fixture ${fixturePath(f)}`)}, ${testOptions('positive', s.ids?.functional.fixture)}, async ({ ${roFixture(s.op)} }) => {`,
     `    const items: unknown[] = [];`,
     ...(pg.entries
       ? [
@@ -584,7 +606,8 @@ export function pyFixtureTest(s: SuiteInput, f: LoadedFixture): string[] {
     '',
     '',
     withId('@pytest.mark.positive', s.ids?.functional.fixture),
-    'def test_matches_approved_fixture(api):',
+    `def test_matches_approved_fixture(${pyRoFixture(s.op)}):`,
+    ...pyRoAlias(s.op),
     `    """Approved fixture ${fixturePath(f)} (copied to _support/approved)."""`,
     `    fixture = json.loads((pathlib.Path(__file__).resolve().parents[2] / "_support" / "approved" / ${py(fixtureModule(f) + '.json')}).read_text(encoding="utf-8"))`,
     '    items = []',

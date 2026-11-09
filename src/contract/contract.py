@@ -122,6 +122,13 @@ def expect_all_match(items: list, ptr: str, match: str, value: Any) -> None:
     assert not bad, f"{len(bad)} element(s) do not match {ptr} {match} {value}"
 
 
+def expect_subset_of(items: list, base: list, id_ptr: str, what: str) -> None:
+    """A filtered result holds only resources the unfiltered collection shows (a filter narrows, never adds)."""
+    known = {_id_of(i, id_ptr) for i in base}
+    extra = [_id_of(i, id_ptr) for i in items if _id_of(i, id_ptr) not in known]
+    assert not extra, f"{what} returns resources the unfiltered collection does not show: {extra}"
+
+
 def expect_unique_by(items: list, ptr: str) -> None:
     seen, dups = set(), []
     for i in items:

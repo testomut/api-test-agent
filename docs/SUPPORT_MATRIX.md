@@ -147,19 +147,23 @@ A list operation is tested deeply only from a reviewed `collection` mapping in t
 }
 ```
 
+Page-number paging: `{ "style": "page", "pageParam": "page", "sizeParam": "per_page" }`, or, when the API fixes the size and has no size parameter, `{ "style": "page", "pageParam": "page", "size": 9 }`. `"strategy": "read-only"` forbids creating records for these checks even when a create is confirmed (shared environments). Sort values come from the reviewed mapping; the spec can only rule one out with an `enum`.
+
 Strategy per list operation (recorded in `coverage-gaps.json` → `collection.strategy` / `strategies` / `reasons`):
 
 | Strategy | When | What it checks |
 |---|---|---|
 | A · create & verify | confirmed create + delete; an isolating filter whose field can carry a unique marker | the test creates its own records (marker in the filter field), reads only them, removes them in `finally`; non-trivial datasets: 2 records for a filter (one must be left out), 3 with distinct values created out of order for a sort, page size + 1 for paging |
 | B · approved fixtures | `--fixtures <dir>` holds `<operationId>.json` approved by a person | every approved element is listed, each field by policy (`exact`, `tolerance:<n>`, `schema` = present, `ignore`); `exhaustive` = nothing else |
-| C · read-only | no confirmed create / cleanup or no isolating filter | the same properties on existing data; a test without enough data is skipped with the reason |
+| C · read-only | no confirmed create / cleanup, no isolating filter, or `"strategy": "read-only"` | the same properties on existing data; filters with up to 5 values that occur in the list, each result also a subset of the unfiltered list (re-read once, shared data moves); a test without enough data is skipped with the reason |
 | contract-only | no mapping | schema and status only; the gap says what is missing |
 
 | Assertion | State | Notes |
 |---|---|---|
 | created resource is listed (`collection-contains`) with its persisted fields | ✅ | strategy A; field policies |
 | filter returns the match and leaves out the non-match, all results match (`filter`) | ✅ | `equals` / `contains`; enum filters with an isolating marker |
+| a filter only narrows: no resource the unfiltered list does not show (`filter`, read-only) | ✅ | values that occur in the list only: a value that only hidden resources have cannot be reached read-only |
+| range filters (`between=price,10,30`), boolean flags with a default scope (`is_rental`) | ❌ | not mapped yet |
 | sort order (`sort`) | ✅ | one case per documented sort value; plain comparison (code points / numbers): the API must document that order |
 | page size, no duplicates across pages, union holds every record (`pagination`) | ✅ | offset and page/size styles; cursor paging ❌ (not yet) |
 | uniqueness (`unique`) | ✅ | |
@@ -167,6 +171,8 @@ Strategy per list operation (recorded in `coverage-gaps.json` → `collection.st
 | create → list → update → list → delete → list | ✅ | scenario of the list operation; the last step only with `deletedDisappears` |
 | bounded polling | ✅ | only with `consistency`; never longer than `pollTimeoutMs` (≤ 60 s); otherwise one read |
 | fixture capture / refresh | ✅ | `fixtures capture` writes candidates only; `fixtures refresh --draft-pr` proposes a candidate in one Draft PR per operation; approved files are never written by the agent |
+
+Defect detection on a real API: Toolshop's deliberately defective build (`api-with-bugs.practicesoftwaretesting.com`) returns rental products for `by_brand=1` that its product list never shows. The read-only `by_brand` test fails on it (`by_brand=1 returns resources the unfiltered collection does not show: 27, 28, 29`) and passes on the regular build, in TypeScript and Python. `by_category=12` has the same defect but only rentals carry that category, so a read-only test cannot reach it.
 
 Defect detection on the demo API (`scripts/mutation-check.ts`, TypeScript and Python identical):
 

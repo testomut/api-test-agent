@@ -52,6 +52,8 @@ export function planCollectionTests(doc: OpenApiDoc, c: ResolvedCollection, x: {
   const gaps: CoverageGap[] = [];
   const tests: CollectionTest[] = [];
   const top = (ptr: string) => ptr.split('/').length === 2; // controlled data sets top-level fields only
+  // "strategy": "read-only" in the reviewed mapping: nothing is created for these checks, even with a confirmed create.
+  if (c.strategy === 'read-only') x = { ...x, canCreate: false, canUpdate: false, canDelete: false };
   const createField = (ptr: string) => (x.canCreate && x.createSchema && top(ptr) ? schemaAt(doc, x.createSchema, ptr) : undefined);
   const markerFilter = (f: Filter) => {
     const s = createField(f.field);
@@ -61,12 +63,14 @@ export function planCollectionTests(doc: OpenApiDoc, c: ResolvedCollection, x: {
   const filters = (c.filters ?? []).filter((f, i, all) => all.findIndex((g) => g.param === f.param) === i);
   const iso = filters.find(markerFilter);
 
+  const fixed = c.page?.style === 'page' && c.page.sizeParam === undefined ? c.page.size : undefined;
   const limitParam = c.page?.style === 'offset' ? c.page.limitParam : c.page?.style === 'page' ? c.page.sizeParam : undefined;
   const limitSchema: any = limitParam ? c.op.params.find((p) => p.name === limitParam)?.schema : undefined;
   const minSize = typeof limitSchema?.minimum === 'number' ? limitSchema.minimum : 1;
   const maxSize = typeof limitSchema?.maximum === 'number' ? limitSchema.maximum : 50;
-  const walkSize = Math.max(minSize, Math.min(maxSize, 50));
-  const pageSize = Math.min(Math.max(2, minSize), maxSize);
+  // A fixed page size (no size parameter) is the only size there is, for walking and for the paging test.
+  const walkSize = fixed ?? Math.max(minSize, Math.min(maxSize, 50));
+  const pageSize = fixed ?? Math.min(Math.max(2, minSize), maxSize);
 
   if (x.canCreate) tests.push({ kind: 'listed', title: 'a created resource is listed with the fields it was created with', mode: 'controlled' });
   else gaps.push({ code: 'MISSING_CLEANUP', location: 'operation', reason: `${c.op.key}: membership of a created resource needs a confirmed create with cleanup (strategy A); only read-only checks run` });

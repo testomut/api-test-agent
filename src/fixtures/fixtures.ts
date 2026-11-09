@@ -37,7 +37,7 @@ export interface Fixture {
   policies?: Record<string, string>;
   default?: 'exact' | 'schema' | 'ignore';
   exhaustive?: boolean;
-  page?: { style: 'offset'; offsetParam: string; limitParam: string; size?: number; maxPages?: number } | { style: 'page'; pageParam: string; sizeParam: string; firstPage?: number; size?: number; maxPages?: number };
+  page?: { style: 'offset'; offsetParam: string; limitParam: string; size?: number; maxPages?: number } | { style: 'page'; pageParam: string; sizeParam?: string; firstPage?: number; size?: number; maxPages?: number };
   expected: unknown[];
   /** Capture metadata (candidates only; kept when a candidate is approved). */
   captured?: { at: string; from: string };
@@ -71,7 +71,8 @@ export function validateFixture(doc: OpenApiDoc, ops: Operation[], f: Fixture): 
   const missing = op.params.filter((p) => p.required && p.in !== 'header' && !(p.in === 'query' && f.query && p.name in f.query) && p.knownValue === undefined);
   if (missing.length) errors.push(`${op.key} needs ${missing.map((p) => `${p.in} "${p.name}"`).join(', ')}`);
   if (f.page) {
-    const names = f.page.style === 'offset' ? [f.page.offsetParam, f.page.limitParam] : f.page.style === 'page' ? [f.page.pageParam, f.page.sizeParam] : [];
+    const names = f.page.style === 'offset' ? [f.page.offsetParam, f.page.limitParam] : f.page.style === 'page' ? [f.page.pageParam, ...(f.page.sizeParam !== undefined ? [f.page.sizeParam] : [])] : [];
+    if (f.page.style === 'page' && f.page.sizeParam === undefined && !(Number.isInteger(f.page.size) && f.page.size! > 0)) errors.push('page style "page" without "sizeParam" needs the fixed page "size"');
     if (!names.length) errors.push('page style is offset or page');
     for (const n of names) if (!op.params.some((p) => p.in === 'query' && p.name === n)) errors.push(`page parameter "${n}" is not a query parameter of ${op.key}`);
   }

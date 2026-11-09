@@ -15,8 +15,14 @@ import type { CoverageGap } from './body-cases.js';
  *   "filters": [{ "param": "tag", "field": "/tags", "match": "contains" }],
  *   "sorts": [{ "param": "sort", "value": "price", "field": "/price", "order": "asc" }],
  *   "page": { "style": "offset", "offsetParam": "offset", "limitParam": "limit", "maxPages": 20 },
+ *           or { "style": "page", "pageParam": "page", "sizeParam": "per_page" } or, when the API fixes the size,
+ *           { "style": "page", "pageParam": "page", "size": 9 }   (no size parameter: the reviewed fixed page size)
+ *           or { "style": "page", "pageParam": "page", "sizeParam": "per_page" } or, when the API fixes the size,
+ *           { "style": "page", "pageParam": "page", "size": 9 }   (no size parameter: the reviewed fixed page size)
  *   "consistency": { "pollTimeoutMs": 5000, "pollIntervalMs": 250 },   eventual consistency, bounded polling
- *   "deletedDisappears": true            a deleted resource is guaranteed to leave the list
+ *   "deletedDisappears": true,           a deleted resource is guaranteed to leave the list
+ *   "strategy": "read-only"              never create records for these checks (shared environments), even with a
+ *                                        confirmed create; the checks then run on existing data (strategy C)
  * }
  */
 
@@ -30,9 +36,10 @@ export interface CollectionConfig {
   unique?: string[];
   filters?: { param: string; field: string; match: 'equals' | 'contains' }[];
   sorts?: { param: string; value: string; field: string; order: 'asc' | 'desc' }[];
-  page?: { style: 'offset'; offsetParam: string; limitParam: string; maxPages?: number } | { style: 'page'; pageParam: string; sizeParam: string; firstPage?: number; maxPages?: number };
+  page?: { style: 'offset'; offsetParam: string; limitParam: string; maxPages?: number } | { style: 'page'; pageParam: string; sizeParam?: string; size?: number; firstPage?: number; maxPages?: number };
   consistency?: { pollTimeoutMs: number; pollIntervalMs: number };
   deletedDisappears?: boolean;
+  strategy?: 'read-only';
 }
 
 export interface ResolvedCollection extends CollectionConfig {
@@ -112,9 +119,12 @@ export function resolveCollection(doc: OpenApiDoc, ops: Operation[], cfg: Collec
       query(cfg.page.limitParam, 'limit parameter');
     } else if (cfg.page.style === 'page') {
       query(cfg.page.pageParam, 'page parameter');
-      query(cfg.page.sizeParam, 'size parameter');
+      if (cfg.page.sizeParam !== undefined) query(cfg.page.sizeParam, 'size parameter');
+      else if (!(Number.isInteger(cfg.page.size) && cfg.page.size! > 0)) errors.push('collection: page style "page" needs "sizeParam", or the fixed page size "size" the API uses');
     } else errors.push('collection: page style is offset or page (cursor is not supported yet)');
   }
+  if (cfg.strategy !== undefined && cfg.strategy !== 'read-only') errors.push('collection: "strategy" can only be "read-only"');
+  if (cfg.strategy !== undefined && cfg.strategy !== 'read-only') errors.push('collection: "strategy" can only be "read-only"');
   const c = cfg.consistency;
   if (c && !(c.pollTimeoutMs > 0 && c.pollTimeoutMs <= 60_000 && c.pollIntervalMs > 0 && c.pollIntervalMs <= c.pollTimeoutMs)) errors.push('collection: consistency needs 0 < pollIntervalMs <= pollTimeoutMs <= 60000');
   if (errors.length) return { errors };

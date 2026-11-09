@@ -62,7 +62,7 @@ export async function captureFixture(o: CaptureOptions): Promise<CaptureResult> 
       u.searchParams.set(page.limitParam, String(size));
     } else if (page?.style === 'page') {
       u.searchParams.set(page.pageParam, String(i + (page.firstPage ?? 1)));
-      u.searchParams.set(page.sizeParam, String(size));
+      if (page.sizeParam !== undefined) u.searchParams.set(page.sizeParam, String(size));
     }
     return u;
   };

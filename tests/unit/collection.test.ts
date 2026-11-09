@@ -146,3 +146,31 @@ describe('approved fixtures (strategy B)', () => {
     expect(d.changed).toEqual([{ id: JSON.stringify((approved.expected[1] as any).id), pointer: '/name', before: 'Catalog screwdriver', after: 'Renamed' }]);
   });
 });
+
+describe('shared environments (found on Toolshop)', () => {
+  it('"strategy": "read-only" never creates records, even with a confirmed create', () => {
+    const c = resolveCollection(demo.doc, ops, { ...cfg, strategy: 'read-only' }).collection!;
+    const p = planCollectionTests(demo.doc, c, { canCreate: true, createSchema, canUpdate: true, updatePayload: { name: 'x' }, canDelete: true });
+    expect(p.tests.every((t) => t.mode === 'read-only')).toBe(true);
+    expect(p.lifecycle).toBe(false);
+    expect(resolveCollection(demo.doc, ops, { ...cfg, strategy: 'write' as any }).errors.join()).toContain('"strategy" can only be "read-only"');
+  });
+
+  it('page-number paging with a fixed page size (no size parameter)', () => {
+    const fixed = { ...cfg, page: { style: 'page' as const, pageParam: 'offset', size: 9 } };
+    const c = resolveCollection(demo.doc, ops, fixed).collection!;
+    const p = planCollectionTests(demo.doc, c, { canCreate: false, canUpdate: false, canDelete: false });
+    expect([p.pageSize, p.walkSize]).toEqual([9, 9]);
+    expect(resolveCollection(demo.doc, ops, { ...cfg, page: { style: 'page', pageParam: 'offset' } }).errors.join()).toContain('fixed page size');
+  });
+
+  it('a read-only filter test checks several values and that the filter only narrows the list', async () => {
+    const ro = { scenarios: [{ ...deps.scenarios[0], collection: { ...cfg, strategy: 'read-only' } }] };
+    const dir = await mkdtemp(join(tmpdir(), 'ata-coll-'));
+    await generate(demo, ops, { outDir: dir, version: 'test', deps: ro });
+    const text = await readFile(join(dir, 'items/get/functional.spec.ts'), 'utf8');
+    expect(text).toContain('expectSubsetOf(items, all, ID');
+    expect(text).toContain('.slice(0, 5)');
+    expect(text).toContain('async ({ publicApi: api })'); // a public list is read without logging in
+  });
+});

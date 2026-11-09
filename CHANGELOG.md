@@ -12,6 +12,7 @@
 - **`maintain`:** spec diff → deterministic regeneration → registry and manifest validation → one Draft PR per suite with a summary (changed operations, files and cases, expectations old → new, fixtures, stale reviewed configuration, gaps before → after). Never merges; no PR when validation fails or nothing changed.
 - **Fault injection:** the demo API simulates six list defects (`DEMO_FAULT`); `scripts/mutation-check.ts` runs a generated suite against each, and CI requires 6/6 detected in TypeScript and Python. The previous generator detected 0/6.
 - Demo API: `offset`, `tag` and `sort` on `GET /items`; two reference items tagged `catalog` (the approved demo fixture).
+- **Shared environments (found on Toolshop):** `"strategy": "read-only"` in a collection mapping; page-number paging with a fixed page size; read-only checks of a public list go through `publicApi` (no login); read-only filter tests take up to 5 values from the list and require the filtered result to be a subset of the unfiltered list, which catches the rental leak of Toolshop's defective build; a `sort` case ID may carry a reviewed value the spec does not enumerate.
 - Fixes: a GET of a single resource with an array field is no longer reported as an unconfigured collection; hand-written `_support/api/*Api.ts` stay in the generation manifest after the first run.
 
 - **Coverage completeness** (see docs/SUPPORT_MATRIX.md):

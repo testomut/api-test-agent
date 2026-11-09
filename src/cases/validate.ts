@@ -198,6 +198,8 @@ function checkLocation(o: NormOp, loc: string, rule: string): Finding | undefine
     if (rawValue !== undefined) {
       // accepted-value: the value must be one the spec documents for this parameter.
       const value = String(decodeSegment(rawValue));
+      // sort: the value comes from the reviewed collection mapping; the spec can only rule it out with an enum.
+      if (rule === 'sort' && !Array.isArray(p.schema?.enum) && p.schema?.const === undefined) return undefined;
       const allowed = Array.isArray(p.schema?.enum) ? p.schema.enum.map(String) : p.schema?.const !== undefined ? [String(p.schema.const)] : boundaryValues(p.schema).map(String);
       return allowed.includes(value) ? undefined : bad(`"${value}" is not a documented value or valid limit of ${m[1]} "${name}"`);
     }

@@ -817,6 +817,13 @@ export function expectAllMatch(items: unknown[], ptr: string, match: 'equals' | 
   expect(bad.length, bad.length + ' element(s) do not match ' + ptr + ' ' + match + ' ' + String(value)).toBe(0);
 }
 
+/** A filtered result holds only resources the unfiltered collection shows (a filter narrows, never adds). */
+export function expectSubsetOf(items: unknown[], base: unknown[], idPtr: string, what: string): void {
+  const known = new Set(base.map((i) => idOf(i, idPtr)));
+  const extra = items.map((i) => idOf(i, idPtr)).filter((id) => !known.has(id));
+  expect(extra, what + ' returns resources the unfiltered collection does not show').toEqual([]);
+}
+
 export function expectUniqueBy(items: unknown[], ptr: string): void {
   const seen = new Set<string>();
   const dups = items.map((i) => idOf(i, ptr)).filter((k) => (seen.has(k) ? true : (seen.add(k), false)));
