@@ -8,12 +8,12 @@ import { test } from '../../_support/fixtures.js';
 import { expectContract } from '../../_support/contract-assert.js';
 
 test.describe('GET /me · contract', { tag: '@contract' }, () => {
-  test('success response matches the documented contract', { tag: '@positive' }, async ({ api }) => {
+  test('success response matches the documented contract', { tag: '@positive', annotation: { type: 'caseId', description: 'ata:op_WRZHS7HTMVON:contract:positive:response.body#:schema' } }, async ({ api }) => {
     const res = await api.me.getMe();
     await expectContract(res, 'get', '/me');
   });
 
-  test('response without credentials matches the documented contract', { tag: '@positive' }, async ({ publicApi }) => {
+  test('response without credentials matches the documented contract', { tag: '@positive', annotation: { type: 'caseId', description: 'ata:op_WRZHS7HTMVON:contract:positive:response.status#/401:documented' } }, async ({ publicApi }) => {
     const res = await publicApi.me.getMe();
     await expectContract(res, 'get', '/me');
   });

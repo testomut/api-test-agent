@@ -9,7 +9,7 @@ import { readPointer } from '../../_support/contract-assert.js';
 import * as resource from '../../_support/items.resource.js';
 
 test.describe('POST /items · functional', { tag: '@functional' }, () => {
-  test('creates a resource from the documented example payload', { tag: '@positive' }, async ({ api }) => {
+  test('creates a resource from the documented example payload', { tag: '@positive', annotation: { type: 'caseId', description: 'ata:op_UPN7JLUXYUZ7:functional:positive:operation:documented-success' } }, async ({ api }) => {
     const res = await api.items.createItem({ data: resource.newCreatePayload() });
     try {
       expect(res.status(), 'documented success status of createItem').toBe(201);

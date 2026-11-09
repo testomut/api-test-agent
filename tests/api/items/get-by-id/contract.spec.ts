@@ -11,7 +11,7 @@ import { expectContract } from '../../_support/contract-assert.js';
 import * as resource from '../../_support/items.resource.js';
 
 test.describe('GET /items/{itemId} · contract', { tag: '@contract' }, () => {
-  test('success response matches the documented contract', { tag: '@positive' }, async ({ api }) => {
+  test('success response matches the documented contract', { tag: '@positive', annotation: { type: 'caseId', description: 'ata:op_7P2UH7UKQRHC:contract:positive:response.body#:schema' } }, async ({ api }) => {
     const { id } = await resource.create(api);
     try {
       const res = await api.items.getItem(id);
@@ -21,7 +21,7 @@ test.describe('GET /items/{itemId} · contract', { tag: '@contract' }, () => {
     }
   });
 
-  test('response for a missing id matches the documented contract', { tag: '@positive' }, async ({ api }) => {
+  test('response for a missing id matches the documented contract', { tag: '@positive', annotation: { type: 'caseId', description: 'ata:op_7P2UH7UKQRHC:contract:positive:response.status#/404:documented' } }, async ({ api }) => {
     const missingId = String(randomUUID());
     const res = await api.items.getItem(missingId);
     await expectContract(res, 'get', '/items/{itemId}');

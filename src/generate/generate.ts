@@ -8,6 +8,10 @@ import { resolvePointer, type LoadedSpec } from '../spec/loader.js';
 import { operationPointer } from '../spec/catalog.js';
 import { findChains, type CrudChain, type DepsFile } from './graph.js';
 import { sampleFromSchema } from './sample.js';
+import { assignCaseIds, type CaseRecord, type ScenarioDefinition } from '../cases/assign.js';
+import { buildRegistry, canonicalJson, fileHash, readRegistry, resolveOperationUids } from '../cases/registry.js';
+import { headRevision } from '../change/baseline.js';
+import { isUrl } from '../change/network.js';
 import { bodyCases, documentedRejections, nonexistentIdExpr, queryCases } from './negative.js';
 import { CONTRACT_ASSERT, SUITE_TYPES, TS_FILES, operationFolder, renderContract, renderFunctional, renderResourceHelpers, renderScenarios, scenarioCases, suiteCounts, type ChainPlan, type Meta, type SuiteInput, type SuiteType } from './templates.js';
 import { API_BASE, buildApiIndex, renderApiBaseClass, renderApiChildClass, renderApis } from './api-objects.js';
@@ -167,10 +171,12 @@ export async function generate(spec: LoadedSpec, ops: Operation[], o: GenerateOp
   const removed: string[] = [];
   const scenarios: Scenario[] = [];
   const coverage: Coverage[] = [];
+  const hashes = new Map<string, string>(); // canonical hash of every file this run wrote (for the manifest)
   const write = async (file: string, content: string) => {
     await mkdir(dirname(file), { recursive: true });
     await writeFile(file, content);
     files.push(file);
+    hashes.set(file, fileHash(content));
   };
 
   // 1. Confirmed resource chains → payloads + data helpers.
@@ -195,6 +201,16 @@ export async function generate(spec: LoadedSpec, ops: Operation[], o: GenerateOp
   const planOf = (op: Operation) => plans.find((p) => [p.chain.create, p.chain.read, p.chain.update, p.chain.delete].includes(op));
   const helperFile = (p: ChainPlan) => (py ? join(support, `${resourceModule(p)}.py`) : join(support, `${operationFolder(p.chain.create).resource}.resource.ts`));
   for (const p of plans) await write(helperFile(p), py ? renderPyResource(p, meta) : renderResourceHelpers(p, refs, meta));
+  // Stable IDs: the registry keeps operationUids across generations; new operations get the deterministic hash.
+  const registryFile = join(support, 'cases.json');
+  const previousRegistry = await readRegistry(registryFile);
+  const specOps = ops.map((op) => ({ key: op.key, method: op.method, path: op.path, operationId: op.operationId, externalId: externalIdOf(spec, op) }));
+  const uids = resolveOperationUids(specOps, previousRegistry);
+  const uidOf = (op: Operation) => uids.get(op.key)!;
+  const allCases: CaseRecord[] = [];
+  const scenarioDefs: Record<string, ScenarioDefinition> = {};
+  const fileInfo = new Map<string, { suiteType: SuiteType; caseIds: string[]; operationUids: string[] }>();
+
   const fileNames = py ? PY_FILES : TS_FILES;
   const legacyNames = py ? ['test_positive.py', 'test_negative.py'] : ['positive.spec.ts', 'negative.spec.ts'];
   const packages = new Set<string>(); // python: every test folder is a package (__init__.py)
@@ -275,6 +291,8 @@ export async function generate(spec: LoadedSpec, ops: Operation[], o: GenerateOp
     // --- suites
     const input: SuiteInput = { op, refs, plan, helpers, positive: !posReason, validation: rej.validation, bodyCases: bCases, queryCases: qCases, notFound, unauthorized };
     const counts = suiteCounts(input);
+    const ids = assignCaseIds({ op, chain: plan?.chain, positive: input.positive, bodyCases: bCases, queryCases: qCases, notFound, unauthorized, scenarios: scenarioCases(input) }, uidOf);
+    input.ids = ids;
     // Explicit per-operation coverage and gaps, independent of test execution status.
     coverage.push({ operation: op.key, counts, positiveBlocked: posReason ?? null, negativeGaps: why, lifecycle: plan ? plan.chain.name : null });
     const render: Record<SuiteType, (s: SuiteInput, m: Meta) => string> = py
@@ -288,6 +306,10 @@ export async function generate(spec: LoadedSpec, ops: Operation[], o: GenerateOp
         const file = join(dir, fileNames[suite]);
         await write(file, render[suite](input, meta));
         packages.add(dir);
+        const recs = ids.records[suite];
+        allCases.push(...recs);
+        for (const r of recs) if (ids.scenarios[r.subjectUid]) scenarioDefs[r.subjectUid] = ids.scenarios[r.subjectUid];
+        fileInfo.set(file, { suiteType: suite, caseIds: recs.map((r) => r.caseId), operationUids: [...new Set([uidOf(op), ...recs.flatMap((r) => r.relatedOperationUids ?? [])])] });
         scenarios.push({ name: label, kind: suite, status: 'NOT_RUN', reason: `Generated ${counts[suite]} case(s); not executed yet.`, operations: [op.key], file });
         continue;
       }
@@ -351,7 +373,31 @@ export async function generate(spec: LoadedSpec, ops: Operation[], o: GenerateOp
       removed.push(p);
     }
   }
+  if (files.length) {
+    // Registry, snapshot metadata and, last of all, the generation manifest.
+    const revision = isUrl(spec.location) || !existsSync(spec.location) ? `sha256:${spec.hash}` : await headRevision(spec.location);
+    const registry = buildRegistry({ previous: previousRegistry, ops: specOps, uids, cases: allCases, scenarios: scenarioDefs, spec: { hash: spec.hash, revision }, generatorVersion: o.version });
+    const registryText = canonicalJson(registry);
+    await write(registryFile, registryText);
+    await write(join(support, 'openapi.snapshot.meta.json'), canonicalJson({ schemaVersion: 1, generatorVersion: o.version, specHash: spec.hash, source: spec.location, capturedRevision: revision }));
+    const manifestFile = join(support, 'generation-manifest.json');
+    const entries = [...hashes]
+      .filter(([file]) => file !== registryFile && file !== manifestFile)
+      .map(([file, sha256]) => {
+        // API object subclasses are created once and belong to the user from then on.
+        const handWritten = !py && /_support[\\/]api[\\/][^\\/]+Api\.ts$/.test(file);
+        return [posix(relative(out, file)), { ownership: handWritten ? 'hand-written' : 'generated', sha256, ...(fileInfo.get(file) ?? {}) }] as const;
+      });
+    const manifest = { schemaVersion: 1, generatorVersion: o.version, spec: { hash: spec.hash, revision, source: spec.location }, caseRegistryHash: fileHash(registryText), files: Object.fromEntries(entries) };
+    await write(manifestFile, canonicalJson(manifest));
+  }
   return { files, removed, scenarios, coverage, cleanupFailures: [] };
+}
+
+/** The operation's x-api-test-agent-id, when the spec sets one. */
+function externalIdOf(spec: LoadedSpec, op: Operation): string | undefined {
+  const v = resolvePointer(spec.doc, operationPointer(op)).node?.['x-api-test-agent-id'];
+  return typeof v === 'string' && v.trim() ? v.trim() : undefined;
 }
 
 const firstLine = async (file: string) => (existsSync(file) ? (await readFile(file, 'utf8')).split('\n', 1)[0] : '');

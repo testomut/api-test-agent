@@ -10,7 +10,7 @@ import { expectStatus } from '../../_support/contract-assert.js';
 import * as resource from '../../_support/items.resource.js';
 
 test.describe('DELETE /items/{itemId} · functional', { tag: '@functional' }, () => {
-  test('deletes the resource created in the precondition', { tag: '@positive' }, async ({ api }) => {
+  test('deletes the resource created in the precondition', { tag: '@positive', annotation: { type: 'caseId', description: 'ata:op_EDRRXKOK26ZL:functional:positive:operation:documented-success' } }, async ({ api }) => {
     const { id } = await resource.create(api);
     try {
       const res = await api.items.deleteItem(id);
@@ -20,7 +20,7 @@ test.describe('DELETE /items/{itemId} · functional', { tag: '@functional' }, ()
     }
   });
 
-  test('returns documented 404 for an id that does not exist', { tag: '@negative' }, async ({ api }) => {
+  test('returns documented 404 for an id that does not exist', { tag: '@negative', annotation: { type: 'caseId', description: 'ata:op_EDRRXKOK26ZL:functional:negative:request.path#/itemId:not-found' } }, async ({ api }) => {
     const missingId = String(randomUUID());
     const res = await api.items.deleteItem(missingId);
     expectStatus(res, ['404'], 'delete', '/items/{itemId}');

@@ -20,6 +20,9 @@ import { applyPlan, buildPlan, gitState } from './adapt.js';
 import { applyLogin, loginConfig } from './audit/login.js';
 import { parseFailOn, runDiff } from './change/diff.js';
 import { SUPPORTED_OASDIFF_VERSION } from './change/oasdiff.js';
+import { normalizeSpec } from './change/normalize.js';
+import { readSource } from './change/network.js';
+import { validateManifest, validateRegistry } from './cases/validate.js';
 import { accountNotice, ACCOUNT_MODES, checkRegisterConfig, missingLoginVars, parseAccountMode, registerAccount, type AccountMode } from './audit/account.js';
 import { AiRunner, describeAiError, RUNNERS, type RunnerKind } from './ai/runner.js';
 import { proposeDependencies } from './ai/dependencies.js';
@@ -382,6 +385,41 @@ program
     for (const b of s.blocked) log(`  BLOCKED   ${b.code}: ${b.reason}`);
     for (const f of r.files) log(`Report: ${f}`);
     process.exitCode = r.exitCode;
+  });
+
+const registryCmd = program.command('registry').description('the case registry (_support/cases.json): stable operation, case and scenario IDs');
+registryCmd
+  .command('validate')
+  .description('check cases.json: syntax always; with --spec also every active entry against that spec (exit 1 on an invalid entry)')
+  .argument('[path]', 'cases.json', join(cfg.testsDir, '_support', 'cases.json'))
+  .option('--spec <fileOrUrl>', 'also check active entries against this spec (normally the head spec)')
+  .option('--require-spec', 'a missing --spec is a configuration error (exit 2)', false)
+  .option('--allow-network', 'allow a URL --spec', false)
+  .action(async (path: string, o: { spec?: string; requireSpec: boolean; allowNetwork: boolean }) => {
+    if (o.requireSpec && !o.spec) throw new Error('--require-spec: pass --spec <head spec>.');
+    const text = await readFile(path, 'utf8').catch(() => {
+      throw new Error(`Cannot read ${path}.`);
+    });
+    const spec = o.spec ? normalizeSpec(await readSource(o.spec, { allowNetwork: o.allowNetwork, allowHosts: [] }), o.spec) : undefined;
+    const r = validateRegistry(text, spec);
+    log(`Syntax validation: ${r.syntaxValidation} · schema validation: ${r.schemaValidation}`);
+    for (const e of r.errors) log(`  ${e.code}  ${e.pointer}  ${e.reason}`);
+    for (const b of r.blocked) log(`  BLOCKED ${b.code}  ${b.pointer}  ${b.reason}`);
+    process.stdout.write(JSON.stringify(r, null, 2) + '\n');
+    if (r.errors.length || r.blocked.length) process.exitCode = 1;
+  });
+
+program
+  .command('manifest')
+  .description('generation manifest (_support/generation-manifest.json)')
+  .command('validate')
+  .description('compare generated files with their trusted hashes (exit 1 on a modified or missing generated file)')
+  .option('--tests-dir <dir>', 'API_TESTS_DIR', cfg.testsDir)
+  .action(async (o: { testsDir: string }) => {
+    const r = await validateManifest(o.testsDir);
+    log(`Manifest: ${r.files} file(s) · ${r.findings.length} finding(s)`);
+    for (const f of r.findings) log(`  ${f.code}  ${f.reason}`);
+    if (r.findings.some((f) => f.code !== 'CASE_REGISTRY_CHANGED')) process.exitCode = 1;
   });
 
 program

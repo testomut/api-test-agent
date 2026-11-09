@@ -11,7 +11,7 @@ import { expectContract } from '../../_support/contract-assert.js';
 import * as resource from '../../_support/items.resource.js';
 
 test.describe('DELETE /items/{itemId} · contract', { tag: '@contract' }, () => {
-  test('success response matches the documented contract', { tag: '@positive' }, async ({ api }) => {
+  test('success response matches the documented contract', { tag: '@positive', annotation: { type: 'caseId', description: 'ata:op_EDRRXKOK26ZL:contract:positive:response.body#:schema' } }, async ({ api }) => {
     const { id } = await resource.create(api);
     try {
       const res = await api.items.deleteItem(id);
@@ -21,7 +21,7 @@ test.describe('DELETE /items/{itemId} · contract', { tag: '@contract' }, () => 
     }
   });
 
-  test('response for a missing id matches the documented contract', { tag: '@positive' }, async ({ api }) => {
+  test('response for a missing id matches the documented contract', { tag: '@positive', annotation: { type: 'caseId', description: 'ata:op_EDRRXKOK26ZL:contract:positive:response.status#/404:documented' } }, async ({ api }) => {
     const missingId = String(randomUUID());
     const res = await api.items.deleteItem(missingId);
     await expectContract(res, 'delete', '/items/{itemId}');

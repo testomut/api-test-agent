@@ -232,7 +232,7 @@ describe('three-file suite layout', () => {
 
   it('create → read lives under the create operation, in TypeScript and Python', async () => {
     const { read } = await tsDir();
-    expect(await read('items/post/scenarios.spec.ts')).toMatch(/the created resource can be retrieved by getItem', \{ tag: '@positive' \}[\s\S]*api\.items\.getItem\(id\)[\s\S]*resource\.remove\(api, id\)/);
+    expect(await read('items/post/scenarios.spec.ts')).toMatch(/the created resource can be retrieved by getItem', \{ tag: '@positive', annotation: \{ type: 'caseId', description: 'ata:scn_[A-Z2-7]{12}:scenario:positive:lifecycle:crud' \} \}[\s\S]*api\.items\.getItem\(id\)[\s\S]*resource\.remove\(api, id\)/);
     const dir = await mkdtemp(joinP(tmpdir(), 'ata-3f-py-'));
     await generate(demo, ops, { outDir: dir, version: 'test', lang: 'python' });
     const py = await readFileP(joinP(dir, 'items/post/test_scenarios.py'), 'utf8');
@@ -249,7 +249,8 @@ describe('three-file suite layout', () => {
   it('returns coverage per operation and writes nothing but tests into the tests folder', async () => {
     const { dir, r } = await tsDir();
     expect(existsSync(joinP(dir, 'coverage-gaps.json'))).toBe(false);
-    expect(r.files.some((f) => f.endsWith('.json'))).toBe(false);
+    // Only the registry, the snapshot metadata and the manifest are JSON in the tests folder.
+    expect(r.files.filter((f) => f.endsWith('.json')).map((f) => f.replace(/\\/g, '/').split('/').pop()).sort()).toEqual(['cases.json', 'generation-manifest.json', 'openapi.snapshot.meta.json']);
     expect(r.coverage.find((c) => c.operation === 'POST /items')).toMatchObject({ counts: { scenario: 1 }, positiveBlocked: null });
     expect(r.coverage.find((c) => c.operation === 'POST /admin/reset')?.positiveBlocked).toMatch(/no confirmed precondition/);
   });
@@ -271,12 +272,12 @@ describe('three-file suite layout', () => {
     const { read } = await tsDir();
     const functional = await read('items/get-by-id/functional.spec.ts');
     expect(functional).toContain("{ tag: '@functional' }");
-    expect(functional).toMatch(/returns the resource created in the precondition', \{ tag: '@positive' \}/);
-    expect(functional).toMatch(/documented 404[^\n]*\{ tag: '@negative' \}/);
+    expect(functional).toMatch(/returns the resource created in the precondition', \{ tag: '@positive', annotation: \{ type: 'caseId', description: 'ata:op_[A-Z2-7]{12}:functional:positive:operation:documented-success' \} \}/);
+    expect(functional).toMatch(/documented 404[^\n]*\{ tag: '@negative', annotation: \{ type: 'caseId', description: 'ata:op_[A-Z2-7]{12}:functional:negative:request\.path#\/itemId:not-found' \} \}/);
     expect(functional).not.toContain('expectContract'); // the schema belongs to contract.spec.ts
     const contract = await read('items/post/contract.spec.ts');
     expect(contract).toContain('success response matches the documented contract');
-    expect(contract).toMatch(/rejects invalid body[^\n]*\{ tag: '@negative' \}/);
+    expect(contract).toMatch(/rejects invalid body[^\n]*\{ tag: '@negative', annotation: \{ type: 'caseId', description: c\.caseId \} \}/);
     const scenario = await read('items/patch-by-id/scenarios.spec.ts');
     expect(scenario).toContain('api.items.updateItem(id');
     expect(scenario).toContain('api.items.getItem(id)');

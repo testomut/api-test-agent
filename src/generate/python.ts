@@ -231,6 +231,7 @@ def pytest_configure(config):
         "negative": "the request is expected to be rejected",
     }.items():
         config.addinivalue_line("markers", f"{name}: {text}")
+    config.addinivalue_line("markers", "api_case_id(id): stable case ID from _support/cases.json")
 
 
 class ApiClient(requests.Session):
@@ -319,6 +320,9 @@ ${fixtures}`;
 
 const POS = '@pytest.mark.positive';
 const NEG = '@pytest.mark.negative';
+/** The polarity marker plus, when known, the stable case ID marker (registered in conftest.py). */
+const withId = (mark: string, id?: string) => (id ? `${mark}\n@pytest.mark.api_case_id(${str(id)})` : mark);
+const paramMarks = (id?: string) => (id ? `, marks=pytest.mark.api_case_id(${str(id)})` : '');
 
 function pyHeader(suite: SuiteType, s: SuiteInput, meta: Meta, extra: string[]): string[] {
   const lines = [...extra];
@@ -328,8 +332,9 @@ function pyHeader(suite: SuiteType, s: SuiteInput, meta: Meta, extra: string[]):
 }
 
 /** The successful call with its precondition (fixtures) and cleanup; `assert` returns the assertion lines. */
-function pyPositive(s: SuiteInput, name: string, assert: (indent: string) => string[]): string[] {
+function pyPositive(s: SuiteInput, name: string, assert: (indent: string) => string[], id?: string): string[] {
   const { op, plan } = s;
+  const POS = withId('@pytest.mark.positive', id);
   const chain = plan?.chain;
   const role = roleOf(op, plan);
   const res = plan ? resourceModule(plan).replace(/_resource$/, '') : '';
@@ -393,11 +398,11 @@ export function renderPyFunctional(s: SuiteInput, meta: Meta): string {
         if (role === 'create') a.push(`${i}assert read_pointer(res.json(), ${ptr}) not in (None, ""), "identifier at $response.body#${plan!.chain.idPointer}"`);
         if (role === 'read') a.push(`${i}assert str(read_pointer(res.json(), ${ptr})) == created_${res}, "same resource"`);
         return a;
-      }),
+      }, s.ids?.functional.success),
     );
   }
-  if (s.notFound) L.push(...pyNotFound(s, 'test_returns_documented_404_for_unknown_id', NEG, statusIs(op, '404')));
-  if (s.unauthorized) L.push(...pyAnonymous(s, 'test_returns_documented_401_without_credentials', NEG, statusIs(op, '401')));
+  if (s.notFound) L.push(...pyNotFound(s, 'test_returns_documented_404_for_unknown_id', withId(NEG, s.ids?.functional.notFound), statusIs(op, '404')));
+  if (s.unauthorized) L.push(...pyAnonymous(s, 'test_returns_documented_401_without_credentials', withId(NEG, s.ids?.functional.unauthorized), statusIs(op, '401')));
   return finish(L);
 }
 
@@ -411,13 +416,13 @@ export function renderPyContract(s: SuiteInput, meta: Meta): string {
   const expect = `contract.expect(res, ${str(op.method)}, ${str(op.path)})`;
   const L = pyHeader('contract', s, meta, ['Checks conformance to the OpenAPI document: the status actually returned is documented and the body matches its schema.', 'Invalid requests break one documented constraint each and must get a documented rejection.']);
   if (s.bodyCases.length || s.queryCases.length) L.push(`REJECTION = ${pyLit(s.validation)}  # documented in the spec`, '', '');
-  if (s.positive) L.push(...pyPositive(s, 'test_success_response_matches_contract', (i) => [`${i}${expect}`]));
-  if (s.notFound) L.push(...pyNotFound(s, 'test_response_for_unknown_id_matches_contract', POS, expect));
-  if (s.unauthorized) L.push(...pyAnonymous(s, 'test_response_without_credentials_matches_contract', POS, expect));
+  if (s.positive) L.push(...pyPositive(s, 'test_success_response_matches_contract', (i) => [`${i}${expect}`], s.ids?.contract.success));
+  if (s.notFound) L.push(...pyNotFound(s, 'test_response_for_unknown_id_matches_contract', withId(POS, s.ids?.contract.notFound), expect));
+  if (s.unauthorized) L.push(...pyAnonymous(s, 'test_response_without_credentials_matches_contract', withId(POS, s.ids?.contract.unauthorized), expect));
 
   if (s.bodyCases.length) {
     L.push('INVALID_BODIES = [');
-    for (const c of s.bodyCases) L.push(`    pytest.param(${pyLit(c.data, 4)}, id=${str(c.title)}),  # ${c.source}`);
+    s.bodyCases.forEach((c, n) => L.push(`    pytest.param(${pyLit(c.data, 4)}, id=${str(c.title)}${paramMarks(s.ids?.contract.body[n])}),  # ${c.source}`));
     L.push(']', '', '', NEG, '@pytest.mark.parametrize("payload", INVALID_BODIES)');
     if (needsExisting) {
       L.push(`def test_rejects_invalid_body(api, contract, created_${res}, payload):`);
@@ -431,7 +436,7 @@ export function renderPyContract(s: SuiteInput, meta: Meta): string {
   }
   if (s.queryCases.length) {
     L.push('INVALID_QUERIES = [');
-    for (const c of s.queryCases) L.push(`    pytest.param(${pyLit(c.query, 4)}, id=${str(c.title)}),  # ${c.source}`);
+    s.queryCases.forEach((c, n) => L.push(`    pytest.param(${pyLit(c.query, 4)}, id=${str(c.title)}${paramMarks(s.ids?.contract.query[n])}),  # ${c.source}`));
     L.push(']', '', '', NEG, '@pytest.mark.parametrize("params", INVALID_QUERIES)', 'def test_rejects_invalid_query(api, contract, params):');
     L.push(`    res = api.${op.method}(${pathExpr(op)}, params=params)`, `    contract.expect_rejected(res, REJECTION, ${str(op.method)}, ${str(op.path)})`, '', '');
   }
@@ -451,7 +456,7 @@ export function renderPyScenarios(s: SuiteInput, meta: Meta): string {
   const id = `created_${res}`;
   if (sc.createRead) {
     L.push(
-      POS,
+      withId(POS, s.ids?.scenario.createRead),
       `def test_created_resource_can_be_read(api, ${id}):`,
       `    read = api.${r.method}(${pathExpr(r, chain.param, id)})`,
       `    ${assertSuccess(r, 'read')}`,
@@ -462,7 +467,7 @@ export function renderPyScenarios(s: SuiteInput, meta: Meta): string {
   }
   if (sc.updateRead) {
     L.push(
-      POS,
+      withId(POS, s.ids?.scenario.updateRead),
       `def test_update_is_visible_through_read(api, ${res}, ${id}):`,
       `    payload = ${res}.new_update_payload()`,
       `    res = api.${op.method}(${pathExpr(op, chain.param, id)}, json=payload)`,
@@ -479,7 +484,7 @@ export function renderPyScenarios(s: SuiteInput, meta: Meta): string {
   }
   if (sc.deleteGone) {
     L.push(
-      POS,
+      withId(POS, s.ids?.scenario.deleteGone),
       `def test_deleted_resource_is_no_longer_returned(api, ${id}):`,
       `    res = api.${op.method}(${pathExpr(op, chain.param, id)})`,
       `    ${assertSuccess(op)}`,
