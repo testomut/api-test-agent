@@ -62,6 +62,42 @@ function jsonBodySchema(spec: LoadedSpec, op: Operation): any {
   return key ? content[key].schema : undefined;
 }
 
+/** Top-level properties of an object schema ($ref and allOf resolved). */
+function topProperties(spec: LoadedSpec, schema: any, depth = 0): Record<string, any> {
+  if (!schema || typeof schema !== 'object' || depth > 8) return {};
+  if (schema.$ref) return topProperties(spec, resolvePointer(spec.doc, schema.$ref.slice(1)).node, depth + 1);
+  const own = Object.fromEntries(Object.entries(schema.properties ?? {}).map(([k, v]: [string, any]) => [k, v?.$ref ? resolvePointer(spec.doc, v.$ref.slice(1)).node : v]));
+  return Object.assign({}, ...(schema.allOf ?? []).map((p: any) => topProperties(spec, p, depth + 1)), own);
+}
+
+/** Sample suffix used to check that a suffixed value still satisfies the property's pattern. */
+const UNIQUE_PROBE = '-a1b2c3';
+
+/**
+ * String fields of the example payload that must differ on every call: the operation documents 409 (conflict),
+ * so a fixed example value collides with data left by an earlier run or another user of a shared environment.
+ * Fields with enum / const / format are never touched; a pattern must still match with the suffix.
+ * Value: maxLength of the field (the example is shortened to fit), or null.
+ */
+export function uniqueFields(spec: LoadedSpec, op: Operation, schema: unknown, payload: unknown): Record<string, number | null> {
+  if (!op.responses.some((r) => r.status === '409') || !payload || typeof payload !== 'object' || Array.isArray(payload)) return {};
+  const props = topProperties(spec, schema);
+  const out: Record<string, number | null> = {};
+  for (const [key, value] of Object.entries(payload)) {
+    const p = props[key];
+    if (typeof value !== 'string' || !p || p.enum || p.const !== undefined || p.format) continue;
+    if (typeof p.pattern === 'string') {
+      try {
+        if (!new RegExp(p.pattern, 'u').test(value + UNIQUE_PROBE)) continue;
+      } catch {
+        continue;
+      }
+    }
+    out[key] = typeof p.maxLength === 'number' ? p.maxLength : null;
+  }
+  return out;
+}
+
 function planChain(spec: LoadedSpec, chain: CrudChain): { ok: true; plan: ChainPlan } | { ok: false; reason: string } {
   const unresolved = (op: Operation) => op.params.filter((p) => p.required && p.in !== 'header' && p.name !== chain.param && p.knownValue === undefined);
   for (const op of [chain.create, chain.read, chain.update, chain.delete].filter(Boolean) as Operation[]) {
@@ -78,6 +114,7 @@ function planChain(spec: LoadedSpec, chain: CrudChain): { ok: true; plan: ChainP
 
   let updatePayload: unknown;
   let updateSources: string[] = [];
+  let uniqueUpdate: Record<string, number | null> = {};
   const assumptions: string[] = [];
   if (chain.update) {
     const s = jsonBodySchema(spec, chain.update);
@@ -85,10 +122,12 @@ function planChain(spec: LoadedSpec, chain: CrudChain): { ok: true; plan: ChainP
     if (u?.ok && u.value && typeof u.value === 'object' && Object.keys(u.value).length) {
       updatePayload = u.value;
       updateSources = u.sources;
+      uniqueUpdate = uniqueFields(spec, chain.update, s, u.value);
       if (chain.read) assumptions.push(`after ${chain.update.operationId ?? chain.update.key}, ${chain.read.operationId ?? chain.read.key} returns the updated field values (${chain.update.method.toUpperCase()} semantics).`);
     }
   }
-  return { ok: true, plan: { chain, createPayload: created.value, createSources: created.sources, updatePayload, updateSources, assumptions } };
+  const uniqueCreate = uniqueFields(spec, chain.create, createSchema, created.value);
+  return { ok: true, plan: { chain, createPayload: created.value, createSources: created.sources, updatePayload, updateSources, uniqueCreate, uniqueUpdate, assumptions } };
 }
 
 const posix = (p: string) => p.replace(/\\/g, '/');

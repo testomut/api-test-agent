@@ -13,7 +13,7 @@ const rejection = ["400"]; // documented in the spec
 
 test.describe('POST /items · contract', { tag: '@contract' }, () => {
   test('success response matches the documented contract', { tag: '@positive' }, async ({ api }) => {
-    const res = await api.items.createItem({ data: resource.createPayload });
+    const res = await api.items.createItem({ data: resource.newCreatePayload() });
     try {
       await expectContract(res, 'post', '/items');
     } finally {

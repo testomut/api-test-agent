@@ -7,6 +7,7 @@ import { expect, type APIResponse } from '@playwright/test';
 import { expectContract, readPointer } from './contract-assert.js';
 import type { Apis } from './api/generated/apis.js';
 
+/** The documented example payloads, unchanged. Requests use newCreatePayload() / newUpdatePayload(). */
 export const createPayload = {
   "name": "Mechanical keyboard",
   "price": 89.9,
@@ -20,8 +21,22 @@ export const updatePayload = {
   "price": 99.5
 };
 
+/** Copy of a payload with the given string fields suffixed (field → maxLength or null; the example is shortened to fit). */
+function unique<T>(payload: T, fields: Record<string, number | null>): T {
+  const out = structuredClone(payload) as Record<string, unknown>;
+  const suffix = '-' + Math.random().toString(36).slice(2, 8).padEnd(6, '0');
+  for (const [key, max] of Object.entries(fields)) {
+    const value = out?.[key];
+    if (typeof value === 'string') out[key] = (max === null ? value : value.slice(0, Math.max(0, max - suffix.length))) + suffix;
+  }
+  return out as T;
+}
+
+export const newCreatePayload = () => unique(createPayload, {});
+export const newUpdatePayload = () => unique(updatePayload, {});
+
 /** POST /items: creates a resource for a test and returns its id (at $response.body#/id). */
-export async function create(api: Apis, data: unknown = createPayload): Promise<{ id: string; body: unknown }> {
+export async function create(api: Apis, data: unknown = newCreatePayload()): Promise<{ id: string; body: unknown }> {
   const res = await api.items.createItem({ data });
   expect(res.status(), 'documented success status of createItem').toBe(201);
   const body = await expectContract(res, 'post', '/items');
