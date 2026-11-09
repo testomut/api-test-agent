@@ -784,7 +784,7 @@ Use the same normalized API model as the `plan` output and the dependency graph.
 - The supported version is a constant in the package code, covered by a test:
   `export const SUPPORTED_OASDIFF_VERSION = '...';`
   It may be duplicated in `package.json` as metadata, but the constant is the source of truth. CI examples install exactly this version.
-- Before diffing, the tool runs `oasdiff version`:
+- Before diffing, the tool runs `oasdiff --version` (oasdiff 1.34.1 has no `version` subcommand):
   - exact match: continue;
   - a different version: configuration error, exit code 2, with the actual and expected versions in the message;
   - unrecognized version output: exit code 2.
