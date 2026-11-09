@@ -1,6 +1,6 @@
 ---
 name: api-test-writer
-description: Write or extend Playwright + TypeScript API tests for an endpoint in the project's folder layout (<resource>/<method>[-by-id]/positive.spec.ts and negative.spec.ts). Use when the user asks to write, add, cover or extend API tests for an endpoint, a user story or an OpenAPI operation, or to add negative / boundary / validation cases. Not for UI or E2E browser tests.
+description: Write or extend Playwright + TypeScript API tests for an endpoint in the project's folder layout (<resource>/<method>[-by-id]/functional.spec.ts, contract.spec.ts, scenarios.spec.ts; positive/negative as tags). Use when the user asks to write, add, cover or extend API tests for an endpoint, a user story or an OpenAPI operation, or to add negative / boundary / validation cases. Not for UI or E2E browser tests.
 ---
 
 # API test writer
@@ -9,35 +9,38 @@ Write API tests the way this project lays them out, from sources that can be sho
 
 ## 1. Folder layout (mandatory)
 
-One folder per resource, one folder per operation, one file per kind of case:
+One folder per resource, one folder per operation, one file per **suite type** (up to three):
 
 ```
 tests/api/
   orders/                    ← static path segments joined with "-": /orders → orders, /admin/reset → admin-reset
     get/                     ← GET /orders
-      positive.spec.ts
-      negative.spec.ts
+      functional.spec.ts
+      contract.spec.ts
     get-by-id/               ← GET /orders/{orderId}: path ends with a parameter → "<method>-by-id"
-      positive.spec.ts
-      negative.spec.ts
-    post/
-      positive.spec.ts
-      negative.spec.ts       ← only if negative cases are possible (see 3)
-  _support/                  ← shared: contract assertions, <resource>.resource.ts data helpers
+      functional.spec.ts
+      contract.spec.ts
+    patch-by-id/
+      functional.spec.ts
+      contract.spec.ts
+      scenarios.spec.ts      ← create → PATCH → read → cleanup lives here, under the action, not under create
+  _support/                  ← shared: contract assertions, <resource>.resource.ts data helpers, api/ objects
 ```
 
-- `positive.spec.ts`: the operation works as documented with valid input.
-- `negative.spec.ts`: the operation rejects invalid input as documented.
-- If no negative case is possible, create **only** `positive.spec.ts` and tell the user why in one line.
+- `functional.spec.ts`: the endpoint does its job: expected status and result; documented 404 / 401 as behavior.
+- `contract.spec.ts`: conformance to OpenAPI: the returned status is documented and the body matches the schema; invalid input gets a documented rejection.
+- `scenarios.spec.ts`: multi-request flows (CRUD lifecycle, business rules), in the folder of the operation under test.
+- **Positive/negative is not a file**: tag every test `{ tag: '@positive' }` or `{ tag: '@negative' }`, and the describe block with its suite (`@functional`, `@contract`, `@scenario`).
+- Create a file only when it gets at least one case; for a suite without cases tell the user why in one line.
 - If a positive case is impossible (missing test data, unknown dependency), create only what is possible and state the blocker as a concrete question.
 - Two operations that would land in the same folder: suffix the folder with the operationId.
-- **Language** follows `API_TESTS_LANG` in `.env` (default TypeScript). For Python (pytest + requests) the same layout uses underscores and pytest names: `orders/get_by_id/test_positive.py` and `test_negative.py`, an `__init__.py` in each folder, shared fixtures in `tests/api/conftest.py` (`api`, `anonymous_api`, `contract`, `<resource>`, `created_<resource>`), negative cases with `pytest.mark.parametrize`, cleanup in fixture teardown. Hand-written files: `test_positive_manual.py`.
+- **Language** follows `API_TESTS_LANG` in `.env` (default TypeScript). For Python (pytest + requests) the same layout uses underscores and pytest names: `orders/get_by_id/test_functional.py`, `test_contract.py`, `test_scenarios.py`, polarity as `@pytest.mark.positive` / `@pytest.mark.negative`, an `__init__.py` in each folder, shared fixtures in `tests/api/conftest.py` (`api`, `anonymous_api`, `contract`, `<resource>`, `created_<resource>`), negative cases with `pytest.mark.parametrize`, cleanup in fixture teardown. Hand-written files: `test_functional_manual.py`.
 
 ## 2. Before writing: read, do not assume
 
 1. Find the source of expectations: OpenAPI operation (request schema, documented responses, `links`), the user story, or the user's words. Quote it in a comment at the top of the file.
 2. Read the project's existing `_support/` helpers, fixtures and one neighbouring test. Reuse them; do not create a second helper that does the same thing. Match naming and style.
-3. If `api-test-agent` is installed, run `npx @testomut/api-test-agent generate <spec> --tests-dir tests/api` first and extend its output, rather than writing the same cases by hand. Hand-written cases go into separate files (e.g. `positive.manual.spec.ts`), because generated files are overwritten when the spec changes.
+3. If `api-test-agent` is installed, run `npx @testomut/api-test-agent generate <spec> --tests-dir tests/api` first and extend its output, rather than writing the same cases by hand. Hand-written cases go into separate files (e.g. `functional.manual.spec.ts`), because generated files are overwritten when the spec changes.
 
 ## 3. When negative cases are allowed
 
@@ -74,6 +77,6 @@ Typical set per operation:
 
 Tell the user, briefly:
 - files created (paths) and the number of cases in each;
-- which operations have only a positive (or only a negative) file, and why;
+- which suite files were not created for an operation (no functional, contract or scenario case), and why;
 - assumptions to confirm and blockers as precise questions;
 - the command to run them: `npx playwright test tests/api/<resource>`.

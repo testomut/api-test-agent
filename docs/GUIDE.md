@@ -116,7 +116,7 @@ Non-interactive (CI, scripts): `npx @testomut/api-test-agent init --yes --base-u
 | `init` | yes, after showing the plan and your confirmation (see §3) | no | One-time project setup. `--dry-run` shows the plan only. |
 | `run` | only `reports/api-agent/` | read-only GETs (`--no-probe` to disable) | Analysis: environment, spec, existing tests, Postman, dependency and coverage maps, proposals. |
 | `audit [spec]` | only the report folder | read-only with `--probe` / `--schemathesis` | Spec and contract checks only. |
-| `generate [spec]` | only `API_TESTS_DIR` | with `--run`: creates and deletes test data (needs `--allow-write`) | Generates `positive` / `negative` tests for each operation. |
+| `generate [spec]` | only `API_TESTS_DIR` | with `--run`: creates and deletes test data (needs `--allow-write`) | Generates `functional` / `contract` / `scenarios` tests for each operation. |
 | `generate --draft-pr` | new git branch | pushes the branch | Opens a GitHub Draft PR for review. Never touches the default branch. |
 | `adapt` | yes, after showing the plan and your confirmation | no | Moves existing API tests into the layout and converts uncovered Postman requests (see §5a). `--dry-run`, `--yes`, `--only moves|postman`. |
 
@@ -217,7 +217,7 @@ npx @testomut/api-test-agent generate --deps reports/api-agent/generate/ai-deps.
 | `status-only` | a positive test checks only the status code |
 | `no-assertion` | a test calls the API and asserts nothing |
 | `order-dependent` | a test uses a value set by another test |
-| layout | file is not in `<resource>/<method>/positive|negative` (proposal A) |
+| layout | file is not in `<resource>/<method>/` with a suite prefix (`functional|contract|scenarios`, or the older `positive|negative`) (proposal A) |
 
 **Postman**
 | Check | Meaning |
@@ -236,12 +236,13 @@ npx @testomut/api-test-agent generate --deps reports/api-agent/generate/ai-deps.
 | Schemathesis | generative positive/negative checks, `--checks all` |
 
 **Generated tests**
-| File | Cases |
-|---|---|
-| `positive.spec.ts` | documented success with spec-provided data; create → read → update → delete with checks of the result |
-| `negative.spec.ts` | missing required field, wrong type, min/max and length bounds, enum, unknown field, minProperties, invalid query params, unknown id → 404, no credentials → 401 |
+| File | Positive (`@positive`) | Negative (`@negative`) |
+|---|---|---|
+| `functional.spec.ts` | documented success status with spec-provided data; create returns an id, read returns the created resource | unknown id → 404, no credentials → 401 (status only) |
+| `contract.spec.ts` | the returned status is documented and the body matches the schema: success, missing-id and anonymous responses | missing required field, wrong type, min/max and length bounds, enum, unknown field, minProperties, invalid query params → documented 400/422 |
+| `scenarios.spec.ts` | update → read returns the new values; delete → read gives 404. Lives in the folder of the action (update/delete), never under create | |
 
-A negative case is generated only when the spec documents the rejection (400 / 422 / 4XX, 404, 401). Otherwise only `positive.spec.ts` is created and the report says why.
+A negative case is generated only when the spec documents the rejection (400 / 422 / 4XX, 404, 401). A file is written only when it has at least one case; otherwise the report says why (`BLOCKED` per suite).
 
 ## 7. Test layout
 
@@ -252,9 +253,10 @@ Same cases and rules in both languages; only the file conventions differ.
 ```
 tests/api/
   orders/
-    get/            positive.spec.ts  negative.spec.ts
-    get-by-id/      positive.spec.ts  negative.spec.ts
-    post/           positive.spec.ts  negative.spec.ts
+    get/            functional.spec.ts  contract.spec.ts
+    get-by-id/      functional.spec.ts  contract.spec.ts
+    patch-by-id/    functional.spec.ts  contract.spec.ts  scenarios.spec.ts
+    post/           functional.spec.ts  contract.spec.ts
   _support/
     api/
       generated/    ApiBase.ts, <Name>ApiBase.ts (one method per operation), apis.ts: rewritten on every generate
@@ -281,13 +283,14 @@ test('...', async ({ api, publicApi }) => {
 tests/api/
   conftest.py       fixtures: api, anonymous_api, contract, <resource>, created_<resource>
   orders/
-    get/            test_positive.py  test_negative.py
-    get_by_id/      test_positive.py  test_negative.py
-    post/           test_positive.py  test_negative.py
+    get/            test_functional.py  test_contract.py
+    get_by_id/      test_functional.py  test_contract.py
+    patch_by_id/    test_functional.py  test_contract.py  test_scenarios.py
+    post/           test_functional.py  test_contract.py
   _support/         contract.py (jsonschema), openapi_snapshot.json, <resource>_resource.py
 ```
 
-Python folders use underscores and contain `__init__.py`, so `test_positive.py` can repeat across folders. Negative cases use `pytest.mark.parametrize`; preconditions and cleanup are fixtures (`created_orders` creates before the test and deletes after it).
+Python folders use underscores and contain `__init__.py`, so `test_functional.py` can repeat across folders. Each module has `pytestmark = pytest.mark.<suite>` and each test `@pytest.mark.positive` or `@pytest.mark.negative` (registered in `conftest.py`). Invalid inputs use `pytest.mark.parametrize`; preconditions and cleanup are fixtures (`created_orders` creates before the test and deletes after it).
 
 - Folder = static path segments (`/orders` → `orders`, `/admin/reset` → `admin-reset`), then the method, with `-by-id` when the path ends with a parameter.
 - Generated files are overwritten when the spec changes. Hand-written cases go next to them in `*.manual.spec.ts`; converted Postman requests in `*.postman.spec.ts`.

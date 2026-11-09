@@ -30,7 +30,7 @@ export class ContractValidator {
   private readonly doc: any;
 
   constructor(doc: any) {
-    const is31 = String(doc.openapi ?? '').startsWith('3.1');
+    const is31 = /^3\.[12]\./.test(String(doc.openapi ?? '')); // 3.1 and 3.2: JSON Schema 2020-12
     this.doc = is31 ? structuredClone(doc) : nullableToJsonSchema(structuredClone(doc));
     const opts = { strict: false, allErrors: true, validateSchema: false } as const;
     this.ajv = (is31 ? new Ajv2020(opts) : new Ajv(opts)) as Ajv;
@@ -90,11 +90,14 @@ export class ContractValidator {
   }
 }
 
+/** Media types are compared without parameters: "application/json; v=1.0" documents "application/json". */
+const baseMedia = (m: string) => m.split(';')[0].trim().toLowerCase();
+
 function pickMedia(keys: string[], actual: string): string | undefined {
-  const exact = keys.find((k) => k.toLowerCase() === actual);
+  const exact = keys.find((k) => baseMedia(k) === actual);
   if (exact) return exact;
   const [type] = actual.split('/');
-  return keys.find((k) => k === `${type}/*`) ?? keys.find((k) => k === '*/*');
+  return keys.find((k) => baseMedia(k) === `${type}/*`) ?? keys.find((k) => baseMedia(k) === '*/*');
 }
 
 function esc(part: string): string {

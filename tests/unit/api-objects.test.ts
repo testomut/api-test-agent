@@ -43,10 +43,10 @@ describe('API objects', () => {
     const dir = mkdtempSync(join(tmpdir(), 'ata-api-'));
     await generate(demo, ops, { outDir: dir, version: 'test' });
     const read = (f: string) => readFileSync(join(dir, f), 'utf8');
-    expect(read('items/get-by-id/positive.spec.ts')).toContain('await api.items.getItem(id)');
-    expect(read('health/get/positive.spec.ts')).toContain('async ({ publicApi })');
-    expect(read('me/get/negative.spec.ts')).toContain('await publicApi.me.getMe()');
+    expect(read('items/get-by-id/functional.spec.ts')).toContain('await api.items.getItem(id)');
+    expect(read('health/get/functional.spec.ts')).toContain('async ({ publicApi })');
+    expect(read('me/get/functional.spec.ts')).toContain('await publicApi.me.getMe()');
     expect(read('_support/items.resource.ts')).toContain('export async function create(api: Apis');
-    for (const f of ['items/get-by-id/positive.spec.ts', 'me/get/negative.spec.ts']) expect(read(f)).not.toMatch(/request\.(get|post|fetch)\(/);
+    for (const f of ['items/get-by-id/functional.spec.ts', 'items/get-by-id/contract.spec.ts', 'me/get/functional.spec.ts']) expect(read(f)).not.toMatch(/request\.(get|post|fetch)\(/);
   });
 });

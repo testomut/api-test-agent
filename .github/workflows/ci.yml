@@ -52,7 +52,7 @@ jobs:
             if (JSON.stringify(bad) !== JSON.stringify(["GET /stats"])) process.exit(1);
           '
 
-      - name: Generate tests (resource/method/positive|negative) and run them once
+      - name: Generate tests (resource/method/functional|contract|scenarios) and run them once
         run: npx tsx src/cli.ts generate demo-api/openapi.yaml -u http://localhost:3100 --allow-write --run -o reports/generate --fail-on never
 
       - name: Self-check - generated suite fails only on the known defect
@@ -62,7 +62,7 @@ jobs:
             const bad = r.generated.scenarios.filter(s => s.status === "CONTRACT_MISMATCH" || s.status === "TEST_FAILURE").map(s => s.name);
             const passed = r.generated.scenarios.filter(s => s.status === "PASS").length;
             console.log("failing:", bad, "passed:", passed);
-            if (JSON.stringify(bad) !== JSON.stringify(["stats/get/positive"]) || passed < 10) process.exit(1);
+            if (JSON.stringify(bad) !== JSON.stringify(["stats/get/contract"]) || passed < 10) process.exit(1);
           '
 
       - name: Generate Python tests (pytest + requests) and run them once
@@ -74,7 +74,7 @@ jobs:
             const bad = r.generated.scenarios.filter(s => s.status === "CONTRACT_MISMATCH" || s.status === "TEST_FAILURE").map(s => s.name);
             const passed = r.generated.scenarios.filter(s => s.status === "PASS").length;
             console.log("failing:", bad, "passed:", passed);
-            if (JSON.stringify(bad) !== JSON.stringify(["stats/get/positive"]) || passed < 10) process.exit(1);
+            if (JSON.stringify(bad) !== JSON.stringify(["stats/get/contract"]) || passed < 10) process.exit(1);
           '
 
       - name: Analyse the legacy example project (init + run)

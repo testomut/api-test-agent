@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Operation } from '../types.js';
@@ -75,12 +75,13 @@ const posix = (p: string) => p.replace(/\\/g, '/');
 
 const escRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-/** Is the file already in <testsDir>/<resource>/<action>/positive|negative…? */
+/** Is the file already in <testsDir>/<resource>/<action>/{functional,contract,scenarios} (or the older positive|negative)…? */
 export function inLayout(path: string, testsDir: string): boolean {
   const d = escRe(testsDir.replace(/\/$/, ''));
+  const kinds = '(functional|contract|scenarios|positive|negative)';
   return path.endsWith('.py')
-    ? new RegExp(`^${d}/[^/]+/[^/]+/test_(positive|negative)(_\\w+)?\\.py$`).test(path)
-    : new RegExp(`^${d}/[^/]+/[^/]+/(positive|negative)(\\.[\\w-]+)?\\.spec\\.[cm]?[jt]sx?$`).test(path);
+    ? new RegExp(`^${d}/[^/]+/[^/]+/test_${kinds}(_\\w+)?\\.py$`).test(path)
+    : new RegExp(`^${d}/[^/]+/[^/]+/${kinds}(\\.[\\w-]+)?\\.spec\\.[cm]?[jt]sx?$`).test(path);
 }
 
 /**
@@ -119,6 +120,18 @@ export function coupledTests(tests: TestCase[]): Map<TestCase, string> {
   return out;
 }
 /** Python layout uses underscores in the resource and action folder names. */
+/**
+ * Does the operation folder hold generated cases of this polarity? Suite files carry it as a tag
+ * ('@positive' / pytest.mark.positive); the older layout had one file per polarity.
+ */
+function generatedPolarity(dir: string, polarity: 'positive' | 'negative'): boolean {
+  if (existsSync(join(dir, `${polarity}.spec.ts`)) || existsSync(join(pyDir(dir), `test_${polarity}.py`))) return true;
+  const suites = ['functional', 'contract', 'scenarios'];
+  const files = [...suites.map((n) => join(dir, `${n}.spec.ts`)), ...suites.map((n) => join(pyDir(dir), `test_${n}.py`))];
+  const marker = new RegExp(`'@${polarity}'|pytest\\.mark\\.${polarity}\\b`);
+  return files.some((f) => existsSync(f) && marker.test(readFileSync(f, 'utf8')));
+}
+
 const pyDir = (dir: string) => {
   const parts = dir.split(/[\\/]/);
   return [...parts.slice(0, -2), ...parts.slice(-2).map((p) => p.replace(/[^A-Za-z0-9_]/g, '_'))].join('/');
@@ -245,8 +258,8 @@ export async function analyzeProject(o: {
         negativeTests: [],
         usedAsPrecondition: 0,
         postman: [],
-        generatedPositive: !!dir && (existsSync(join(dir, 'positive.spec.ts')) || existsSync(join(pyDir(dir), 'test_positive.py'))),
-        generatedNegative: !!dir && (existsSync(join(dir, 'negative.spec.ts')) || existsSync(join(pyDir(dir), 'test_negative.py'))),
+        generatedPositive: !!dir && generatedPolarity(dir, 'positive'),
+        generatedNegative: !!dir && generatedPolarity(dir, 'negative'),
         negativePossible: !!rej && (rej.validation.length > 0 || rej.notFound || rej.unauthorized),
       });
     }
