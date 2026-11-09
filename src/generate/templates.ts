@@ -144,10 +144,11 @@ export function roleOf(op: Operation, plan?: ChainPlan): Role | undefined {
 }
 
 /** Multi-request scenarios whose primary operation is `op` (the action under test, never the setup step). */
-export function scenarioCases(s: Pick<SuiteInput, 'op' | 'plan' | 'positive'>): { updateRead: boolean; deleteGone: boolean } {
+export function scenarioCases(s: Pick<SuiteInput, 'op' | 'plan' | 'positive'>): { createRead: boolean; updateRead: boolean; deleteGone: boolean } {
   const role = roleOf(s.op, s.plan);
   const read = s.plan?.chain.read;
   return {
+    createRead: s.positive && role === 'create' && !!read,
     updateRead: s.positive && role === 'update' && !!read && s.plan!.updatePayload !== undefined,
     deleteGone: s.positive && role === 'delete' && !!read && read.responses.some((r) => r.status === '404'),
   };
@@ -160,7 +161,7 @@ export function suiteCounts(s: SuiteInput): Record<SuiteType, number> {
   return {
     functional: (s.positive ? 1 : 0) + extra,
     contract: (s.positive ? 1 : 0) + extra + s.bodyCases.length + s.queryCases.length,
-    scenario: (sc.updateRead ? 1 : 0) + (sc.deleteGone ? 1 : 0),
+    scenario: (sc.createRead ? 1 : 0) + (sc.updateRead ? 1 : 0) + (sc.deleteGone ? 1 : 0),
   };
 }
 
@@ -346,7 +347,23 @@ export function renderScenarios(s: SuiteInput, meta: Meta): string {
   const extra = ['Each scenario: setup (create) → action (this operation) → assertion (read) → cleanup (delete).'];
   if (sc.updateRead) extra.push(`ASSUMPTION (not in spec, reviewer must confirm): ${plan!.assumptions.find((a) => a.startsWith('after')) ?? 'read after update returns the new values'}`);
   const L = suiteHeader('scenario', s, meta, extra);
-  L.push(...imports(s, ['expect'], true, false), '', `test.describe('${op.key} · scenarios', { tag: '@scenario' }, () => {`);
+  L.push(...imports(s, ['expect', ...(sc.createRead ? ['readPointer'] : [])], true, false), '', `test.describe('${op.key} · scenarios', { tag: '@scenario' }, () => {`);
+  if (sc.createRead) {
+    L.push(
+      `  test('the created resource can be retrieved by ${r.operationId ?? r.key}', ${POS}, async ({ api }) => {`,
+      `    const { id } = await resource.create(api);`,
+      `    try {`,
+      `      const read = await ${call(r)};`,
+      `      ${expectSuccess(r, 'read')}`,
+      `      const body = await read.json();`,
+      `      expect(String(readPointer(body, ${q(chain.idPointer)}) ?? ''), 'created resource id').toBe(id);`,
+      `    } finally {`,
+      `      await resource.remove(api, id);`,
+      `    }`,
+      `  });`,
+      '',
+    );
+  }
   if (sc.updateRead) {
     L.push(
       `  test('the update is visible through ${r.operationId ?? r.key}', ${POS}, async ({ api }) => {`,
