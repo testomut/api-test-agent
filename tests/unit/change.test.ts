@@ -419,6 +419,33 @@ const realOasdiff = (() => {
 })();
 
 describe.skipIf(!realOasdiff)(`Toolshop fixture against oasdiff ${SUPPORTED_OASDIFF_VERSION}`, () => {
+  it('maps the real engine verdicts: errors, warnings and infos, with no unmatched change', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'ata-ts-'));
+    const d = JSON.parse(await readFile('tests/fixtures/change/toolshop.json', 'utf8'));
+    const S = d.components.schemas;
+    S.ProductRequest.required = ['name', 'price'];
+    S.ProductRequest.properties.co2_rating.enum = ['A', 'B', 'C'];
+    S.ProductRequest.properties.price.minimum = 0;
+    delete S.ProductRequest.properties.product_image_id;
+    d.paths['/products'].get.parameters.push({ name: 'lang', in: 'query', required: true, schema: { type: 'string' } });
+    S.ProductResponse.properties.price.type = 'string';
+    d.paths['/v2/categories/tree'] = d.paths['/categories/tree'];
+    delete d.paths['/categories/tree'];
+    d.paths['/brands/{brandId}'].get.operationId = 'showBrand';
+    await writeFile(join(dir, 'head.json'), JSON.stringify(d));
+    const r = await runDiff({ base: 'tests/fixtures/change/toolshop.json', head: join(dir, 'head.json'), out: join(dir, 'out'), format: 'json', failOn: ['never'], allowNetwork: false, allowHosts: [], allowEngineVersionMismatch: false, env: { ...process.env, OASDIFF_BIN: realOasdiff! } });
+    const verdict = (pred: (c: OpenApiChangeSet['changes'][number]) => boolean) => [...new Set(r.set.changes.filter(pred).map((c) => c.breaking))];
+    expect(verdict((c) => c.facet === 'required' && c.operationKey === 'POST /products')).toEqual(['yes']);
+    expect(verdict((c) => c.facet === 'enum')).toEqual(['yes']);
+    expect(verdict((c) => c.facet === 'minimum')).toEqual(['yes']);
+    expect(verdict((c) => c.facet === 'type' && c.scope === 'response')).toEqual(['yes']);
+    expect(verdict((c) => c.kind === 'parameter-changed')).toEqual(['yes']);
+    expect(verdict((c) => c.kind === 'operation-moved')).toEqual(['yes']); // the old path is gone for clients
+    expect(verdict((c) => c.kind === 'request-changed' && /product_image_id/.test(c.note ?? ''))).toEqual(['unknown']); // oasdiff warning
+    expect(verdict((c) => c.kind === 'operationId-renamed')).toEqual(['no']);
+    expect(r.set.changes.filter((c) => c.breaking === 'unknown' && !/potentially breaking/.test(c.note ?? ''))).toEqual([]);
+  });
+
   it('an unchanged spec gives no changes; a decreased maxLength is breaking', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'ata-ts-'));
     const doc = JSON.parse(await readFile('tests/fixtures/change/toolshop.json', 'utf8'));

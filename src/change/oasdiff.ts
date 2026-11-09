@@ -129,7 +129,8 @@ const lastSegment = (pointer?: string) => (pointer ?? '').split('/').filter(Bool
 
 /**
  * Fills `breaking` from the oasdiff changelog: entries of the same operation whose rule id matches the change's
- * kind / facet and direction. A matched error-level entry → 'yes', matched lower levels → 'no', no match → 'unknown'.
+ * kind / facet and direction. Matched error level → 'yes', warning (potentially breaking) → 'unknown' with a note,
+ * info only → 'no'; no match → 'unknown'.
  * Verdicts fixed by the kind itself (added operation, example, servers, renames) are kept.
  */
 export function applyVerdicts(changes: OpenApiChange[], entries: OasdiffEntry[], keyOf: (c: OpenApiChange) => { method: string; paths: string[] }): void {
@@ -147,6 +148,9 @@ export function applyVerdicts(changes: OpenApiChange[], entries: OasdiffEntry[],
     const named = matched.filter((e) => field && (e.text ?? '').includes(field));
     if (named.length) matched = named;
     if (!matched.length) continue;
-    c.breaking = (matched.some((e) => e.level >= 3) ? 'yes' : 'no') as Breaking;
+    // oasdiff levels: 3 error (breaking), 2 warning (potentially breaking: a human decides), 1 info.
+    const top = Math.max(...matched.map((e) => e.level));
+    c.breaking = (top >= 3 ? 'yes' : top === 2 ? 'unknown' : 'no') as Breaking;
+    if (top === 2) c.note = [c.note, `oasdiff: potentially breaking (${matched.find((e) => e.level === 2)!.id})`].filter(Boolean).join('; ');
   }
 }
