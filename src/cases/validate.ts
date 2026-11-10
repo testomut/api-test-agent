@@ -228,12 +228,25 @@ function checkLocation(o: NormOp, loc: string, rule: string): Finding | undefine
         last = bad(`"${leaf}" is not a property`);
         continue;
       }
+      if (rule === 'variant') {
+        // request.body#<pointer>/@<n>: branch n of a oneOf / anyOf at <pointer>.
+        const m = /^(.*)\/@(\d+)$/.exec(body[2]);
+        const at = m ? walk(s, m[1]) : { error: { code: 'INVALID_CASE_LOCATION', pointer: '', reason: `"${body[2]}" does not end with /@<branch>` } as Finding };
+        if (at.error) {
+          last = at.error.code === 'CASE_LOCATION_UNRESOLVED' ? at.error : { ...at.error, reason: `${o.key}: ${at.error.reason}` };
+          continue;
+        }
+        const branches = (at.node?.oneOf ?? at.node?.anyOf) as unknown[] | undefined;
+        if (Array.isArray(branches) && Number(m![2]) < branches.length) return undefined;
+        last = bad(`no oneOf / anyOf branch ${m![2]} at ${body[1]} body ${m![1] || '(root)'}`);
+        continue;
+      }
       const r = walk(s, body[2]);
       if (r.error) {
         last = r.error.code === 'CASE_LOCATION_UNRESOLVED' ? r.error : { ...r.error, reason: `${o.key}: ${r.error.reason}` };
         continue;
       }
-      if (!['schema', 'type', 'required', 'nullable', 'enum', 'const', 'unique'].includes(rule) && !ruleFits(r.node, rule)) {
+      if (!['schema', 'type', 'required', 'nullable', 'enum', 'const', 'unique', 'optional-omitted'].includes(rule) && !ruleFits(r.node, rule)) {
         last = { code: 'INVALID_CASE_RULE_FOR_SCHEMA', pointer: '', reason: `${o.key}: "${rule}" does not apply to ${body[1]} body ${body[2] || '(root)'}` };
         continue;
       }

@@ -3,6 +3,7 @@ import { requiredRequest } from './param-cases.js';
 import { varsIn, type ResolvedScenario, type ResolvedStep } from '../scenarios/dsl.js';
 import type { CrudChain } from './graph.js';
 import { pyCollectionPrelude, pyCollectionTests, pyFixtureTest, pyLifecycle } from './collection-render.js';
+import { pyVariantTests } from './variant-render.js';
 import { hasFill, queryVariants, roleOf, scenarioCases, uniqueNote, type ChainPlan, type Meta, type SuiteInput, type SuiteType } from './templates.js';
 
 /**
@@ -519,6 +520,7 @@ export function renderPyFunctional(s: SuiteInput, meta: Meta): string {
     L.push(...pyCollectionTests(s, s.collection));
   }
   if (s.fixture) L.push(...pyFixtureTest(s, s.fixture));
+  L.push(...pyVariantTests(s));
   return finish(L);
 }
 
@@ -542,6 +544,26 @@ function pyErrorTests(s: SuiteInput): string[] {
       '',
     );
   }
+  (e.envCredentials ?? []).forEach((c, n) => {
+    const what = c.kind === 'expired' ? 'an_expired_credential' : 'a_refused_account';
+    const params = pyLit({ ...req.params }, 4);
+    const headers = pyLit({ ...req.headers }, 4);
+    const cred = `${str(c.prefix)} + credential`;
+    const path = c.knownPath ? pathExpr(op) : pathExpr(op, plan?.chain.param, '"unused"');
+    L.push(
+      withId(NEG, s.ids?.functional.envCredentials?.[n]),
+      `def test_returns_documented_${c.status}_for_${what}(anonymous_api):`,
+      '    import os',
+      '',
+      `    credential = os.environ.get(${str(c.env)}, "")`,
+      '    if not credential:',
+      `        pytest.skip(${str(`${c.env} is not set: the reviewed ${c.kind === 'expired' ? 'expired credential (deps auth.expired)' : 'refused account (deps auth.forbidden)'} is not available`)})`,
+      `    res = anonymous_api.${op.method}(${path}, params=${c.query ? `{**${params}, ${str(c.query)}: ${cred}}` : params}, headers=${c.header ? `{**${headers}, ${str(c.header)}: ${cred}}` : headers})`,
+      `    ${statusIs(op, c.status)}`,
+      '',
+      '',
+    );
+  });
   if (e.methodNotAllowed) {
     const path = op.path.replace(/^\//, '').replace(/\{([^}]+)\}/g, (_, name) => encodeURIComponent(String(op.params.find((p) => p.in === 'path' && p.name === name)?.knownValue ?? 'unused')));
     // GET is the only method that is safe to send to a route the spec does not define.

@@ -34,6 +34,15 @@ Recursive from a valid payload; every case breaks exactly one rule (verified wit
 | `readOnly` | ✅ | not sent, no case | 3 ✔ |
 | case limit | ✅ | `--max-cases` (default 60 per operation); potential / generated / dropped in `coverage-gaps.json`, each dropped case as `CASE_LIMIT_REACHED` | 3 ✔ |
 
+## Request body: positive variants (`functional.spec.ts`, `src/generate/variants.ts`)
+
+Create / update operations of a confirmed chain. Each variant is a valid payload (checked with ajv against the request schema before a test is written) that differs from the documented example in one documented way; the test expects the documented success status and a response that matches the contract, and removes what it created in `finally`.
+
+| Variant | State | How / gap | Stage |
+|---|---|---|---|
+| only the required fields (`optional-omitted`, `request.body#`) | ✅ | optional fields removed outer first, each removal kept only while the payload stays valid (`minProperties`, dependent rules); never inside `oneOf` / `anyOf` / conditional subtrees; deps `fill` fields stay; nothing removable although optional fields exist → `CANNOT_ISOLATE_RULE` | D ✔ |
+| another `oneOf` / `anyOf` branch (`variant`, `request.body#<pointer>/@<n>`) | ✅ | every branch the example does not match, with a sample of that branch; no valid sample, or the payload is not valid with it → `UNCOVERED_VARIANT` with the reason | D ✔ |
+
 ## Parameters (`src/generate/param-cases.ts`)
 
 Every case is a valid request (each required query / header / cookie parameter with its documented value) in which exactly one parameter breaks exactly one rule (verified in `tests/unit/param-cases.test.ts` against the parameter schemas). The rules come from the same engine as request bodies. Expected result: a documented 400 / 422 / 4XX.
@@ -102,8 +111,8 @@ A case is generated only when the request that triggers the error is safe and th
 | 400 / 422 (invalid input) | ✅ | body and parameter cases | 3–4 ✔ |
 | 401 (no credentials) | ✅ | `publicApi` / `anonymous_api` | |
 | 401 (invalid credentials) | ✅ | a certainly invalid credential of the operation's scheme: HTTP bearer / OAuth2 / OpenID Connect (`Bearer api-agent-invalid-token`), HTTP basic, API key in header / query / cookie; an unknown scheme → `UNSUPPORTED_SCHEMA_KEYWORD` | 6 ✔ |
-| 401 (expired token) | ⛔ | needs a configured expired token | 6 (gap) |
-| 403 (scope / role) | ⛔ | `UNCONFIRMED_BUSINESS_RULE`: needs a reviewed account that must be refused | 6 ✔ (gap) |
+| 401 (expired token) | ✅ | deps `auth.expired.credentialEnv`: the variable holding an expired credential (never the value in the file); the same safe request as the invalid-credential case; skipped with the reason when the variable is unset; rule `expired-credentials` | D ✔ |
+| 403 (scope / role) | ✅ | deps `auth.forbidden` (`credentialEnv` + the operations that must refuse that account): GET / HEAD with documented path values only; a write → `UNSAFE_LIVE_CHECK`, unknown path values → `MISSING_RESOURCE_SOURCE`, an operation named without a documented 403 → `INVALID_REVIEWED_CONFIG`; without the section `UNCONFIRMED_BUSINESS_RULE` | D ✔ |
 | 404 (unknown id) | ✅ | single trailing path parameter | |
 | 405 | ✅ | a GET to a path that defines no GET (one case per path); a path with GET → `UNSAFE_LIVE_CHECK` (any other undocumented method could change data) | 6 ✔ |
 | 409 (conflict) | ✅ | create twice with the same payload, only when the deps file names `conflictOn` fields (a reviewed business rule); both records removed in `finally`; otherwise `UNCONFIRMED_BUSINESS_RULE` | 6 ✔ |
@@ -174,7 +183,9 @@ Strategy per list operation (recorded in `coverage-gaps.json` → `collection.st
 
 Defect detection on a real API: Toolshop's deliberately defective build (`api-with-bugs.practicesoftwaretesting.com`) returns rental products for `by_brand=1` that its product list never shows. The read-only `by_brand` test fails on it (`by_brand=1 returns resources the unfiltered collection does not show: 27, 28, 29`) and passes on the regular build, in TypeScript and Python. `by_category=12` has the same defect but only rentals carry that category, so a read-only test cannot reach it.
 
-Defect detection on the demo API (`scripts/mutation-check.ts`, TypeScript and Python identical):
+Defect detection on the demo API (`scripts/mutation-check.ts`, TypeScript and Python identical). Beyond the list defects below, the suite must also catch `require-optional` (an optional field is required), `accept-expired` (an expired token is accepted) and `ignore-suspension` (a refused account gets 200): 9/9 in CI; the generator of the previous release caught 7/9 on the same spec (both auth defects missed, `require-optional` only by chance, through a reviewed business scenario).
+
+
 
 | Injected defect (`DEMO_FAULT`) | Previous generator (65 tests) | Collection tests |
 |---|---|---|
@@ -201,7 +212,7 @@ Defect detection on the demo API (`scripts/mutation-check.ts`, TypeScript and Py
 |---|---|---|---|
 | `example`, `default`, `enum`, `const` | 🟡 | first value only | |
 | `examples` | 🟡 | first only | |
-| `oneOf` / `anyOf` | 🟡 | one branch is sent (the example's, else the first); the others are `UNCOVERED_VARIANT` gaps at their location | 7 ✔ (gap) |
+| `oneOf` / `anyOf` | ✅ | the example's branch in every test; each other branch with a valid sample in its own positive test (see "Request body: positive variants"); the rest `UNCOVERED_VARIANT` | D ✔ |
 | `discriminator` | 🟡 | blocked with an explicit reason | |
 | `pattern` | 🟡 | blocked without an example (explicit reason) | |
 | `multipleOf` | ✅ | the smallest multiple inside the bounds | 7 ✔ |
@@ -224,6 +235,10 @@ Defect detection on the demo API (`scripts/mutation-check.ts`, TypeScript and Py
 | CI: TypeScript / Python parity | ✅ | the same active cases for the demo API and for the synthetic fixture | 9 ✔ |
 | CI: the synthetic fixture compiles | ✅ | `tests/fixtures/coverage/kitchen-sink.yaml` generated in both languages: `tsc`, `py_compile`, valid registry | 6 ✔ |
 | CI: expected coverage gaps | ✅ | demo API (`demo-api/expected-gaps.json`) in CI; the synthetic fixture in unit tests | 10 ✔ |
+| CI: coverage baseline | ✅ | `ci/coverage-baseline.{demo,kitchen-sink}.json`: every active case ID and every gap (code + operation + location); a lost case or a gap the baseline does not list fails until the PR updates the baseline (`scripts/coverage-summary.ts --write-baseline`) | D ✔ |
+| CI: cleanup of write tests | ✅ | every generated test that creates data removes it in `finally`, a fixture teardown, or `removeIfCreated` right after the request and before any assertion (`src/report/quality-gates.ts`), TypeScript and Python | D ✔ |
+| CI: coverage summary | ✅ | per operation: suites, active case IDs, documented statuses checked, gaps with code and location; Markdown + JSON artifact `coverage-summary`, also in the job summary | D ✔ |
+| unchecked-status codes | ✅ | the actual reason: a status of an operation no request is sent to has the success call's reason (e.g. `MISSING_CLEANUP`), an unchecked success status the reason the success call is blocked (e.g. `MISSING_RESOURCE_SOURCE`) | D ✔ |
 | CI: fault injection | ✅ | `scripts/mutation-check.ts`: the demo list suite must be clean without a fault and fail under each of 6 `DEMO_FAULT` modes, TypeScript and Python | C ✔ |
 | CI: maintenance | ✅ | `maintain` on a changed demo spec: regenerated, validated, the stale reviewed mapping reported | C ✔ |
 | README | ✅ | "What is covered, and what is not": spec-derived vs needs confirmation vs never generated | 10 ✔ |

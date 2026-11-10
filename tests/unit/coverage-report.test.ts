@@ -41,10 +41,8 @@ describe('stage 10: coverage report', () => {
   it('reports unchecked statuses, request media types and security alternatives', async () => {
     const r = await run('tests/fixtures/coverage/kitchen-sink.yaml', 'tests/fixtures/coverage/kitchen-sink.deps.json');
     const list = r.coverage.find((c) => c.operation === 'GET /orders')!;
-    expect(list.uncheckedStatuses).toEqual([
-      { status: '403', code: 'UNCONFIRMED_BUSINESS_RULE' },
-      { status: '429', code: 'UNSAFE_LIVE_CHECK' },
-    ]);
+    // 403 is exercised through the reviewed deps "auth.forbidden" of the fixture; 429 never is.
+    expect(list.uncheckedStatuses).toEqual([{ status: '429', code: 'UNSAFE_LIVE_CHECK' }]);
     const update = r.coverage.find((c) => c.operation === 'PUT /orders/{orderId}')!;
     expect(update.uncheckedStatuses).toEqual([{ status: '418', code: 'UNREACHABLE_RESPONSE_STATUS' }]);
     const multi = { ...buildCatalog((await loadSpec('tests/fixtures/coverage/kitchen-sink.yaml')).doc)[0], requestContentTypes: ['application/json', 'multipart/form-data'], security: [['bearer'], ['apiKey']] } as any;

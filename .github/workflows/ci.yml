@@ -19,6 +19,9 @@ jobs:
       API_LOGIN_BODY: '{"username":"${API_USER}","password":"${API_PASSWORD}"}'
       API_USER: demo
       API_PASSWORD: demo-password
+      # Reviewed auth cases (demo-api/deps.json "auth"): fixed demo sessions, an expired one and a suspended account.
+      API_EXPIRED_TOKEN: demo-expired-token
+      API_FORBIDDEN_TOKEN: demo-suspended-token
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -50,6 +53,9 @@ jobs:
             console.log("kitchen sink cases:", ts.length, "TypeScript /", py.length, "Python");
             if (JSON.stringify(ts) !== JSON.stringify(py)) process.exit(1);
           '
+          # Quality gates: no lost active case, no unexplained gap (ci/coverage-baseline.*.json), parity, cleanup.
+          npx tsx scripts/coverage-summary.ts --spec tests/fixtures/coverage/kitchen-sink.yaml --coverage reports/ks/coverage-gaps.json --registry tests/api-ks/_support/cases.json --parity tests/api-ks-python/_support/cases.json --tests-dir tests/api-ks --baseline ci/coverage-baseline.kitchen-sink.json --out reports/coverage-summary-kitchen-sink.md
+          npx tsx scripts/coverage-summary.ts --spec tests/fixtures/coverage/kitchen-sink.yaml --coverage reports/ks-python/coverage-gaps.json --registry tests/api-ks-python/_support/cases.json --tests-dir tests/api-ks-python > /dev/null
           rm -rf tests/api-ks tests/api-ks-python
 
       - name: Start demo API
@@ -122,15 +128,34 @@ jobs:
           npx tsx src/cli.ts registry validate tests/api-python/_support/cases.json --spec demo-api/openapi.yaml --require-spec > /dev/null
           npx tsx src/cli.ts manifest validate --tests-dir tests/api-python
 
-      - name: Fault injection - the collection tests must catch every injected defect (TS and Python)
+      - name: Fault injection - the generated tests must catch every injected defect (TS and Python)
         # The demo API runs once per DEMO_FAULT (ignored filter, wrong sort, hidden record, duplicates, wrong field,
-        # overlapping pages) on its own port: clean without a fault, at least one failure with each.
+        # overlapping pages, a required optional field, an accepted expired token, an ignored suspension) on its own
+        # port: clean without a fault, at least one failure with each.
         run: |
-          npx tsx scripts/mutation-check.ts --lang typescript --port 3200 tests/api/items/get
-          npx tsx scripts/mutation-check.ts --lang python --port 3300 tests/api-python/items/get
+          npx tsx scripts/mutation-check.ts --lang typescript --port 3200 tests/api/items tests/api/me
+          npx tsx scripts/mutation-check.ts --lang python --port 3300 tests/api-python/items tests/api-python/me
           node -e '
             for (const l of ["typescript", "python"]) { const r = require("./reports/mutation-" + l + ".json"); console.log(l, r.detected + "/" + r.injected); if (r.detected !== r.injected) process.exit(1); }
           '
+
+      - name: Quality gates - coverage baseline, parity, cleanup, coverage summary (demo API)
+        # A lost active case ID or a gap the reviewed baseline does not list fails: update ci/coverage-baseline.demo.json
+        # in the PR that intends it (npx tsx scripts/coverage-summary.ts ... --write-baseline).
+        run: |
+          npx tsx scripts/coverage-summary.ts --spec demo-api/openapi.yaml --coverage reports/generate/coverage-gaps.json --registry tests/api/_support/cases.json --parity tests/api-python/_support/cases.json --tests-dir tests/api --baseline ci/coverage-baseline.demo.json --out reports/coverage-summary-demo.md
+          npx tsx scripts/coverage-summary.ts --spec demo-api/openapi.yaml --coverage reports/generate-python/coverage-gaps.json --registry tests/api-python/_support/cases.json --tests-dir tests/api-python > /dev/null
+
+      - name: Coverage summary artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-summary
+          path: |
+            reports/coverage-summary-*.md
+            reports/coverage-summary-*.json
+            reports/mutation-*.json
+          if-no-files-found: ignore
 
       - name: Maintenance - a spec change is regenerated, validated and summarized (no PR in CI)
         run: |

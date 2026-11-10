@@ -14,8 +14,9 @@ import { headRevision } from '../change/baseline.js';
 import { isUrl } from '../change/network.js';
 import { bodyCasesDetailed, compositionGaps, type CoverageGap } from './body-cases.js';
 import { paramCasesDetailed, sendable } from './param-cases.js';
-import { errorPlan } from './error-cases.js';
+import { checkAuthConfig, errorPlan } from './error-cases.js';
 import { collectionGaps, resolveCollection } from './collection.js';
+import { bodyVariants as variantsOf, type BodyVariant } from './variants.js';
 import { collectionStrategy, planCollectionTests } from './collection-tests.js';
 import { tsFixtureModule, fixtureModule, type CollectionInput } from './collection-render.js';
 import type { LoadedFixture } from '../fixtures/fixtures.js';
@@ -244,6 +245,9 @@ export async function generate(spec: LoadedSpec, ops: Operation[], o: GenerateOp
       if (op && !chainBlock.has(op)) chainBlock.set(op, c.question);
     }
   }
+  // Reviewed deps "auth": a broken section is not used; its problems are gaps of the operations it names.
+  const authErrors = checkAuthConfig(o.deps?.auth, ops);
+  const authOk = !authErrors.length;
   // Reviewed collection mappings (deps "collection"): checked strictly against the spec; errors become gaps.
   const collectionOf = new Map<Operation, { plan: ChainPlan; c: NonNullable<ReturnType<typeof resolveCollection>['collection']> }>();
   const collectionErrors = new Map<string, CoverageGap[]>();
@@ -369,7 +373,7 @@ export async function generate(spec: LoadedSpec, ops: Operation[], o: GenerateOp
     const errRole = !plan ? undefined : plan.chain.create === op ? 'create' : plan.chain.read === op ? 'read' : plan.chain.update === op ? 'update' : plan.chain.delete === op ? 'delete' : undefined;
     const firstWith405 = op.responses.some((r) => r.status === '405') && !paths405.has(op.path);
     if (firstWith405) paths405.add(op.path);
-    const errors = op.deprecated ? { gaps: [] } : errorPlan({ doc: spec.doc, op, ops, chain: plan?.chain, role: errRole, hasUpdatePayload: plan?.updatePayload !== undefined, reachable, firstWith405 });
+    const errors = op.deprecated ? { gaps: [] } : errorPlan({ doc: spec.doc, op, ops, chain: plan?.chain, role: errRole, hasUpdatePayload: plan?.updatePayload !== undefined, reachable, firstWith405, auth: authOk ? o.deps?.auth : undefined });
     const input: SuiteInput = { op, refs, plan, helpers, positive: !posReason, validation: rej.validation, bodyCases: bCases, paramCases: qCases, notFound, unauthorized, errors, business: (o.scenarios ?? []).filter((b) => b.primaryOp === op) };
     let collPlan: ReturnType<typeof planCollectionTests> | undefined;
     if (coll && input.positive && !op.deprecated) {
@@ -380,16 +384,31 @@ export async function generate(spec: LoadedSpec, ops: Operation[], o: GenerateOp
     const fixture = input.positive && !op.deprecated ? o.fixtures?.find((f) => f.op === op) : undefined;
     if (fixture) input.fixture = fixture;
     const fixtureGaps: CoverageGap[] = (o.fixtureErrors ?? []).filter((e) => e.operationId && e.operationId === op.operationId).flatMap((e) => e.errors.map((reason) => ({ code: 'INVALID_REVIEWED_CONFIG', location: 'operation', reason: `${e.file}: ${reason}` })));
-    const collGaps: CoverageGap[] = [...fixtureGaps, ...(collectionErrors.get(op.key) ?? []), ...(collPlan?.gaps ?? []), ...(coll ? [] : collectionGaps(spec.doc, op, false))];
+    const authGaps: CoverageGap[] = authErrors.filter((e) => !!op.operationId && e.includes(`"${op.operationId}"`) || (op === ops[0] && !/operation "/.test(e))).map((reason) => ({ code: 'INVALID_REVIEWED_CONFIG', location: 'request.security', reason }));
+    const collGaps: CoverageGap[] = [...authGaps, ...fixtureGaps, ...(collectionErrors.get(op.key) ?? []), ...(collPlan?.gaps ?? []), ...(coll ? [] : collectionGaps(spec.doc, op, false))];
+    // Positive body variants of a create / update with a confirmed chain (written with cleanup only).
+    let variantResult: { variants: BodyVariant[]; gaps: CoverageGap[] } | undefined;
+    if (plan && input.positive && !op.deprecated && (plan.chain.create === op || (plan.chain.update === op && plan.updatePayload !== undefined))) {
+      const content = resolvePointer(spec.doc, `${operationPointer(op)}/requestBody`).node?.content ?? {};
+      const key = Object.keys(content).find((k) => k.includes('json'));
+      const value = plan.chain.create === op ? plan.createPayload : plan.updatePayload;
+      if (key && value !== undefined) {
+        // Through any $ref (requestBodies, schemas): the pointer ajv compiles must exist as written.
+        const pointer = resolvePointer(spec.doc, `${operationPointer(op)}/requestBody/content/${key.replace(/~/g, '~0').replace(/\//g, '~1')}/schema`).pointer;
+        variantResult = variantsOf(spec.doc, pointer, content[key].schema, value, plan.chain.create === op ? (plan.chain.fill ?? []).map((f) => f.field) : []);
+        if (variantResult.variants.length) input.bodyVariants = variantResult.variants;
+      }
+    }
     const counts = suiteCounts(input);
     const variants = input.positive && !plan && op.method === 'get' ? queryVariants(op) : [];
-    const ids = assignCaseIds({ op, chain: plan?.chain, positive: input.positive, bodyCases: bCases, paramCases: qCases, notFound, unauthorized, scenarios: scenarioCases(input), queryVariants: variants, errors, business: input.business, collection: collPlan, collectionChain: coll?.plan.chain, fixture: !!fixture }, uidOf);
+    const ids = assignCaseIds({ op, chain: plan?.chain, positive: input.positive, bodyCases: bCases, paramCases: qCases, notFound, unauthorized, scenarios: scenarioCases(input), queryVariants: variants, errors, business: input.business, collection: collPlan, collectionChain: coll?.plan.chain, fixture: !!fixture, bodyVariants: input.bodyVariants }, uidOf);
     input.ids = ids;
     // Explicit per-operation coverage and gaps, independent of test execution status.
     // oneOf / anyOf in a payload that is sent: the other branches are reported (never dropped silently).
     const payloadSchema = plan && (plan.chain.create === op || plan.chain.update === op) ? jsonBodySchema(spec, op) : undefined;
     const payloadValue = plan?.chain.create === op ? plan.createPayload : plan?.chain.update === op ? plan.updatePayload : undefined;
-    const variantGaps: CoverageGap[] = payloadSchema && payloadValue !== undefined ? compositionGaps(spec.doc, payloadSchema, payloadValue) : [];
+    // With body variants, a oneOf / anyOf branch is a gap only when it could not be sent (variants.ts says why).
+    const variantGaps: CoverageGap[] = variantResult ? variantResult.gaps : payloadSchema && payloadValue !== undefined ? compositionGaps(spec.doc, payloadSchema, payloadValue) : [];
     // Response bodies the validator cannot check: said explicitly, never passed silently.
     const responseGaps: CoverageGap[] = op.responses.flatMap((resp) =>
       resp.contentTypes.flatMap((ct): CoverageGap[] => {
@@ -418,7 +437,7 @@ export async function generate(spec: LoadedSpec, ops: Operation[], o: GenerateOp
         contract: { generated: counts.contract, missingCode: counts.contract ? null : pCode ?? 'NO_DOCUMENTED_REJECTION' },
         scenario: { generated: counts.scenario, missingCode: counts.scenario ? null : plan ? pCode ?? 'UNCONFIRMED_BUSINESS_RULE' : 'UNCONFIRMED_BUSINESS_RULE' },
       },
-      uncheckedStatuses: uncheckedStatuses(op, { positive: input.positive, notFound: !!notFound, unauthorized, validation: rej.validation, invalidInput: bCases.length + qCases.length > 0, errors, deleteTwice: scn.deleteTwice }),
+      uncheckedStatuses: uncheckedStatuses(op, { positive: input.positive, notFound: !!notFound, unauthorized, validation: rej.validation, invalidInput: bCases.length + qCases.length > 0, errors, deleteTwice: scn.deleteTwice, positiveCode: pCode, reachable }),
       uncheckedRequestContentTypes: req.contentTypes,
       uncheckedSecurityAlternatives: req.securityAlternatives,
     });

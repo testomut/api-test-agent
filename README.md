@@ -145,6 +145,8 @@ Coverage is reported, never implied. The full keyword-by-keyword table is in [do
 
 **Needs your confirmation (deps or scenarios file):** CRUD chains and cleanup, 409 conflicts (`conflictOn`), fields a create returns as sent (`echoes`), values taken from existing data (`fill`), collection semantics (`collection`: identifier, persisted fields and their comparison policy, filters, sorts, paging, uniqueness, eventual consistency), approved fixtures (`--fixtures`), and every other business flow (`--scenarios`): state transitions, parent → child, login / refresh.
 
+**Also derived, with a confirmed chain:** positive body variants: only the required fields, and every other `oneOf` / `anyOf` branch, each validated before it is sent and cleaned up after. **With a reviewed deps `auth` section:** 403 for an account that must be refused and 401 with an expired credential (credentials from environment variables only).
+
 **Never generated (reported as gaps):** 403 without a reviewed role setup, 429, a 405 that would need an unsafe method, oneOf / anyOf branches other than the one sent, rules that cannot be broken without breaking another, media types other than JSON / text, and anything the spec does not state.
 
 ## Collections, fixtures and maintenance

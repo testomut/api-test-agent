@@ -227,7 +227,7 @@ function resolve(doc: any, pointer: string, depth = 0): { node: any; pointer: st
 }
 
 /** OpenAPI 3.0 `nullable: true` → JSON Schema `type: [T, "null"]`. */
-function nullableToJsonSchema(node: any): any {
+export function nullableToJsonSchema(node: any): any {
   if (Array.isArray(node)) return node.map(nullableToJsonSchema);
   if (!node || typeof node !== 'object') return node;
   for (const k of Object.keys(node)) node[k] = nullableToJsonSchema(node[k]);

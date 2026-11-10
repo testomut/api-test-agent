@@ -38,7 +38,7 @@ describe('stage 7: valid limits, sampler fixes, confirmed functional assertions'
     expect((sampleFromSchema({}, { type: 'integer', minimum: 1, maximum: 3, multipleOf: 5 }) as any).ok).toBe(false);
   });
 
-  it('generated: one accepted-value test per limit, echoes from the deps file, the uncovered oneOf variant as a gap; TS and Python agree', async () => {
+  it('generated: one accepted-value test per limit, echoes from the deps file, the other oneOf branch as its own test; TS and Python agree', async () => {
     const out = async (lang: 'typescript' | 'python') => {
       const dir = await mkdtemp(join(tmpdir(), 'ata-fv-'));
       const res = await generate(spec, ops, { outDir: dir, version: 'test', lang, deps, maxCases: 500 });
@@ -57,7 +57,9 @@ describe('stage 7: valid limits, sampler fixes, confirmed functional assertions'
     expect(await py.read('orders/post/test_functional.py')).toContain(`assert read_pointer(res.json(), "/total") == payload["total"], "total returned as sent"`);
 
     const cov = ts.res.coverage.find((c) => c.operation === 'POST /orders')!;
-    expect(cov.gaps).toContainEqual(expect.objectContaining({ code: 'UNCOVERED_VARIANT', location: 'request.body#/payment' }));
+    // The other oneOf branch is sent by its own test (variants.ts): no longer a gap.
+    expect(cov.gaps.filter((g) => g.code === 'UNCOVERED_VARIANT')).toEqual([]);
+    expect(Object.keys(ts.reg.cases).some((id) => id.endsWith(':functional:positive:request.body#/payment/@1:variant'))).toBe(true);
     const compiled = spawnSync(findPython(), ['-m', 'py_compile', ...py.res.files.filter((f) => f.endsWith('.py'))], { encoding: 'utf8' });
     if (!compiled.error) expect(compiled.status, compiled.stderr).toBe(0);
   });

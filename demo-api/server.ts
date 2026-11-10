@@ -51,6 +51,8 @@ function validateItem(body: unknown, partial: boolean): string | Partial<Item> {
   const extra = Object.keys(b).filter((k) => !allowed.includes(k));
   if (extra.length) return `Unknown fields: ${extra.join(', ')}`;
   if (partial && Object.keys(b).length === 0) return 'At least one field is required';
+  // DEMO_FAULT=require-optional: a documented optional field is required (tags on create, name on update).
+  if (process.env.DEMO_FAULT === 'require-optional' && !(partial ? 'name' in b : 'tags' in b)) return partial ? 'name is required' : 'tags is required';
   const out: Partial<Item> = {};
   if ('name' in b || !partial) {
     if (typeof b.name !== 'string' || b.name.length < 1 || b.name.length > 100) return 'name must be a string of 1-100 characters';
@@ -166,6 +168,11 @@ const DEMO_PASSWORD = process.env.DEMO_PASSWORD ?? 'demo-password';
 const TOKEN_TTL_SEC = Number(process.env.DEMO_TOKEN_TTL ?? 300);
 const sessions = new Map<string, { username: string; expiresAt: number }>();
 const accounts = new Map<string, string>([[DEMO_USER, DEMO_PASSWORD]]);
+// Fixed sessions for the reviewed auth cases (demo-api/deps.json "auth"): an expired token of the demo user, and a
+// valid token of a suspended account, which /me must refuse with 403.
+const SUSPENDED = new Set(['suspended']);
+sessions.set('demo-expired-token', { username: DEMO_USER, expiresAt: 0 });
+sessions.set('demo-suspended-token', { username: 'suspended', expiresAt: Number.MAX_SAFE_INTEGER });
 
 // Self-registration for API_TEST_ACCOUNT=new. Not in the spec on purpose: it is configured
 // through API_REGISTER / API_REGISTER_BODY, like on APIs whose spec omits it.
@@ -195,7 +202,9 @@ route('/me', {
   GET: (req, res) => {
     const token = (req.headers.authorization ?? '').replace(/^Bearer\s+/i, '');
     const s = sessions.get(token);
-    if (!s || s.expiresAt < Date.now()) return error(res, 401, 'Unauthorized');
+    // DEMO_FAULT=accept-expired / ignore-suspension: the check is missing (the reviewed auth cases must notice).
+    if (!s || (s.expiresAt < Date.now() && process.env.DEMO_FAULT !== 'accept-expired')) return error(res, 401, 'Unauthorized');
+    if (SUSPENDED.has(s.username) && process.env.DEMO_FAULT !== 'ignore-suspension') return error(res, 403, 'Account suspended');
     send(res, 200, { username: s.username });
   },
 });

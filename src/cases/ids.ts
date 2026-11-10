@@ -15,9 +15,12 @@ export type Polarity = 'positive' | 'negative';
  * `invalid-credentials`, `method-not-allowed`, `precondition-failed`.
  * v3 adds functional/positive collection rules: `collection-contains`, `unique`, `fixture` (on "operation" /
  * response.body), `filter`, `pagination` (on the query parameter), `sort` (request.query#/<param>/<value>).
+ * v4 adds functional/positive request-body variants: `optional-omitted` (on "request.body#": only the required
+ * fields are sent) and `variant` (request.body#<pointer>/@<n>: branch n of the oneOf / anyOf at that pointer), and
+ * functional/negative `expired-credentials` (request.security; `forbidden` exists since v1).
  * Registries of older versions stay readable.
  */
-export const CASE_RULE_VOCABULARY_VERSION = 3;
+export const CASE_RULE_VOCABULARY_VERSION = 4;
 
 const CONSTRAINT_RULES = [
   'required', 'nullable', 'type', 'format', 'pattern', 'minimum', 'maximum', 'exclusiveMinimum', 'exclusiveMaximum', 'multipleOf',
@@ -26,8 +29,8 @@ const CONSTRAINT_RULES = [
 
 /** Built-in vocabulary v1, by suiteType/polarity. */
 export const VOCABULARY_V1: Record<string, readonly string[]> = {
-  'functional/positive': ['documented-success', 'accepted-value', 'collection-contains', 'filter', 'sort', 'pagination', 'unique', 'fixture'],
-  'functional/negative': ['not-found', 'unauthorized', 'forbidden', 'invalid-credentials', 'method-not-allowed', 'precondition-failed'],
+  'functional/positive': ['documented-success', 'accepted-value', 'collection-contains', 'filter', 'sort', 'pagination', 'unique', 'fixture', 'optional-omitted', 'variant'],
+  'functional/negative': ['not-found', 'unauthorized', 'forbidden', 'invalid-credentials', 'expired-credentials', 'method-not-allowed', 'precondition-failed'],
   'contract/positive': ['documented', 'schema'],
   'contract/negative': [...CONSTRAINT_RULES, 'content-type'],
   'scenario/positive': ['crud', 'business-rule'],
@@ -122,6 +125,8 @@ export function checkCombination(p: CaseParts): CaseIdError | undefined {
   const subject = (why: string): CaseIdError => ({ code: 'INVALID_CASE_SUBJECT', reason: why });
   switch (`${p.suiteType}/${p.polarity}`) {
     case 'functional/positive':
+      if (p.rule === 'optional-omitted') return loc === 'request.body#' ? undefined : bad('optional-omitted is checked on "request.body#" (the whole body)');
+      if (p.rule === 'variant') return /^request\.body#(\/[^/]*)*\/@\d+$/.test(loc) ? undefined : bad('variant names a body pointer and a branch: request.body#<pointer>/@<n>');
       if (p.rule === 'collection-contains' || p.rule === 'fixture') return loc === 'operation' ? undefined : bad(`${p.rule} is checked on "operation"`);
       if (p.rule === 'unique') return loc.startsWith('response.body#') ? undefined : bad('unique names a response body field');
       if (p.rule === 'filter' || p.rule === 'pagination') return /^request\.query#\/[^/]*$/.test(loc) ? undefined : bad(`${p.rule} names a query parameter`);

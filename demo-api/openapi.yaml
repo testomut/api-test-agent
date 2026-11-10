@@ -266,6 +266,12 @@ paths:
                     type: string
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: The account is suspended
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
   /admin/reset:
     post:
       operationId: resetInventory

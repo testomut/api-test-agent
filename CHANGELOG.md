@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **Coverage depth** (docs/SUPPORT_MATRIX.md):
+  - positive request-body variants for create / update of a confirmed chain: only the required fields, and every other `oneOf` / `anyOf` branch with a valid sample; each checked with ajv before a test is written, cleanup in `finally`; closes `UNCOVERED_VARIANT` where a branch can be sent;
+  - reviewed auth cases from a deps `auth` section (environment variable names only): 403 for the operations named (`auth.forbidden`), 401 with an expired credential (`auth.expired`); skipped with the reason when the variable is unset; mismatches with the spec are `INVALID_REVIEWED_CONFIG`;
+  - unchecked-status codes state the actual reason (`MISSING_CLEANUP` for an operation no request is sent to, the success call's blocking reason for its status) instead of `NO_DOCUMENTED_REJECTION` / `UNCONFIRMED_BUSINESS_RULE`;
+  - case ID vocabulary v4: `optional-omitted`, `variant`, `expired-credentials`;
+  - CI quality gates (`scripts/coverage-summary.ts`): reviewed baselines of active case IDs and exact gaps (`ci/coverage-baseline.*.json`), TypeScript / Python parity, guaranteed cleanup of write tests, a per-operation coverage summary as an artifact;
+  - demo API: a documented 403 on `GET /me` (suspended account), fixed expired / suspended sessions for the reviewed auth cases, and three more fault modes (`require-optional`, `accept-expired`, `ignore-suspension`); fault injection runs over `items` and `me`: 9/9 in TypeScript and Python (the previous generator: 7/9 on the same spec).
 - **Collection testing** (docs/SUPPORT_MATRIX.md, "Collections"):
   - reviewed deps `collection` mapping, checked strictly against the spec (`INVALID_REVIEWED_CONFIG` gap on a mismatch);
   - strategy A (create & verify): controlled datasets with a unique marker in an isolating filter, cleanup in `finally`; strategy C (read-only) with explicit skips; strategy recorded per list operation in `coverage-gaps.json`;

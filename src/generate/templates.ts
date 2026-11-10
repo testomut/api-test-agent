@@ -9,6 +9,8 @@ import { varsIn, type ResolvedScenario, type ResolvedStep } from '../scenarios/d
 import { boundaryValues } from './boundaries.js';
 import { tsCollectionImports, tsCollectionPrelude, tsCollectionTests, tsFixtureImport, tsFixtureTest, tsLifecycle, type CollectionInput } from './collection-render.js';
 import type { LoadedFixture } from '../fixtures/fixtures.js';
+import type { BodyVariant } from './variants.js';
+import { tsVariantImports, tsVariantTests } from './variant-render.js';
 
 /** Payloads and assumptions for one confirmed resource chain. */
 export interface ChainPlan {
@@ -234,6 +236,8 @@ export interface SuiteInput {
   collection?: CollectionInput;
   /** An approved fixture of this list operation (strategy B). */
   fixture?: LoadedFixture;
+  /** Positive request-body variants of a create / update (only required fields, other oneOf / anyOf branches). */
+  bodyVariants?: BodyVariant[];
 }
 
 export type Role = 'create' | 'read' | 'update' | 'delete';
@@ -263,12 +267,12 @@ export function suiteCounts(s: SuiteInput): Record<SuiteType, number> {
   const sc = scenarioCases(s);
   const e = s.errors;
   const base = {
-    functional: (s.positive ? 1 : 0) + extra + (s.positive && !s.plan ? queryVariants(s.op).length : 0) + (e?.invalidCredentials ? 1 : 0) + (e?.methodNotAllowed ? 1 : 0) + (e?.preconditionFailed && s.plan ? 1 : 0),
+    functional: (s.positive ? 1 : 0) + extra + (s.positive && !s.plan ? queryVariants(s.op).length : 0) + (e?.invalidCredentials ? 1 : 0) + (e?.envCredentials?.length ?? 0) + (e?.methodNotAllowed ? 1 : 0) + (e?.preconditionFailed && s.plan ? 1 : 0),
     contract: (s.positive ? 1 : 0) + extra + s.bodyCases.length + s.paramCases.length + (e?.unsupportedMediaType && s.plan ? 1 : 0),
   };
   return {
     contract: base.contract,
-    functional: base.functional + (s.collection?.plan.tests.length ?? 0) + (s.fixture ? 1 : 0),
+    functional: base.functional + (s.collection?.plan.tests.length ?? 0) + (s.fixture ? 1 : 0) + (s.bodyVariants?.length ?? 0),
     scenario: (sc.createRead ? 1 : 0) + (sc.updateRead ? 1 : 0) + (sc.deleteGone ? 1 : 0) + (sc.conflict ? 1 : 0) + (sc.deleteTwice ? 1 : 0) + (s.business?.length ?? 0) + (s.collection?.plan.lifecycle ? 1 : 0),
   };
 }
@@ -366,10 +370,10 @@ export function renderFunctional(s: SuiteInput, meta: Meta): string {
   const chain = plan?.chain;
   const role = roleOf(op, plan);
   const fx = chain ? 'api' : apiFixture(op);
-  const usesHelpers = (s.positive && !!role) || notFoundNeedsHelpers(s) || !!(s.errors?.preconditionFailed && plan) || !!s.collection?.plan.tests.length;
-  const errorStatus = !!(s.errors?.invalidCredentials || s.errors?.methodNotAllowed || s.errors?.preconditionFailed);
+  const usesHelpers = (s.positive && !!role) || notFoundNeedsHelpers(s) || !!(s.errors?.preconditionFailed && plan) || !!s.collection?.plan.tests.length || !!s.bodyVariants?.length;
+  const errorStatus = !!(s.errors?.invalidCredentials || s.errors?.envCredentials?.length || s.errors?.methodNotAllowed || s.errors?.preconditionFailed);
   const coll = s.collection?.plan.tests.length ? s.collection : undefined;
-  const names = [...new Set(['expect', ...(s.positive && (role === 'create' || role === 'read') ? ['readPointer'] : []), ...(s.notFound || s.unauthorized || errorStatus ? ['expectStatus'] : []), ...(coll ? tsCollectionImports('functional') : []), ...(s.fixture ? ['itemsOf', 'expectMatchesFixture'] : [])])];
+  const names = [...new Set(['expect', ...(s.positive && (role === 'create' || role === 'read') ? ['readPointer'] : []), ...(s.notFound || s.unauthorized || errorStatus ? ['expectStatus'] : []), ...(coll ? tsCollectionImports('functional') : []), ...(s.fixture ? ['itemsOf', 'expectMatchesFixture'] : []), ...tsVariantImports(s)])];
   const L = suiteHeader('functional', s, meta, ['Checks the behavior of the endpoint: status and result. The response schema is checked in contract.spec.ts.', ...(coll ? ['Collection checks run on records the tests create (controlled datasets) or, where marked read-only, on existing data.'] : [])]);
   L.push(...imports(s, names, usesHelpers), ...(s.fixture ? [tsFixtureImport(s.fixture)] : []), ...(coll ? ['', ...tsCollectionPrelude(s, coll)] : ['']), `test.describe('${op.key} · functional', { tag: '@functional' }, () => {`);
 
@@ -419,6 +423,7 @@ export function renderFunctional(s: SuiteInput, meta: Meta): string {
   L.push(...errorTests(s));
   if (coll) L.push(...tsCollectionTests(s, coll));
   if (s.fixture) L.push(...tsFixtureTest(s, s.fixture));
+  if (s.bodyVariants?.length) L.push(...tsVariantTests(s));
   return close(L);
 }
 
@@ -490,6 +495,27 @@ function errorTests(s: SuiteInput): string[] {
       '',
     );
   }
+  (e.envCredentials ?? []).forEach((c, n) => {
+    // The credential comes from the environment at run time (a reviewed deps "auth" entry names the variable).
+    const params = { ...req.params };
+    const headers = { ...req.headers };
+    const cred = `${q(c.prefix)} + credential`;
+    const opts = [
+      c.query ? `params: { ...${JSON.stringify(params)}, ${q(c.query)}: ${cred} }` : Object.keys(params).length ? `params: ${JSON.stringify(params)}` : '',
+      c.header ? `headers: { ...${JSON.stringify(headers)}, ${q(c.header)}: ${cred} }` : Object.keys(headers).length ? `headers: ${JSON.stringify(headers)}` : '',
+    ].filter(Boolean).join(', ');
+    const args = c.knownPath ? pathArgs(op, ref) : pathArgs(op, ref, plan?.chain.param, "'unused'");
+    const what = c.kind === 'expired' ? 'an expired credential' : 'an account that must be refused';
+    L.push(
+      `  test(${q(`returns documented ${c.status} for ${what} (${c.env})`)}, ${testOptions('negative', s.ids?.functional.envCredentials?.[n])}, async ({ publicApi }) => {`,
+      `    const credential = process.env.${c.env} ?? '';`,
+      `    test.skip(!credential, ${q(`${c.env} is not set: the reviewed ${c.kind === 'expired' ? 'expired credential (deps auth.expired)' : 'refused account (deps auth.forbidden)'} is not available`)});`,
+      `    const res = await ${apiCall(ref, 'publicApi', args, `{ ${opts} }`)};`,
+      `    expectStatus(res, ['${c.status}'], '${op.method}', ${q(op.path)});`,
+      `  });`,
+      '',
+    );
+  });
   if (e.methodNotAllowed) {
     const path = op.path.replace(/\{([^}]+)\}/g, (_, name) => encodeURIComponent(String(op.params.find((p) => p.in === 'path' && p.name === name)?.knownValue ?? 'unused')));
     // GET is the only method that is safe to send to a route the spec does not define.
@@ -890,6 +916,18 @@ export async function poll<T>(fn: () => Promise<T>, done: (v: T) => boolean, tim
     v = await fn();
   }
   return v;
+}
+
+/** A copy of a payload without the fields at these JSON pointers (array elements by index). */
+export function withoutFields<T>(payload: T, ptrs: string[]): T {
+  const out = structuredClone(payload) as any;
+  for (const ptr of ptrs) {
+    const keys = ptr.split('/').slice(1).map((k) => k.replace(/~1/g, '/').replace(/~0/g, '~'));
+    let node = out;
+    for (const k of keys.slice(0, -1)) node = node == null ? undefined : node[k];
+    if (node && typeof node === 'object') delete node[keys[keys.length - 1]];
+  }
+  return out;
 }
 
 /** A copy of a payload with one field (JSON pointer through objects) set. */

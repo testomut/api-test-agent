@@ -28,7 +28,7 @@ export interface ScenarioDefinition {
 
 export interface SuiteCaseIds {
   /** `variants`: one case per documented query value, in the order of `AssignInput.queryVariants`. */
-  functional: { collection?: string[]; fixture?: string; success?: string; notFound?: string; unauthorized?: string; variants: string[]; invalidCredentials?: string; methodNotAllowed?: string; preconditionFailed?: string };
+  functional: { collection?: string[]; fixture?: string; bodyVariants?: string[]; envCredentials?: string[]; success?: string; notFound?: string; unauthorized?: string; variants: string[]; invalidCredentials?: string; methodNotAllowed?: string; preconditionFailed?: string };
   contract: { success?: string; notFound?: string; unauthorized?: string; body: string[]; params: string[]; unsupportedMediaType?: string };
   scenario: { lifecycle?: string; createRead?: string; updateRead?: string; deleteGone?: string; conflict?: string; deleteTwice?: string; business: string[] };
   /** Every case of this operation, by suite, with metadata for cases.json. */
@@ -58,6 +58,8 @@ export interface AssignInput {
   collectionChain?: CrudChain;
   /** An approved fixture is compared (strategy B). */
   fixture?: boolean;
+  /** Positive request-body variants (one case each, in order). */
+  bodyVariants?: { location: string; kind: string }[];
 }
 
 export function assignCaseIds(s: AssignInput, uidOf: (op: Operation) => string): SuiteCaseIds {
@@ -111,6 +113,7 @@ export function assignCaseIds(s: AssignInput, uidOf: (op: Operation) => string):
 
   // Documented error responses (stage 6).
   const e = s.errors;
+  if (e?.envCredentials?.length) ids.functional.envCredentials = e.envCredentials.map((c) => add('functional', { subjectUid: uid, polarity: 'negative', location: location.security(), rule: c.kind === 'expired' ? 'expired-credentials' : 'forbidden' }));
   if (e?.invalidCredentials) ids.functional.invalidCredentials = add('functional', { subjectUid: uid, polarity: 'negative', location: location.security(), rule: 'invalid-credentials' });
   if (e?.methodNotAllowed) ids.functional.methodNotAllowed = add('functional', { subjectUid: uid, polarity: 'negative', location: location.operation(), rule: 'method-not-allowed' });
   if (e?.preconditionFailed && chain) ids.functional.preconditionFailed = add('functional', { subjectUid: uid, polarity: 'negative', location: location.header(e.preconditionFailed.header), rule: 'precondition-failed' }, rel);
@@ -175,6 +178,7 @@ export function assignCaseIds(s: AssignInput, uidOf: (op: Operation) => string):
       ids.scenario.lifecycle = add('scenario', { subjectUid: sUid, polarity: 'positive', location: location.lifecycle(), rule: 'crud' }, { relatedOperationUids: [uidOf(ch.create), uidOf(ch.update), uidOf(ch.delete)] });
     }
   }
+  if (s.bodyVariants?.length) ids.functional.bodyVariants = s.bodyVariants.map((v) => add('functional', { subjectUid: uid, polarity: 'positive', location: v.location, rule: v.kind }, rel));
   if (s.fixture) ids.functional.fixture = add('functional', { subjectUid: uid, polarity: 'positive', location: location.operation(), rule: 'fixture' });
   // Reviewed business scenarios: identity from the external ID (never from the title or the steps).
   for (const sc of s.business ?? []) {
