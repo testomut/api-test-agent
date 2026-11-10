@@ -17,13 +17,15 @@ import { paramCasesDetailed, sendable } from './param-cases.js';
 import { checkAuthConfig, errorPlan } from './error-cases.js';
 import { collectionGaps, resolveCollection } from './collection.js';
 import { bodyVariants as variantsOf, type BodyVariant } from './variants.js';
+import { paramProbes } from './probes.js';
+import { encodeSegment, location } from '../cases/ids.js';
 import { collectionStrategy, planCollectionTests } from './collection-tests.js';
 import { tsFixtureModule, fixtureModule, type CollectionInput } from './collection-render.js';
 import type { LoadedFixture } from '../fixtures/fixtures.js';
 import { positiveCode, uncheckedRequest, uncheckedStatuses } from './coverage.js';
 import type { ResolvedScenario } from '../scenarios/dsl.js';
 import { bodyCases, documentedRejections, nonexistentIdExpr, type NegCase } from './negative.js';
-import { CONTRACT_ASSERT, SUITE_TYPES, TS_FILES, operationFolder, queryVariants, renderContract, renderFunctional, renderResourceHelpers, renderScenarios, scenarioCases, suiteCounts, type ChainPlan, type Meta, type SuiteInput, type SuiteType } from './templates.js';
+import { CONTRACT_ASSERT, MAX_VALUES_PER_OPERATION, MAX_VALUES_PER_PARAM, queryVariantsDetailed, SUITE_TYPES, TS_FILES, operationFolder, queryVariants, renderContract, renderFunctional, renderResourceHelpers, renderScenarios, scenarioCases, suiteCounts, type ChainPlan, type Meta, type SuiteInput, type SuiteType } from './templates.js';
 import { API_BASE, buildApiIndex, renderApiBaseClass, renderApiChildClass, renderApis } from './api-objects.js';
 import { PY_FILES, pyName, renderConftest, renderPyContract, renderPyFunctional, renderPyResource, renderPyScenarios, resourceModule } from './python.js';
 
@@ -69,8 +71,22 @@ export interface GenerateResult {
   coverage: Coverage[];
   /** Test data the generated cleanup could not remove during --run (it stays on the target). */
   cleanupFailures: CleanupFailure[];
+  /** Exploratory probe outcomes of a --run: observations, never confirmed defects. */
+  exploratory?: ExploratoryObservation[];
   /** After --run: every physical test has its own registered case ID. */
   caseIdCheck?: CaseIdCheck;
+}
+
+export interface ExploratoryObservation {
+  caseId?: string;
+  operation: string;
+  parameter: string;
+  probe: string;
+  value: string | null;
+  status: number;
+  documented: boolean;
+  contract: string;
+  serverError: boolean;
 }
 
 export interface CleanupFailure {
@@ -251,12 +267,12 @@ export async function generate(spec: LoadedSpec, ops: Operation[], o: GenerateOp
   // Reviewed collection mappings (deps "collection"): checked strictly against the spec; errors become gaps.
   const collectionOf = new Map<Operation, { plan: ChainPlan; c: NonNullable<ReturnType<typeof resolveCollection>['collection']> }>();
   const collectionErrors = new Map<string, CoverageGap[]>();
-  for (const chain of chains) {
-    if (!chain.collection) continue;
-    const r = resolveCollection(spec.doc, ops, chain.collection);
-    const key = ops.find((x) => x.operationId === chain.collection!.operationId)?.key ?? '';
+  for (const chain of chains) for (const cfg of chain.collections ?? []) {
+    const r = resolveCollection(spec.doc, ops, cfg);
+    const key = ops.find((x) => x.operationId === cfg.operationId)?.key ?? '';
     const p = plans.find((x) => x.chain === chain);
-    if (r.collection && p) collectionOf.set(r.collection.op, { plan: p, c: r.collection });
+    if (r.collection && p && collectionOf.has(r.collection.op)) collectionErrors.set(key, [...(collectionErrors.get(key) ?? []), { code: 'INVALID_REVIEWED_CONFIG', location: 'operation', reason: `collection: ${key} is mapped twice in the deps file` }]);
+    else if (r.collection && p) collectionOf.set(r.collection.op, { plan: p, c: r.collection });
     else {
       const gaps: CoverageGap[] = r.errors.map((reason) => ({ code: 'INVALID_REVIEWED_CONFIG', location: 'operation', reason }));
       if (r.collection && !p) gaps.push({ code: 'MISSING_CLEANUP', location: 'operation', reason: `collection of ${chain.name}: the chain is blocked, so no collection tests are generated` });
@@ -399,9 +415,15 @@ export async function generate(spec: LoadedSpec, ops: Operation[], o: GenerateOp
         if (variantResult.variants.length) input.bodyVariants = variantResult.variants;
       }
     }
+    // Exploratory query probes: recorded, never asserted (src/generate/probes.ts).
+    const probed = op.deprecated ? { probes: [], gaps: [] } : paramProbes(op, qCases);
+    if (input.positive && !plan && op.method === 'get') {
+      for (const d of queryVariantsDetailed(op).dropped) probed.gaps.push({ code: 'CASE_LIMIT_REACHED', location: `${location.query(d.name)}/${encodeSegment(String(d.value))}`, rule: 'accepted-value', reason: `more than ${MAX_VALUES_PER_PARAM} values of a parameter or ${MAX_VALUES_PER_OPERATION} of an operation: ${d.name}=${String(d.value)} is not sent` });
+    }
+    if (probed.probes.length) input.probes = probed.probes;
     const counts = suiteCounts(input);
     const variants = input.positive && !plan && op.method === 'get' ? queryVariants(op) : [];
-    const ids = assignCaseIds({ op, chain: plan?.chain, positive: input.positive, bodyCases: bCases, paramCases: qCases, notFound, unauthorized, scenarios: scenarioCases(input), queryVariants: variants, errors, business: input.business, collection: collPlan, collectionChain: coll?.plan.chain, fixture: !!fixture, bodyVariants: input.bodyVariants }, uidOf);
+    const ids = assignCaseIds({ op, chain: plan?.chain, positive: input.positive, bodyCases: bCases, paramCases: qCases, notFound, unauthorized, scenarios: scenarioCases(input), queryVariants: variants, errors, business: input.business, collection: collPlan, collectionChain: coll?.plan.chain, fixture: !!fixture, bodyVariants: input.bodyVariants, probes: input.probes }, uidOf);
     input.ids = ids;
     // Explicit per-operation coverage and gaps, independent of test execution status.
     // oneOf / anyOf in a payload that is sent: the other branches are reported (never dropped silently).
@@ -429,7 +451,7 @@ export async function generate(spec: LoadedSpec, ops: Operation[], o: GenerateOp
       positiveBlockedCode: pCode,
       negativeGaps: why,
       lifecycle: plan ? plan.chain.name : null,
-      gaps: [...bodyGaps, ...errors.gaps, ...variantGaps, ...responseGaps, ...collGaps],
+      gaps: [...bodyGaps, ...errors.gaps, ...variantGaps, ...responseGaps, ...collGaps, ...probed.gaps],
       ...(coll || fixture || collGaps.length ? { collection: { ...collectionStrategy(collPlan, collGaps.map((g) => g.reason), !!fixture), tests: [...(collPlan?.tests ?? []).map((t) => ({ kind: t.kind, mode: t.mode })), ...(fixture ? [{ kind: 'fixture', mode: 'approved' }] : [])] } } : {}),
       ...(bodyStats ? { bodyCases: bodyStats } : {}),
       suites: {
@@ -627,26 +649,31 @@ export async function runGenerated(result: GenerateResult, env: { baseUrl: strin
   if (!specs.length) return;
   // The generated cleanup appends one JSON line per record it could not remove.
   const cleanupLog = resolve(outDir, 'cleanup-failures.jsonl');
+  const exploratoryLog = resolve(outDir, 'exploratory.jsonl');
   await mkdir(dirname(cleanupLog), { recursive: true });
   await rm(cleanupLog, { force: true });
+  await rm(exploratoryLog, { force: true });
   const casesOut = resolve(outDir, 'collected-cases.jsonl');
   await rm(casesOut, { force: true });
-  const runEnv = { ...process.env, API_BASE_URL: env.baseUrl, API_AGENT_CLEANUP_LOG: cleanupLog, API_AGENT_CASES_OUT: casesOut };
+  const runEnv = { ...process.env, API_BASE_URL: env.baseUrl, API_AGENT_CLEANUP_LOG: cleanupLog, API_AGENT_EXPLORATORY_LOG: exploratoryLog, API_AGENT_CASES_OUT: casesOut };
   await (lang === 'python' ? runPytest(specs, runEnv, outDir) : runPlaywright(specs, runEnv, outDir));
   // Every physical test that ran (or was collected) must carry its own case ID from the registry.
   const collected = lang === 'python' ? await readCollected(casesOut) : await playwrightCaseIds(resolve(outDir, 'playwright-results.json'));
   const registryFile = result.files.find((f) => /[\\/]_support[\\/]cases\.json$/.test(f));
   const registered = registryFile && existsSync(registryFile) ? new Set(Object.keys(JSON.parse(await readFile(registryFile, 'utf8')).cases ?? {})) : new Set<string>();
   result.caseIdCheck = checkCaseIds(collected, registered);
-  result.cleanupFailures = existsSync(cleanupLog)
-    ? (await readFile(cleanupLog, 'utf8')).split('\n').filter((l) => l.trim()).flatMap((l) => {
-        try {
-          return [JSON.parse(l) as CleanupFailure];
-        } catch {
-          return [];
-        }
-      })
-    : [];
+  const lines = async <T>(file: string): Promise<T[]> =>
+    existsSync(file)
+      ? (await readFile(file, 'utf8')).split('\n').filter((l) => l.trim()).flatMap((l) => {
+          try {
+            return [JSON.parse(l) as T];
+          } catch {
+            return [];
+          }
+        })
+      : [];
+  result.cleanupFailures = await lines<CleanupFailure>(cleanupLog);
+  result.exploratory = await lines<ExploratoryObservation>(exploratoryLog);
 }
 
 export interface CaseIdCheck {

@@ -59,7 +59,7 @@ describe('stage 2: one case ID per physical test', () => {
     const tsIds = idsIn(await ts.read('items/get/functional.spec.ts')).sort();
     const pyIds = idsIn(await py.read('items/get/test_functional.py')).sort();
     expect(pyIds).toEqual(tsIds);
-    expect(await py.read('items/get/test_functional.py')).toContain('def test_accepts_documented_query_value(api, params):');
+    expect(await py.read('items/get/test_functional.py')).toContain('def test_accepts_documented_query_value(api, contract, params):');
     const compiled = spawnSync(findPython(), ['-m', 'py_compile', join(py.dir, 'items/get/test_functional.py')], { encoding: 'utf8' });
     if (!compiled.error) expect(compiled.status, compiled.stderr).toBe(0);
   });

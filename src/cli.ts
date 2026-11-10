@@ -295,6 +295,10 @@ common(program.command('generate').description('audit, then generate Playwright 
         for (const d of ids.duplicates.slice(0, 10)) log(`  DUPLICATE ${d}`);
         for (const u of ids.unregistered.slice(0, 10)) log(`  UNREGISTERED ${u}`);
       }
+      if (gen.exploratory?.length) {
+        const notable = gen.exploratory.filter((p) => p.serverError || !p.documented);
+        log(`Exploratory probes: ${gen.exploratory.length} recorded (never failing), ${notable.length} with a server error or an undocumented status (see the report)`);
+      }
       if (gen.cleanupFailures.length) {
         log(`WARNING: cleanup could not remove ${gen.cleanupFailures.length} record(s); they stay on ${o.baseUrl}:`);
         for (const line of cleanupSummary(gen.cleanupFailures)) log(`  LEFT      ${line}`);
@@ -312,6 +316,7 @@ common(program.command('generate').description('audit, then generate Playwright 
         files: gen.files.map((f) => resolve(f).replace(process.cwd() + (process.platform === 'win32' ? '\\' : '/'), '').replace(/\\/g, '/')),
         scenarios: gen.scenarios.map(({ name, status, reason, operations }) => ({ name, status, reason, operations })),
         cleanupFailures: gen.cleanupFailures,
+        ...(gen.exploratory?.length ? { exploratory: gen.exploratory } : {}),
         ...(gen.caseIdCheck ? { caseIdCheck: gen.caseIdCheck } : {}),
       },
     });
@@ -650,7 +655,7 @@ async function capture(specArg: string | undefined, o: CaptureCli) {
     query: Object.fromEntries(o.query.map((q) => [q.split('=')[0], q.split('=').slice(1).join('=')])),
     ...(o.items !== undefined ? { items: o.items } : {}),
     ...(o.id ? { id: o.id } : {}),
-    collections: (deps?.scenarios ?? []).map((s: any) => s.collection).filter(Boolean),
+    collections: (deps?.scenarios ?? []).flatMap((s: any) => [s.collection, ...(Array.isArray(s.collections) ? s.collections : [])]).filter(Boolean),
     headers: process.env.API_TOKEN ? { authorization: `Bearer ${process.env.API_TOKEN}` } : {},
   });
   log(`Candidate: ${r.candidateFile} (${r.candidate.expected.length} element(s)); approved fixtures are never written.`);

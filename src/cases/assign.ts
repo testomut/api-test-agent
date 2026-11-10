@@ -29,7 +29,7 @@ export interface ScenarioDefinition {
 export interface SuiteCaseIds {
   /** `variants`: one case per documented query value, in the order of `AssignInput.queryVariants`. */
   functional: { collection?: string[]; fixture?: string; bodyVariants?: string[]; envCredentials?: string[]; success?: string; notFound?: string; unauthorized?: string; variants: string[]; invalidCredentials?: string; methodNotAllowed?: string; preconditionFailed?: string };
-  contract: { success?: string; notFound?: string; unauthorized?: string; body: string[]; params: string[]; unsupportedMediaType?: string };
+  contract: { success?: string; notFound?: string; unauthorized?: string; body: string[]; params: string[]; unsupportedMediaType?: string; probes?: string[] };
   scenario: { lifecycle?: string; createRead?: string; updateRead?: string; deleteGone?: string; conflict?: string; deleteTwice?: string; business: string[] };
   /** Every case of this operation, by suite, with metadata for cases.json. */
   records: Record<'functional' | 'contract' | 'scenario', CaseRecord[]>;
@@ -58,6 +58,8 @@ export interface AssignInput {
   collectionChain?: CrudChain;
   /** An approved fixture is compared (strategy B). */
   fixture?: boolean;
+  /** Exploratory query probes (one case each, in order). */
+  probes?: { location: string }[];
   /** Positive request-body variants (one case each, in order). */
   bodyVariants?: { location: string; kind: string }[];
 }
@@ -107,7 +109,8 @@ export function assignCaseIds(s: AssignInput, uidOf: (op: Operation) => string):
   }
   for (const c of s.paramCases) {
     const t = c.target;
-    const at = t && t.in !== 'body' && t.field ? { query: location.query, header: location.header, cookie: location.cookie, path: location.path }[t.in](t.field) : undefined;
+    const named = t && t.in !== 'body' && t.field ? { query: location.query, header: location.header, cookie: location.cookie, path: location.path }[t.in](t.field) : undefined;
+    const at = named && t && t.in !== 'body' && t.variant ? `${named}/${t.variant}` : named;
     ids.contract.params.push(at ? add('contract', { subjectUid: uid, polarity: 'negative', location: at, rule: t!.rule }) : '');
   }
 
@@ -162,6 +165,8 @@ export function assignCaseIds(s: AssignInput, uidOf: (op: Operation) => string):
         t.kind === 'listed' ? { location: location.operation(), rule: 'collection-contains' }
         : t.kind === 'filter' ? { location: location.query(t.filter!.param), rule: 'filter' }
         : t.kind === 'sort' ? { location: location.paramValue('query', t.sort!.param, t.sort!.value), rule: 'sort' }
+        : t.kind === 'sort-reverse' ? { location: location.paramValue('query', t.sort!.param, t.sort!.value), rule: 'sort-reverse' }
+        : t.kind === 'total' ? { location: location.responseBody(bodyPointer(segs(cp.c.total!))), rule: 'total' }
         : t.kind === 'pagination' ? { location: location.query(pageParam), rule: 'pagination' }
         : { location: location.responseBody(bodyPointer([...segs(cp.c.items), ARRAY, ...segs(t.unique!)])), rule: 'unique' };
       return add('functional', { subjectUid: uid, polarity: 'positive', ...where });
@@ -178,6 +183,7 @@ export function assignCaseIds(s: AssignInput, uidOf: (op: Operation) => string):
       ids.scenario.lifecycle = add('scenario', { subjectUid: sUid, polarity: 'positive', location: location.lifecycle(), rule: 'crud' }, { relatedOperationUids: [uidOf(ch.create), uidOf(ch.update), uidOf(ch.delete)] });
     }
   }
+  if (s.probes?.length) ids.contract.probes = s.probes.map((p) => add('contract', { subjectUid: uid, polarity: 'negative', location: p.location, rule: 'probe' }));
   if (s.bodyVariants?.length) ids.functional.bodyVariants = s.bodyVariants.map((v) => add('functional', { subjectUid: uid, polarity: 'positive', location: v.location, rule: v.kind }, rel));
   if (s.fixture) ids.functional.fixture = add('functional', { subjectUid: uid, polarity: 'positive', location: location.operation(), rule: 'fixture' });
   // Reviewed business scenarios: identity from the external ID (never from the title or the steps).

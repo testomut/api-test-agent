@@ -18,60 +18,89 @@
       "read": "getItem",
       "update": "updateItem",
       "delete": "deleteItem",
-      "collection": {
-        "operationId": "listItems",
-        "items": "/items",
-        "id": "/id",
-        "fields": {
-          "/name": "exact",
-          "/price": "tolerance:0.001",
-          "/tags": "exact",
-          "/createdAt": "ignore"
+      "collections": [
+        {
+          "operationId": "listItems",
+          "items": "/items",
+          "id": "/id",
+          "fields": {
+            "/name": "exact",
+            "/price": "tolerance:0.001",
+            "/tags": "exact",
+            "/createdAt": "ignore"
+          },
+          "unique": [
+            "/id"
+          ],
+          "filters": [
+            {
+              "param": "tag",
+              "field": "/tags",
+              "match": "contains"
+            }
+          ],
+          "sorts": [
+            {
+              "param": "sort",
+              "value": "name",
+              "field": "/name",
+              "order": "asc"
+            },
+            {
+              "param": "sort",
+              "value": "-name",
+              "field": "/name",
+              "order": "desc"
+            },
+            {
+              "param": "sort",
+              "value": "price",
+              "field": "/price",
+              "order": "asc"
+            },
+            {
+              "param": "sort",
+              "value": "-price",
+              "field": "/price",
+              "order": "desc"
+            }
+          ],
+          "page": {
+            "style": "offset",
+            "offsetParam": "offset",
+            "limitParam": "limit",
+            "maxPages": 20
+          },
+          "deletedDisappears": true,
+          "total": "/total"
         },
-        "unique": [
-          "/id"
-        ],
-        "filters": [
-          {
-            "param": "tag",
-            "field": "/tags",
-            "match": "contains"
+        {
+          "operationId": "searchItems",
+          "items": "/items",
+          "id": "/id",
+          "fields": {
+            "/name": "exact",
+            "/price": "tolerance:0.001"
+          },
+          "total": "/total",
+          "unique": [
+            "/id"
+          ],
+          "filters": [
+            {
+              "param": "q",
+              "field": "/name",
+              "match": "search"
+            }
+          ],
+          "page": {
+            "style": "offset",
+            "offsetParam": "offset",
+            "limitParam": "limit",
+            "maxPages": 20
           }
-        ],
-        "sorts": [
-          {
-            "param": "sort",
-            "value": "name",
-            "field": "/name",
-            "order": "asc"
-          },
-          {
-            "param": "sort",
-            "value": "-name",
-            "field": "/name",
-            "order": "desc"
-          },
-          {
-            "param": "sort",
-            "value": "price",
-            "field": "/price",
-            "order": "asc"
-          },
-          {
-            "param": "sort",
-            "value": "-price",
-            "field": "/price",
-            "order": "desc"
-          }
-        ],
-        "page": {
-          "style": "offset",
-          "offsetParam": "offset",
-          "limitParam": "limit",
-          "maxPages": 20
-        },
-        "deletedDisappears": true
-      }
+        }
+      ]
     }
   ]
 }

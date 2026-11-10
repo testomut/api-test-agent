@@ -122,6 +122,55 @@ paths:
                 itemId: '$response.body#/id'
         '400':
           $ref: '#/components/responses/BadRequest'
+  /items/search:
+    get:
+      operationId: searchItems
+      summary: Search items by name
+      description: Items whose name contains q, ignoring case.
+      tags: [items]
+      parameters:
+        - name: q
+          in: query
+          required: true
+          description: Text the name must contain (case-insensitive).
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 30
+            example: keyboard
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 20
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        '200':
+          description: Matching items
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, total]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Item'
+                  total:
+                    type: integer
+                    minimum: 0
+        '400':
+          $ref: '#/components/responses/BadRequest'
   /items/{itemId}:
     parameters:
       - name: itemId

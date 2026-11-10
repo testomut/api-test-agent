@@ -17,7 +17,7 @@ import { normalizeSpec } from '../../src/change/normalize.js';
 const demo = await loadSpec('demo-api/openapi.yaml');
 const ops = buildCatalog(demo.doc);
 const deps = JSON.parse(await readFile('demo-api/deps.json', 'utf8'));
-const cfg: CollectionConfig = deps.scenarios[0].collection;
+const cfg: CollectionConfig = deps.scenarios[0].collections[0];
 const approved: Fixture = JSON.parse(await readFile('demo-api/fixtures/approved/listItems.json', 'utf8'));
 const createSchema = { $ref: '#/components/schemas/ItemInput' };
 
@@ -67,7 +67,7 @@ describe('strategy selection', () => {
   it('create & verify: every check on records the test creates, isolated by a filter', () => {
     const p = planCollectionTests(demo.doc, c, { canCreate: true, createSchema, canUpdate: true, updatePayload: { name: 'x', price: 1 }, canDelete: true });
     expect(p.iso?.param).toBe('tag');
-    expect(p.tests.map((t) => `${t.kind}:${t.mode}`)).toEqual(['listed:controlled', 'filter:controlled', 'sort:controlled', 'sort:controlled', 'sort:controlled', 'sort:controlled', 'pagination:controlled', 'unique:controlled']);
+    expect(p.tests.map((t) => `${t.kind}:${t.mode}`)).toEqual(['listed:controlled', 'filter:controlled', 'sort:controlled', 'sort:controlled', 'sort:controlled', 'sort:controlled', 'sort-reverse:controlled', 'sort-reverse:controlled', 'pagination:controlled', 'unique:controlled', 'total:controlled']);
     expect(p.tests.find((t) => t.sort?.value === 'price')?.sortValues).toEqual([2, 0, 1]); // distinct, created out of order
     expect(p.lifecycle && p.lifecycleIso).toBe(true);
     expect(p.pageSize).toBe(2);
@@ -165,7 +165,7 @@ describe('shared environments (found on Toolshop)', () => {
   });
 
   it('a read-only filter test checks several values and that the filter only narrows the list', async () => {
-    const ro = { scenarios: [{ ...deps.scenarios[0], collection: { ...cfg, strategy: 'read-only' } }] };
+    const ro = { scenarios: [{ ...deps.scenarios[0], collections: [{ ...cfg, strategy: 'read-only' }] }] };
     const dir = await mkdtemp(join(tmpdir(), 'ata-coll-'));
     await generate(demo, ops, { outDir: dir, version: 'test', deps: ro });
     const text = await readFile(join(dir, 'items/get/functional.spec.ts'), 'utf8');

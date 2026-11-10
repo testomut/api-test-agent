@@ -173,7 +173,30 @@ export function paramCasesDetailed(doc: OpenApiDoc, op: Operation, opts: { allow
       }
       if (Object.keys(headers).length) request.headers = headers;
       const title = c.title.replace(/^"([^"]*)"/, `${where} "$1"`).replace(/^missing required field "([^"]*)"/, `missing required ${where} "$1"`);
-      cases.push({ title, source: `${where}.${p.name}.${rule}`, request, target: { in: where, field: p.name, rule } });
+      cases.push({ title, source: `${where}.${p.name}.${rule}`, request, target: { in: where, field: p.name, rule }, ...(where === 'query' && !Array.isArray(v) ? { sent: { name: p.name, value: missing ? null : String(v) } } : {}) });
+    }
+    // An integer parameter given a decimal: numeric text, so a lenient parser may round it, but not an integer.
+    // The value stays inside the documented bounds, so only the type is broken; not with multipleOf > 1.
+    if (t === 'integer' && where !== 'path') {
+      const at = typeof value === 'number' ? value : typeof s.minimum === 'number' ? s.minimum : 1;
+      const inRange = (x: number) => (typeof s.minimum !== 'number' || x >= s.minimum) && (typeof s.maximum !== 'number' || x <= s.maximum) && (typeof s.exclusiveMinimum !== 'number' || x > s.exclusiveMinimum) && (typeof s.exclusiveMaximum !== 'number' || x < s.exclusiveMaximum);
+      const decimal = [at + 0.5, at - 0.5].find(inRange);
+      if (typeof s.multipleOf === 'number' && s.multipleOf !== 1) gaps.push({ code: 'CANNOT_ISOLATE_RULE', location: loc, rule: 'type', reason: `a decimal would also break multipleOf ${s.multipleOf}` });
+      else if (Array.isArray(s.enum)) gaps.push({ code: 'CANNOT_ISOLATE_RULE', location: loc, rule: 'type', reason: 'a decimal would also break enum; the enum case covers it' });
+      else if (decimal === undefined) gaps.push({ code: 'CANNOT_ISOLATE_RULE', location: loc, rule: 'type', reason: 'no decimal fits inside the documented bounds' });
+      else {
+        const params = { ...base.params };
+        const headers = { ...base.headers };
+        const request: ParamRequest = {};
+        if (where === 'query') request.params = { ...params, [p.name]: String(decimal) };
+        else {
+          if (Object.keys(params).length) request.params = params;
+          if (where === 'header') headers[p.name] = String(decimal);
+          else headers.Cookie = [...(headers.Cookie ?? '').split('; ').filter((x) => x && !x.startsWith(`${p.name}=`)), `${p.name}=${decimal}`].join('; ');
+        }
+        if (Object.keys(headers).length) request.headers = headers;
+        cases.push({ title: `${where} "${p.name}" is a decimal (${decimal}), not an integer`, source: `${where}.${p.name}.type.decimal`, request, target: { in: where, field: p.name, rule: 'type', variant: 'decimal' }, ...(where === 'query' ? { sent: { name: p.name, value: String(decimal) } } : {}) });
+      }
     }
   }
   return { cases, gaps };

@@ -12,7 +12,9 @@ import type { CoverageGap } from './body-cases.js';
  *   "id": "/id",                          element field holding the identifier the create returns
  *   "fields": { "/name": "exact", "/price": "tolerance:0.001", "/createdAt": "ignore" },   persistence confirmed
  *   "unique": ["/id"],                    uniqueness the API guarantees
- *   "filters": [{ "param": "tag", "field": "/tags", "match": "contains" }],
+ *   "total": "/total",                    JSON pointer to the total count in the response (consistent across pages)
+ *   "filters": [{ "param": "tag", "field": "/tags", "match": "contains" }],   equals | contains (array) | search
+ *                                         (search: the string field contains the value, ignoring case)
  *   "sorts": [{ "param": "sort", "value": "price", "field": "/price", "order": "asc" }],
  *   "page": { "style": "offset", "offsetParam": "offset", "limitParam": "limit", "maxPages": 20 },
  *           or { "style": "page", "pageParam": "page", "sizeParam": "per_page" } or, when the API fixes the size,
@@ -34,7 +36,8 @@ export interface CollectionConfig {
   id: string;
   fields?: Record<string, string>;
   unique?: string[];
-  filters?: { param: string; field: string; match: 'equals' | 'contains' }[];
+  filters?: { param: string; field: string; match: 'equals' | 'contains' | 'search' }[];
+  total?: string;
   sorts?: { param: string; value: string; field: string; order: 'asc' | 'desc' }[];
   page?: { style: 'offset'; offsetParam: string; limitParam: string; maxPages?: number } | { style: 'page'; pageParam: string; sizeParam?: string; size?: number; firstPage?: number; maxPages?: number };
   consistency?: { pollTimeoutMs: number; pollIntervalMs: number };
@@ -103,7 +106,8 @@ export function resolveCollection(doc: OpenApiDoc, ops: Operation[], cfg: Collec
   for (const f of cfg.filters ?? []) {
     query(f.param, 'filter parameter');
     field(f.field, 'filter field');
-    if (f.match !== 'equals' && f.match !== 'contains') errors.push(`collection: filter match "${f.match}" is equals or contains`);
+    if (!['equals', 'contains', 'search'].includes(f.match)) errors.push(`collection: filter match "${f.match}" is equals, contains or search`);
+    if (f.match === 'search' && itemSchema && !typesOf(schemaAt(doc, itemSchema, f.field)).includes('string')) errors.push(`collection: search filter field "${f.field}" is not a string`);
   }
   for (const s of cfg.sorts ?? []) {
     query(s.param, 'sort parameter');
@@ -125,6 +129,10 @@ export function resolveCollection(doc: OpenApiDoc, ops: Operation[], cfg: Collec
   }
   if (cfg.strategy !== undefined && cfg.strategy !== 'read-only') errors.push('collection: "strategy" can only be "read-only"');
   if (cfg.strategy !== undefined && cfg.strategy !== 'read-only') errors.push('collection: "strategy" can only be "read-only"');
+  if (cfg.total !== undefined) {
+    const t = typeof cfg.total === 'string' && cfg.total.startsWith('/') ? schemaAt(doc, response, cfg.total) : undefined;
+    if (!t || !typesOf(t).includes('integer')) errors.push(`collection: "total" ${cfg.total} is not an integer field of the ${op.key} response`);
+  }
   const c = cfg.consistency;
   if (c && !(c.pollTimeoutMs > 0 && c.pollTimeoutMs <= 60_000 && c.pollIntervalMs > 0 && c.pollIntervalMs <= c.pollTimeoutMs)) errors.push('collection: consistency needs 0 < pollIntervalMs <= pollTimeoutMs <= 60000');
   if (errors.length) return { errors };

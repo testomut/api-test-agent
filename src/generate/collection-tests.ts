@@ -12,8 +12,8 @@ import { schemaAt, type ResolvedCollection } from './collection.js';
  * existing data, and a test without enough data is skipped with the reason, never passed silently.
  */
 
-export type CollectionTestKind = 'listed' | 'filter' | 'sort' | 'pagination' | 'unique';
-type Filter = { param: string; field: string; match: 'equals' | 'contains' };
+export type CollectionTestKind = 'listed' | 'filter' | 'sort' | 'sort-reverse' | 'pagination' | 'unique' | 'total';
+type Filter = { param: string; field: string; match: 'equals' | 'contains' | 'search' };
 
 export interface CollectionTest {
   kind: CollectionTestKind;
@@ -23,6 +23,8 @@ export interface CollectionTest {
   /** Controlled filter: the matching and the non-matching value ("marker" = derived from the run's unique marker). */
   filterValues?: { kind: 'marker' } | { kind: 'enum'; a: string | number; b: string | number };
   sort?: { param: string; value: string; field: string; order: 'asc' | 'desc' };
+  /** sort-reverse: the descending counterpart of `sort` (same parameter and field). */
+  sortDesc?: { param: string; value: string; field: string; order: 'asc' | 'desc' };
   /** Controlled sort: the sort-field values of the three records, in creation order (strings get the marker appended). */
   sortValues?: (string | number)[];
   unique?: string;
@@ -60,6 +62,15 @@ export function planCollectionTests(doc: OpenApiDoc, c: ResolvedCollection, x: {
     if (!s) return false;
     return f.match === 'contains' ? typesOf(s).includes('array') && markerString(schemaAt(doc, s, '/*')) && (s.maxItems ?? 1) >= 1 : markerString(s);
   };
+  const sortValuesOf = (field: string) => {
+    const s = iso ? createField(field) : undefined;
+    if (!s || s.enum) return undefined;
+    if (typesOf(s).some((t) => t === 'integer' || t === 'number')) {
+      const lo = typeof s.minimum === 'number' ? s.minimum + (s.exclusiveMinimum === true ? 1 : 0) : 1;
+      return typeof s.maximum !== 'number' || s.maximum >= lo + 2 ? [lo + 2, lo, lo + 1] : undefined;
+    }
+    return markerString(s) ? ['sort-c-', 'sort-a-', 'sort-b-'] : undefined;
+  };
   const filters = (c.filters ?? []).filter((f, i, all) => all.findIndex((g) => g.param === f.param) === i);
   const iso = filters.find(markerFilter);
 
@@ -82,36 +93,42 @@ export function planCollectionTests(doc: OpenApiDoc, c: ResolvedCollection, x: {
     else if (iso && s && f.match === 'equals' && Array.isArray(s.enum) && s.enum.length >= 2) filterValues = { kind: 'enum', a: s.enum[0], b: s.enum[1] };
     tests.push({
       kind: 'filter',
-      title: filterValues ? `filter ${f.param} returns the matching resource and leaves out the other` : `filter ${f.param} returns only matching resources`,
+      title: (filterValues ? `filter ${f.param} returns the matching resource and leaves out the other` : `filter ${f.param} returns only matching resources`) + (f.match === 'search' ? ' (search, ignoring case)' : ''),
       mode: filterValues ? 'controlled' : 'read-only',
       filter: f,
       ...(filterValues ? { filterValues } : {}),
     });
     if (!filterValues && x.canCreate) gaps.push({ code: 'CANNOT_ISOLATE_RULE', location: `request.query#/${f.param}`, reason: `filter ${f.param}: ${f.field} cannot be set to a value no other data has, so it is checked read-only on existing data` });
   }
-  for (const s of (c.sorts ?? []).filter((v, i, all) => all.findIndex((w) => w.param === v.param && w.value === v.value) === i)) {
-    const field = iso ? createField(s.field) : undefined;
-    let sortValues: (string | number)[] | undefined;
-    if (field && !field.enum) {
-      if (typesOf(field).some((t) => t === 'integer' || t === 'number')) {
-        const lo = typeof field.minimum === 'number' ? field.minimum + (field.exclusiveMinimum === true ? 1 : 0) : 1;
-        if (typeof field.maximum !== 'number' || field.maximum >= lo + 2) sortValues = [lo + 2, lo, lo + 1];
-      } else if (markerString(field)) sortValues = ['sort-c-', 'sort-a-', 'sort-b-'];
-    }
+  const sorts = (c.sorts ?? []).filter((v, i, all) => all.findIndex((w) => w.param === v.param && w.value === v.value) === i);
+  for (const s of sorts) {
+    const sortValues = sortValuesOf(s.field);
     tests.push({ kind: 'sort', title: `sort ${s.param}=${s.value} orders by ${s.field} ${s.order === 'asc' ? 'ascending' : 'descending'}`, mode: sortValues ? 'controlled' : 'read-only', sort: s, ...(sortValues ? { sortValues } : {}) });
+  }
+  // Ascending and descending on the same field: the descending order is the ascending one reversed.
+  for (const asc of sorts.filter((s) => s.order === 'asc')) {
+    const desc = sorts.find((s) => s.order === 'desc' && s.param === asc.param && s.field === asc.field);
+    if (!desc) continue;
+    const sortValues = sortValuesOf(asc.field);
+    tests.push({ kind: 'sort-reverse', title: `sort ${asc.param}=${desc.value} is the reverse of ${asc.param}=${asc.value}`, mode: sortValues ? 'controlled' : 'read-only', sort: asc, sortDesc: desc, ...(sortValues ? { sortValues } : {}) });
   }
   if (c.page) {
     const controlled = !!iso && pageSize <= 5;
     tests.push({ kind: 'pagination', title: `pages of ${pageSize} have the requested size and never repeat a resource`, mode: controlled ? 'controlled' : 'read-only' });
   } else gaps.push({ code: 'UNCONFIRMED_BUSINESS_RULE', location: 'operation', reason: `${c.op.key}: no reviewed paging mapping ("page"): page size and cross-page duplicates are not checked` });
   for (const u of [...new Set(c.unique ?? [])]) tests.push({ kind: 'unique', title: `resources are unique by ${u}`, mode: iso ? 'controlled' : 'read-only', unique: u });
+  if (c.total) tests.push({ kind: 'total', title: `${c.total} equals the number of resources and is the same on every page`, mode: iso ? 'controlled' : 'read-only' });
+  else gaps.push({ code: 'UNCONFIRMED_BUSINESS_RULE', location: 'operation', reason: `${c.op.key}: no reviewed "total" pointer: the total count is not checked` });
   if (!iso && x.canCreate) gaps.push({ code: 'CANNOT_ISOLATE_RULE', location: 'operation', reason: `${c.op.key}: no filter can isolate the test's own records, so sorting, paging and uniqueness run read-only on existing data` });
 
-  const lifecycle = x.canCreate && x.canUpdate && x.canDelete && Object.keys(c.fields ?? {}).length > 0;
-  if (!lifecycle) gaps.push({ code: 'UNCONFIRMED_BUSINESS_RULE', location: 'lifecycle', reason: `${c.op.key}: create → list → update → list → delete → list needs a confirmed create, update (with an example payload) and delete, and confirmed field persistence ("fields")` });
-  else if (!c.deletedDisappears) gaps.push({ code: 'UNCONFIRMED_BUSINESS_RULE', location: 'lifecycle', reason: `${c.op.key}: that a deleted resource leaves the list is not confirmed ("deletedDisappears"), so the last step is not asserted` });
   const isoKey = iso?.field.slice(1).replace(/~1/g, '/').replace(/~0/g, '~');
   const lifecycleIso = !!iso && !(x.updatePayload && typeof x.updatePayload === 'object' && isoKey! in (x.updatePayload as object));
+  // Without the isolating filter after the update, a list with a required query parameter cannot be read in full.
+  const requiredQuery = c.op.params.some((p) => p.in === 'query' && p.required);
+  const lifecycle = x.canCreate && x.canUpdate && x.canDelete && Object.keys(c.fields ?? {}).length > 0 && (lifecycleIso || !requiredQuery);
+  if (!lifecycle && x.canCreate && x.canUpdate && x.canDelete && requiredQuery && !lifecycleIso) gaps.push({ code: 'CANNOT_ISOLATE_RULE', location: 'lifecycle', reason: `${c.op.key}: the update changes the isolating field and the list needs a required query parameter, so the updated resource cannot be found reliably` });
+  else if (!lifecycle) gaps.push({ code: 'UNCONFIRMED_BUSINESS_RULE', location: 'lifecycle', reason: `${c.op.key}: create → list → update → list → delete → list needs a confirmed create, update (with an example payload) and delete, and confirmed field persistence ("fields")` });
+  else if (!c.deletedDisappears) gaps.push({ code: 'UNCONFIRMED_BUSINESS_RULE', location: 'lifecycle', reason: `${c.op.key}: that a deleted resource leaves the list is not confirmed ("deletedDisappears"), so the last step is not asserted` });
   return { c, tests, ...(iso ? { iso } : {}), lifecycle, lifecycleIso, gaps, walkSize, pageSize };
 }
 

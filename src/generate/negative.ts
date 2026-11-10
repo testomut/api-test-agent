@@ -16,9 +16,11 @@ export interface NegCase {
   data?: unknown;
   query?: Record<string, unknown>;
   /** What the case breaks, for its case ID: a body field (path from the root; [] = the body) or a parameter, and the rule. */
-  target?: { in: 'body'; path: (string | typeof ARRAY)[]; rule: string } | { in: 'query' | 'header' | 'cookie' | 'path'; field: string | null; rule: string };
+  target?: { in: 'body'; path: (string | typeof ARRAY)[]; rule: string } | { in: 'query' | 'header' | 'cookie' | 'path'; field: string | null; rule: string; variant?: 'decimal' };
   /** Parameter cases: the whole request (valid parameters plus the one under test). */
   request?: ParamRequest;
+  /** Query cases: the value of the parameter under test on the wire (null = not sent), checked against the request URL. */
+  sent?: { name: string; value: string | null };
 }
 
 

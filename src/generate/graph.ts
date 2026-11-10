@@ -24,8 +24,8 @@ export interface CrudChain {
   conflictOn?: string[];
   /** Create body fields the create response returns unchanged (a reviewed mapping): asserted in the create test. */
   echoes?: string[];
-  /** The reviewed list operation that shows this resource (deps file "collection"), checked in resolveCollection. */
-  collection?: CollectionConfig;
+  /** The reviewed list operations that show this resource (deps file "collection" / "collections"), checked in resolveCollection. */
+  collections?: CollectionConfig[];
 }
 
 export interface FillRule {
@@ -61,8 +61,14 @@ export interface DepsFile {
     echoes?: string[];
     /** The list operation of this resource and its confirmed semantics (src/generate/collection.ts). */
     collection?: CollectionConfig;
+    /** Several list operations of this resource (e.g. a list and a search), each with its own mapping. */
+    collections?: CollectionConfig[];
   }[];
 }
+
+/** "collection" (one) and "collections" (several) of a deps entry, in that order. */
+const collectionsOf = (s: { collection?: CollectionConfig; collections?: CollectionConfig[] }): CollectionConfig[] =>
+  [...(s.collection && typeof s.collection === 'object' ? [s.collection] : []), ...(Array.isArray(s.collections) ? s.collections.filter((c) => c && typeof c === 'object') : [])];
 
 const RUNTIME_EXPR = /^\$response\.body#(\/.*)$/;
 
@@ -86,7 +92,7 @@ export function findChains(doc: OpenApiDoc, ops: Operation[], deps?: DepsFile): 
       ...(s.fill ? { fill: Object.entries(s.fill).map(([field, f]) => ({ field, fromId: f?.from, from: byId.get(f?.from), pointer: f?.pointer })) } : {}),
       ...(Array.isArray(s.conflictOn) && s.conflictOn.length ? { conflictOn: s.conflictOn.map(String) } : {}),
       ...(Array.isArray(s.echoes) && s.echoes.length ? { echoes: s.echoes.map(String) } : {}),
-      ...(s.collection && typeof s.collection === 'object' ? { collection: s.collection } : {}),
+      ...(collectionsOf(s).length ? { collections: collectionsOf(s) } : {}),
     });
   }
 
