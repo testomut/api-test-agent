@@ -44,6 +44,8 @@ export interface Candidate {
 }
 
 export interface DepsFile {
+  /** Reviewed read-only sources of path values: { operationId, param, from, pointer } (src/ai/sources.ts). */
+  sources?: import('../ai/sources.js').SourceConfig[];
   /** Reviewed credentials for 401 / 403 cases, by environment variable name (never the values). */
   auth?: import('./error-cases.js').AuthConfig;
   scenarios: {

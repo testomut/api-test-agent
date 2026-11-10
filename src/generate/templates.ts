@@ -11,6 +11,7 @@ import { tsCollectionImports, tsCollectionPrelude, tsCollectionTests, tsFixtureI
 import type { LoadedFixture } from '../fixtures/fixtures.js';
 import type { BodyVariant } from './variants.js';
 import type { Probe } from './probes.js';
+import type { ResolvedSource } from '../ai/sources.js';
 import { tsVariantImports, tsVariantTests } from './variant-render.js';
 
 /** Payloads and assumptions for one confirmed resource chain. */
@@ -253,6 +254,8 @@ export interface SuiteInput {
   bodyVariants?: BodyVariant[];
   /** Exploratory query probes (record the API's answer, never fail on it). */
   probes?: Probe[];
+  /** A path value read from existing data first (deps "sources" or AI-proposed). */
+  source?: ResolvedSource;
 }
 
 export type Role = 'create' | 'read' | 'update' | 'delete';
@@ -318,6 +321,26 @@ function positiveTest(s: SuiteInput, title: string, assert: (indent: string) => 
   const role = roleOf(op, plan);
   const ref = refs.get(op)!;
   const call = (idVar?: string, options?: string) => apiCall(ref, 'api', pathArgs(op, ref, chain?.param, idVar), optionsWith(op, options));
+  if (!role && s.source) {
+    // List → read by id: the path value is an existing record's, never invented; no record → skipped with the reason.
+    const src = s.source;
+    const fref = refs.get(src.from)!;
+    const fx = isPublic(op) && isPublic(src.from) ? 'publicApi' : 'api';
+    const why = `${src.param} from ${src.from.key} #${src.pointer}`;
+    return [
+      `  test(${q(title)}, ${POS}, async ({ ${fx} }) => {`,
+      `    // ${src.ai ? `AI-proposed, unreviewed (${src.reason.replace(/\s+/g, ' ').slice(0, 160)})` : 'Source: deps file (reviewed)'}: ${why}.`,
+      ...(src.ai ? [`    test.info().annotations.push({ type: 'ai-proposed', description: ${q(`unreviewed source: ${why}`)} });`] : []),
+      `    const source = await ${apiCall(fref, fx, pathArgs(src.from, fref), optionsWith(src.from))};`,
+      `    // The source is a precondition, not the operation under test: refused (e.g. needs another role) → skipped.`,
+      `    test.skip(!source.ok(), ${q(`${src.from.key} answered `)} + source.status() + ': no existing record to read (read-only)');`,
+      `    const value = readPointer(await source.json(), ${q(src.pointer)});`,
+      `    test.skip(value === undefined || value === null, ${q(`no existing record in ${src.from.key} to read (read-only)`)});`,
+      `    const res = await ${apiCall(ref, fx, pathArgs(op, ref, src.param, 'String(value)'), optionsWith(op))};`,
+      ...assert('    '),
+      `  });`,
+    ];
+  }
   if (!role) {
     const opts = optionsWith(op);
     const fx = apiFixture(op);
@@ -388,7 +411,7 @@ export function renderFunctional(s: SuiteInput, meta: Meta): string {
   const usesHelpers = (s.positive && !!role) || notFoundNeedsHelpers(s) || !!(s.errors?.preconditionFailed && plan) || !!s.collection?.plan.tests.length || !!s.bodyVariants?.length;
   const errorStatus = !!(s.errors?.invalidCredentials || s.errors?.envCredentials?.length || s.errors?.methodNotAllowed || s.errors?.preconditionFailed);
   const coll = s.collection?.plan.tests.length ? s.collection : undefined;
-  const names = [...new Set(['expect', ...(s.positive && (role === 'create' || role === 'read') ? ['readPointer'] : []), ...(s.notFound || s.unauthorized || errorStatus ? ['expectStatus'] : []), ...(coll ? tsCollectionImports('functional') : []), ...(s.fixture ? ['itemsOf', 'expectMatchesFixture'] : []), ...tsVariantImports(s), ...(s.positive && !plan && op.method === 'get' && queryVariants(op).length ? ['expectContract'] : [])])];
+  const names = [...new Set(['expect', ...(s.positive && (role === 'create' || role === 'read') ? ['readPointer'] : []), ...(s.notFound || s.unauthorized || errorStatus ? ['expectStatus'] : []), ...(coll ? tsCollectionImports('functional') : []), ...(s.fixture ? ['itemsOf', 'expectMatchesFixture'] : []), ...tsVariantImports(s), ...(s.positive && !plan && op.method === 'get' && queryVariants(op).length ? ['expectContract'] : []), ...(s.source ? ['readPointer'] : [])])];
   const L = suiteHeader('functional', s, meta, ['Checks the behavior of the endpoint: status and result. The response schema is checked in contract.spec.ts.', ...(coll ? ['Collection checks run on records the tests create (controlled datasets) or, where marked read-only, on existing data.'] : [])]);
   L.push(...imports(s, names, usesHelpers), ...(s.fixture ? [tsFixtureImport(s.fixture)] : []), ...(coll ? ['', ...tsCollectionPrelude(s, coll)] : ['']), `test.describe('${op.key} · functional', { tag: '@functional' }, () => {`);
 
@@ -580,7 +603,7 @@ export function renderContract(s: SuiteInput, meta: Meta): string {
   const usesHelpers = (s.positive && !!role) || notFoundNeedsHelpers(s) || (s.bodyCases.length > 0 && !!chain && (isCreate || needsExisting)) || wrongMedia;
   // Validation cases go through the same fixture as the positive test (anonymous for public operations).
   const fx = chain ? 'api' : apiFixture(op);
-  const names = [...(s.positive || s.notFound || s.unauthorized ? ['expectContract'] : []), ...(invalid ? ['expectRejected'] : []), ...(s.paramCases.some((c) => c.sent) || s.probes?.length ? ['expectSentQuery'] : []), ...(s.probes?.length ? ['recordProbe'] : [])];
+  const names = [...(s.source ? ['expect', 'readPointer'] : []), ...(s.positive || s.notFound || s.unauthorized ? ['expectContract'] : []), ...(invalid ? ['expectRejected'] : []), ...(s.paramCases.some((c) => c.sent) || s.probes?.length ? ['expectSentQuery'] : []), ...(s.probes?.length ? ['recordProbe'] : [])];
   const L = suiteHeader('contract', s, meta, ['Checks conformance to the OpenAPI document: the status actually returned is documented and the body matches its schema.', 'Invalid requests break one documented constraint each and must get a documented rejection.']);
   L.push(...imports(s, names, usesHelpers));
   if (s.bodyCases.length + s.paramCases.length > 0) L.push('', `const rejection = ${JSON.stringify(s.validation)}; // documented in the spec`);

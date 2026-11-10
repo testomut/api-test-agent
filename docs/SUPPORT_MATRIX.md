@@ -83,6 +83,14 @@ Inputs a real client sends by mistake, for scalar query parameters of GET / HEAD
 
 Write operations are never probed (`UNSAFE_LIVE_CHECK`); an operation with an unknown path value is not probed (`MISSING_RESOURCE_SOURCE`); more than 24 probes per operation → `CASE_LIMIT_REACHED`.
 
+### Path values from existing data (`src/ai/sources.ts`)
+
+| Source | State | How / limits |
+|---|---|---|
+| deps `sources` (reviewed) | ✅ | `{ operationId, param, from, pointer }`, checked against the spec; a mismatch → `INVALID_REVIEWED_CONFIG` |
+| AI step (on by default) | ✅ | for safe operations blocked by one unknown path value; spec check: a safe list operation callable as is, a pointer through a list element, a fitting identifier type; low confidence rejected; tests only read, marked `ai-proposed`; answers cached in `_support/ai-sources.json` |
+| no record / the list refused | ✅ | the test is skipped with the reason, never failed |
+
 ## Functional (`functional.spec.ts`)
 
 | Check | State | Limits | Stage |

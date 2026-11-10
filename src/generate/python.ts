@@ -256,6 +256,7 @@ def pytest_configure(config):
         "positive": "the request is expected to succeed / the response to conform",
         "negative": "the request is expected to be rejected",
         "exploratory": "a probe that records the API's answer and never fails on it",
+        "ai_proposed": "built from an AI proposal that no human has reviewed yet (read-only)",
     }.items():
         config.addinivalue_line("markers", f"{name}: {text}")
     config.addinivalue_line("markers", "api_case_id(id): stable case ID from _support/cases.json")
@@ -442,6 +443,28 @@ function pyPositive(s: SuiteInput, name: string, assert: (indent: string) => str
   const chain = plan?.chain;
   const role = roleOf(op, plan);
   const res = plan ? resourceModule(plan).replace(/_resource$/, '') : '';
+  if (!role && s.source) {
+    // List → read by id: the path value is an existing record's, never invented; no record → skipped with the reason.
+    const src = s.source;
+    const why = `${src.param} from ${src.from.key} #${src.pointer}`;
+    return [
+      ...(src.ai ? ['@pytest.mark.ai_proposed'] : []),
+      POS,
+      `def ${name}(api, contract):`,
+      `    # ${src.ai ? 'AI-proposed, unreviewed' : 'Source: deps file (reviewed)'}: ${why}.`,
+      `    source = api.${src.from.method}(${pathExpr(src.from)}${pyRequired(src.from)})`,
+      '    # The source is a precondition, not the operation under test: refused (e.g. needs another role) -> skipped.',
+      '    if not source.ok:',
+      `        pytest.skip(f"${src.from.key} answered {source.status_code}: no existing record to read (read-only)")`,
+      `    value = read_pointer(source.json(), ${str(src.pointer)})`,
+      '    if value is None:',
+      `        pytest.skip(${str(`no existing record in ${src.from.key} to read (read-only)`)})`,
+      `    res = api.${op.method}(${pathExpr(op, src.param, 'value')}${pyRequired(op)})`,
+      ...assert('    '),
+      '',
+      '',
+    ];
+  }
   if (!role) {
     return [POS, `def ${name}(api, contract):`, `    res = api.${op.method}(${pathExpr(op)}${pyRequired(op)})`, ...assert('    '), '', ''];
   }

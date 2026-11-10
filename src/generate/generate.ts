@@ -18,6 +18,7 @@ import { checkAuthConfig, errorPlan } from './error-cases.js';
 import { collectionGaps, resolveCollection } from './collection.js';
 import { bodyVariants as variantsOf, type BodyVariant } from './variants.js';
 import { paramProbes } from './probes.js';
+import type { ResolvedSource } from '../ai/sources.js';
 import { encodeSegment, location } from '../cases/ids.js';
 import { collectionStrategy, planCollectionTests } from './collection-tests.js';
 import { tsFixtureModule, fixtureModule, type CollectionInput } from './collection-render.js';
@@ -48,6 +49,12 @@ export interface GenerateOptions {
   maxCases?: number;
   /** Reviewed business scenarios (validated with validateScenarios against the same operations). */
   scenarios?: ResolvedScenario[];
+  /** Read-only sources of path values (deps "sources", reviewed, and AI-proposed this run), checked against the spec. */
+  sources?: ResolvedSource[];
+  /** Problems of the deps "sources" (INVALID_REVIEWED_CONFIG gaps of the operations named). */
+  sourceErrors?: { operationId: string; reason: string }[];
+  /** AI answers to keep with the suite (_support/ai-sources.json), so regeneration stays deterministic. */
+  aiCache?: Record<string, unknown>;
   /** Approved fixtures (strategy B), already validated against the spec; invalid ones arrive as fixtureErrors. */
   fixtures?: LoadedFixture[];
   fixtureErrors?: { file: string; operationId?: string; errors: string[] }[];
@@ -115,6 +122,8 @@ export interface Coverage {
   uncheckedRequestContentTypes: string[];
   /** Security alternatives beyond the one the suite uses. */
   uncheckedSecurityAlternatives: string[][];
+  /** What the AI step contributed to this operation (unreviewed), e.g. the source of a path value. */
+  aiProposed?: { kind: 'source'; from: string; pointer: string; reason: string }[];
   /** List operations: how the collection is tested (create-verify / read-only / contract-only) and why. */
   collection?: { strategy: string; reasons: string[]; tests: { kind: string; mode: string }[] };
 }
@@ -316,7 +325,9 @@ export async function generate(spec: LoadedSpec, ops: Operation[], o: GenerateOp
     const helpers = helperPlan ? posix(relative(dir, helperFile(helperPlan))).replace(/\.ts$/, '.js') : undefined;
     const safe = SAFE_METHODS.includes(op.method);
     const pathParams = op.params.filter((p) => p.in === 'path');
-    const unresolvedPath = pathParams.filter((p) => p.knownValue === undefined && p.name !== plan?.chain.param);
+    // A read-only source (deps "sources" or the AI step) gives a real value of one path parameter: list → read by id.
+    const source = !plan && op.method === 'get' ? o.sources?.find((x) => x.op === op) : undefined;
+    const unresolvedPath = pathParams.filter((p) => p.knownValue === undefined && p.name !== plan?.chain.param && p.name !== source?.param);
     // Required query / header / cookie parameters need a documented value, or no valid request exists.
     const unresolvedQuery = op.params.filter((p) => p.in !== 'path' && p.required && p.knownValue === undefined && sendable(p));
 
@@ -330,7 +341,7 @@ export async function generate(spec: LoadedSpec, ops: Operation[], o: GenerateOp
       const miss = [...unresolvedPath, ...unresolvedQuery].map((p) => `${p.in} "${p.name}"`).join(', ');
       posReason = chainBlock.get(op) ?? `No value for ${miss}: add an example to the spec, or link the operation that creates it.`;
     } else if (!op.responses.some((r) => /^2\d\d$/.test(r.status))) posReason = 'No concrete 2xx response is documented.';
-    else if (pathParams.some((p) => p.knownSource === 'example')) {
+    else if (pathParams.some((p) => p.knownSource === 'example' && p.name !== source?.param)) {
       // An example id ("1") is an illustration, not a record that exists on the test environment.
       const ex = pathParams.filter((p) => p.knownSource === 'example').map((p) => `"${p.name}"`).join(', ');
       posReason = chainBlock.get(op) ?? `Path ${ex} would come from a spec example, not from a real record: link the operation that creates it (OpenAPI links / --deps), or provide test data.`;
@@ -390,7 +401,7 @@ export async function generate(spec: LoadedSpec, ops: Operation[], o: GenerateOp
     const firstWith405 = op.responses.some((r) => r.status === '405') && !paths405.has(op.path);
     if (firstWith405) paths405.add(op.path);
     const errors = op.deprecated ? { gaps: [] } : errorPlan({ doc: spec.doc, op, ops, chain: plan?.chain, role: errRole, hasUpdatePayload: plan?.updatePayload !== undefined, reachable, firstWith405, auth: authOk ? o.deps?.auth : undefined });
-    const input: SuiteInput = { op, refs, plan, helpers, positive: !posReason, validation: rej.validation, bodyCases: bCases, paramCases: qCases, notFound, unauthorized, errors, business: (o.scenarios ?? []).filter((b) => b.primaryOp === op) };
+    const input: SuiteInput = { ...(source && !posReason ? { source } : {}), op, refs, plan, helpers, positive: !posReason, validation: rej.validation, bodyCases: bCases, paramCases: qCases, notFound, unauthorized, errors, business: (o.scenarios ?? []).filter((b) => b.primaryOp === op) };
     let collPlan: ReturnType<typeof planCollectionTests> | undefined;
     if (coll && input.positive && !op.deprecated) {
       const ch = coll.plan.chain;
@@ -401,7 +412,8 @@ export async function generate(spec: LoadedSpec, ops: Operation[], o: GenerateOp
     if (fixture) input.fixture = fixture;
     const fixtureGaps: CoverageGap[] = (o.fixtureErrors ?? []).filter((e) => e.operationId && e.operationId === op.operationId).flatMap((e) => e.errors.map((reason) => ({ code: 'INVALID_REVIEWED_CONFIG', location: 'operation', reason: `${e.file}: ${reason}` })));
     const authGaps: CoverageGap[] = authErrors.filter((e) => !!op.operationId && e.includes(`"${op.operationId}"`) || (op === ops[0] && !/operation "/.test(e))).map((reason) => ({ code: 'INVALID_REVIEWED_CONFIG', location: 'request.security', reason }));
-    const collGaps: CoverageGap[] = [...authGaps, ...fixtureGaps, ...(collectionErrors.get(op.key) ?? []), ...(collPlan?.gaps ?? []), ...(coll ? [] : collectionGaps(spec.doc, op, false))];
+    const sourceGaps: CoverageGap[] = (o.sourceErrors ?? []).filter((e) => e.operationId === op.operationId).map((e) => ({ code: 'INVALID_REVIEWED_CONFIG', location: 'operation', reason: e.reason }));
+    const collGaps: CoverageGap[] = [...sourceGaps, ...authGaps, ...fixtureGaps, ...(collectionErrors.get(op.key) ?? []), ...(collPlan?.gaps ?? []), ...(coll ? [] : collectionGaps(spec.doc, op, false))];
     // Positive body variants of a create / update with a confirmed chain (written with cleanup only).
     let variantResult: { variants: BodyVariant[]; gaps: CoverageGap[] } | undefined;
     if (plan && input.positive && !op.deprecated && (plan.chain.create === op || (plan.chain.update === op && plan.updatePayload !== undefined))) {
@@ -452,6 +464,7 @@ export async function generate(spec: LoadedSpec, ops: Operation[], o: GenerateOp
       negativeGaps: why,
       lifecycle: plan ? plan.chain.name : null,
       gaps: [...bodyGaps, ...errors.gaps, ...variantGaps, ...responseGaps, ...collGaps, ...probed.gaps],
+      ...(input.source?.ai ? { aiProposed: [{ kind: 'source' as const, from: input.source.from.key, pointer: input.source.pointer, reason: input.source.reason }] } : {}),
       ...(coll || fixture || collGaps.length ? { collection: { ...collectionStrategy(collPlan, collGaps.map((g) => g.reason), !!fixture), tests: [...(collPlan?.tests ?? []).map((t) => ({ kind: t.kind, mode: t.mode })), ...(fixture ? [{ kind: 'fixture', mode: 'approved' }] : [])] } } : {}),
       ...(bodyStats ? { bodyCases: bodyStats } : {}),
       suites: {
@@ -510,6 +523,7 @@ export async function generate(spec: LoadedSpec, ops: Operation[], o: GenerateOp
     if (!coverage.some((c) => c.operation === f.op.key && c.collection?.tests.some((t) => t.kind === 'fixture'))) continue;
     await write(join(support, 'approved', py ? `${fixtureModule(f)}.json` : `${fixtureModule(f)}.fixture.ts`), py ? JSON.stringify(f.fixture, null, 2) + '\n' : tsFixtureModule(f, o.version));
   }
+  if (files.length && o.aiCache && Object.keys(o.aiCache).length) await write(join(support, 'ai-sources.json'), canonicalJson({ note: 'AI answers (unreviewed) for read-only path-value sources; reused on regeneration. Move an entry into the deps file "sources" to make it reviewed.', answers: o.aiCache }));
   if (files.length && py) {
     // Self-contained support code: the generated suite runs without the agent installed.
     await write(join(support, 'contract.py'), await readFile(fileURLToPath(new URL('../../src/contract/contract.py', import.meta.url)), 'utf8'));
