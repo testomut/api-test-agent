@@ -202,9 +202,16 @@ Not yet: three-way `registry merge`, `--id-aliases` / `--apply-registry`, `plan`
 - Assertions: the statuses from `pm.test`; if the request had none and the operation is in the spec, the documented success status (marked as such in the test). Other `pm.test` lines are copied as comments for review.
 - Output in the configured language: `<resource>/<method>/positive.postman.spec.ts` or `test_positive_postman.py`.
 
-## 5b. Optional AI (`--ai`), through console tools
+## 5b. AI step (on by default), through console tools
 
-Everything above is deterministic. `--ai` adds an AI step in **one** place where rules cannot decide: **unconfirmed dependencies** (`POST /x` + `/x/{param}` with no OpenAPI `links` and no deps file, normally BLOCKED with a question).
+`generate` asks an AI where rules cannot decide, **when a console tool is found** (`API_AI` / `--ai-runner`, else `claude`, else `codex` on PATH). No tool, or not logged in: the run says so and goes on without AI, exactly as before. `--no-ai` switches it off.
+
+1. **Read-only sources of path values (used right away, marked AI-proposed).** A safe operation such as `GET /brands/{brandId}` is normally blocked (`MISSING_RESOURCE_SOURCE`): no real id to call it with. The AI picks the list operation and field that hold existing ids (`brandId ← GET /brands #/0/id`). After the spec check (below) the test reads the list, takes an existing value and reads that record; no record, or the list refused (e.g. another role needed) → skipped with the reason. These tests only read, carry the `ai-proposed` annotation (pytest marker `ai_proposed`) and are listed in the report section "AI participation". To make one reviewed, copy it into the deps file:
+   ```json
+   "sources": [{ "operationId": "getBrand", "param": "brandId", "from": "getBrands", "pointer": "/0/id" }]
+   ```
+   The answers are cached in the suite (`_support/ai-sources.json`, in the generation manifest): a regeneration, `maintain` and a run without AI reuse them, so the suite stays reproducible.
+2. **Unconfirmed dependencies (proposals, never applied).** `POST /x` + `/x/{param}` with no OpenAPI `links` and no deps file: these would create and delete data, so the answer is only a proposal (`ai-deps.proposed.json`) until you pass it with `--deps`.
 
 The AI runs through a **console tool you are already logged in to**: no API keys, usage counts against your subscription.
 
@@ -222,11 +229,12 @@ npx @testomut/api-test-agent generate --deps reports/api-agent/generate/ai-deps.
 
 **Contract for `command` (orchestrators):** the request is written to stdin as JSON `{"system": "...", "prompt": "...", "schema": {JSON Schema}}`; the tool prints the answer object (matching the schema) as JSON on stdout and exits 0. The tool runs in an empty temporary folder.
 
-- **Opt-in only.** Without `--ai` no tool is called.
-- **Minimal context.** For each candidate: operation keys and ids, the create response's property names and types, the path parameter's type. Never example values, request data, test results or `.env` contents.
-- **Validated twice.** The answer must match the JSON Schema (checked here, not only by the tool), then the spec: the identifier pointer must exist in the create response and its type/format must match the path parameter; low confidence is rejected.
+- **On by default, never required.** No tool found, a tool that fails, or `--no-ai`: generated without AI; `maintain` never calls the AI (cached answers and reviewed sources only).
+- **Minimal context.** Operation keys, ids and summaries, response field names and types, the path parameter's type. Never example values, request data, test results or `.env` contents.
+- **Validated twice.** The answer must match the JSON Schema (checked here, not only by the tool), then the spec. A source: a safe list operation of the spec callable as is, a pointer through a list element of its response, a field type that fits the parameter (an integer id may fill a string parameter, a decimal never). A dependency: the identifier pointer must exist in the create response and its type/format must match. Low confidence is rejected.
+- **Writes only after review.** AI answers never create or delete data: sources only read, dependencies stay proposals.
 - **Proposals, never applied.** Accepted answers go to `ai-deps.proposed.json` (deps-file format); every answer with its reason to `ai-proposals.json`. Tests use them only after you pass the file with `--deps`, and running the tests then confirms the link against the real API.
-- **Budget:** `--ai-max-calls` (default 10). The run ends with answers, failures, time and, for `claude`, the cost Claude Code reports (only billed per call when you use an API key instead of a subscription).
+- **Budget:** `--ai-max-calls` (default 25). The run ends with answers, failures, time and, for `claude`, the cost Claude Code reports (only billed per call when you use an API key instead of a subscription).
 - **Tool missing or not logged in:** the AI step is skipped with a message; the rest of the run is unaffected.
 
 ## 6. Checks catalogue
@@ -368,7 +376,7 @@ Python folders use underscores and contain `__init__.py`, so `test_functional.py
 
 **Postman cloud or file?** Both. A path ending in `.json` is read from disk; anything else is treated as a cloud collection id and needs `POSTMAN_API_KEY`.
 
-**Does it use AI?** Only with `--ai`, through a console tool you are logged in to (Claude Code, Codex, or your own orchestrator), and only to propose answers for unconfirmed dependencies, which you review (§5b). No API keys. Everything else (spec analysis, cases, payloads, test analysis, generation) is rule-based and reproducible.
+**Does it use AI?** By default `generate` does, when a console tool you are logged in to is found (Claude Code, Codex, or your own orchestrator), and only where rules cannot decide (§5b): read-only sources of path values (used, marked AI-proposed, cached for reproducibility) and unconfirmed dependencies (proposals you review). No API keys. Without a tool, or with `--no-ai`, everything is rule-based.
 
 **Which languages can tests be generated in?** TypeScript (Playwright Test) and Python (pytest + requests), chosen in `init` or with `API_TESTS_LANG` / `--lang`. The analysis, cases and safety rules are shared; only the output templates differ, so more languages can be added.
 

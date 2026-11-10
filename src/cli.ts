@@ -27,12 +27,14 @@ import { validateManifest, validateRegistry } from './cases/validate.js';
 import { validateScenarios, type ResolvedScenario } from './scenarios/dsl.js';
 import { isUrl } from './change/network.js';
 import { accountNotice, ACCOUNT_MODES, checkRegisterConfig, missingLoginVars, parseAccountMode, registerAccount, type AccountMode } from './audit/account.js';
-import { AiRunner, describeAiError, RUNNERS, type RunnerKind } from './ai/runner.js';
+import { AiRunner, describeAiError, resolveCli, RUNNERS, type RunnerKind } from './ai/runner.js';
 import { proposeDependencies } from './ai/dependencies.js';
 import { analyzeProject } from './discover/analyze.js';
 import { loadApproved, type LoadedFixture } from './fixtures/fixtures.js';
 import { candidateSummary, captureFixture } from './fixtures/capture.js';
 import { maintain } from './maintain.js';
+import { proposeSources, reviewedSources, sourceTargets } from './ai/sources.js';
+import { findChains } from './generate/graph.js';
 import { upsertDraftPr } from './pr.js';
 
 const VERSION = '0.1.3';
@@ -255,9 +257,9 @@ common(program.command('generate').description('audit, then generate Playwright 
   .addOption(new Option('--lang <lang>', 'language of generated tests (default: API_TESTS_LANG or typescript)').choices(['typescript', 'python']))
   .option('--run', 'run the generated tests once against --base-url (needs --allow-write)', false)
   .option('--draft-pr', 'commit to a new branch and open a GitHub Draft PR for review', false)
-  .option('--ai', 'ask an AI console tool (your subscription, no API key) about unconfirmed dependencies; writes a PROPOSAL file, never applies it', false)
-  .addOption(new Option('--ai-runner <runner>', 'console tool: claude, codex, or command (API_AI_COMMAND). Default: API_AI or claude').choices(RUNNERS))
-  .option('--ai-max-calls <n>', 'AI call budget per run', '10')
+  .option('--no-ai', 'generate without the AI step (default: on when a console tool is found: API_AI, else claude, else codex)')
+  .addOption(new Option('--ai-runner <runner>', 'console tool: claude, codex, or command (API_AI_COMMAND). Default: API_AI, else the first of claude / codex found').choices(RUNNERS))
+  .option('--ai-max-calls <n>', 'AI call budget per run', '25')
   .option('--ai-model <id>', 'model name passed to the console tool (default: its own default)')
   .action(async (specArg: string | undefined, o: CommonOpts & { testsDir?: string; deps?: string; run: boolean; draftPr: boolean; lang?: 'typescript' | 'python'; ai: boolean; aiMaxCalls: string; maxCases: string; scenarios?: string; aiModel?: string; aiRunner?: RunnerKind; fixtures?: string }) => {
     const location = await resolveInputs(specArg, o);
@@ -268,7 +270,9 @@ common(program.command('generate').description('audit, then generate Playwright 
     await prepareAccount(o, o.probe || o.schemathesis, o.run);
     const r = await runAudit(location, o);
     const deps = o.deps ? JSON.parse(await readFile(o.deps, 'utf8')) : undefined;
-    if (o.ai) await aiProposals(r.spec.doc, r.ops, o.out, { maxCalls: Number(o.aiMaxCalls), model: o.aiModel, runner: o.aiRunner }, deps);
+    // AI step, on by default: proposals for review, and read-only sources of path values used right away
+    // (marked AI-proposed). Without a console tool everything is generated without it.
+    const ai = await aiStep(r.spec.doc, r.ops, o.out, o.testsDir!, { enabled: o.ai, maxCalls: Number(o.aiMaxCalls), model: o.aiModel, runner: o.aiRunner }, deps);
     log('Generating test suites (functional / contract / scenarios)…');
     const maxCases = Number(o.maxCases);
     if (!Number.isInteger(maxCases) || maxCases < 1) throw new Error(`--max-cases must be a positive integer, got "${o.maxCases}".`);
@@ -280,7 +284,7 @@ common(program.command('generate').description('audit, then generate Playwright 
       log(`Scenarios: ${scenarios.length} reviewed business scenario(s) from ${o.scenarios}`);
     }
     const fx = o.fixtures ? await approvedFixtures(o.fixtures, r.spec, r.ops) : undefined;
-    const gen = await generate(r.spec, r.ops, { outDir: o.testsDir!, deps, version: VERSION, lang: o.lang, maxCases, scenarios, ...(fx ?? {}) });
+    const gen = await generate(r.spec, r.ops, { outDir: o.testsDir!, deps, version: VERSION, lang: o.lang, maxCases, scenarios, ...(fx ?? {}), sources: ai.sources, sourceErrors: ai.sourceErrors, aiCache: ai.cache });
     for (const s of gen.scenarios) log(`  ${s.status.padEnd(9)} ${s.name}`);
     for (const f of gen.removed) log(`  REMOVED   ${relative(process.cwd(), f).replace(/\\/g, '/')} (generated earlier, no longer produced)`);
     if (o.run) {
@@ -316,6 +320,7 @@ common(program.command('generate').description('audit, then generate Playwright 
         files: gen.files.map((f) => resolve(f).replace(process.cwd() + (process.platform === 'win32' ? '\\' : '/'), '').replace(/\\/g, '/')),
         scenarios: gen.scenarios.map(({ name, status, reason, operations }) => ({ name, status, reason, operations })),
         cleanupFailures: gen.cleanupFailures,
+        ai: ai.report,
         ...(gen.exploratory?.length ? { exploratory: gen.exploratory } : {}),
         ...(gen.caseIdCheck ? { caseIdCheck: gen.caseIdCheck } : {}),
       },
@@ -412,7 +417,9 @@ program
       if (!specRef) log('AI: skipped, no spec.');
       else {
         const spec = await loadSpec(/^https?:/i.test(specRef) ? specRef : resolve(process.cwd(), specRef));
-        await aiProposals(spec.doc, buildCatalog(spec.doc), o.out, { maxCalls: Number(o.aiMaxCalls), model: o.aiModel, runner: o.aiRunner });
+        const found = findAdvisor({ maxCalls: Number(o.aiMaxCalls), model: o.aiModel, runner: o.aiRunner });
+        if (found.advisor) await aiProposals(spec.doc, buildCatalog(spec.doc), o.out, found.advisor);
+        else log(`AI: ${found.reason}.`);
       }
     }
     const a = r.analysis;
@@ -560,15 +567,64 @@ program
   });
 
 /** --ai: proposals for unconfirmed dependencies, written for review; never applied automatically. */
-async function aiProposals(doc: any, ops: Operation[], outDir: string, opts: { maxCalls: number; model?: string; runner?: RunnerKind }, deps?: any) {
-  let advisor: AiRunner;
-  try {
-    advisor = new AiRunner(opts);
-    log(`\nAI proposals (opt-in --ai, via ${advisor.kind}): only operation names, field names and types of each candidate are sent.`);
-  } catch (e) {
-    log(`  ${describeAiError(e)}`);
-    return;
+/**
+ * The AI console tool to use: --ai-runner / API_AI when set, else the first of claude / codex installed.
+ * None found (or a broken setting) → undefined with the reason: the run goes on without AI.
+ */
+function findAdvisor(opts: { maxCalls: number; model?: string; runner?: RunnerKind }): { advisor?: AiRunner; reason: string } {
+  const explicit = opts.runner ?? ((process.env.API_AI as RunnerKind | undefined) || undefined);
+  const kind = explicit ?? (resolveCli('claude') ? 'claude' : resolveCli('codex') ? 'codex' : undefined);
+  if (!kind) return { reason: 'no AI console tool found (claude or codex on PATH, or API_AI=command with API_AI_COMMAND)' };
+  if (!explicit || kind !== 'command') {
+    if (kind !== 'command' && !resolveCli(kind)) return { reason: `${kind} is not installed (API_AI / --ai-runner)` };
   }
+  try {
+    return { advisor: new AiRunner({ ...opts, runner: kind }), reason: `via ${kind}` };
+  } catch (e) {
+    return { reason: describeAiError(e) };
+  }
+}
+
+/** AI step of generate: dependency proposals (for review) and read-only sources of path values (used, marked). */
+async function aiStep(doc: any, ops: Operation[], outDir: string, testsDir: string, opts: { enabled: boolean; cacheOnly?: boolean; maxCalls: number; model?: string; runner?: RunnerKind }, deps?: any) {
+  const reviewed = reviewedSources(doc, ops, deps?.sources);
+  for (const e of reviewed.errors) log(`  INVALID   ${e.reason}`);
+  const none = { sources: reviewed.sources, sourceErrors: reviewed.errors, cache: undefined as Record<string, unknown> | undefined, report: { enabled: false, runner: null as string | null, reason: 'switched off (--no-ai)', usage: null as unknown, sources: [] as unknown[], dependencies: [] as unknown[] } };
+  if (!opts.enabled) {
+    log('AI: off (--no-ai): generated without the AI step.');
+    return none;
+  }
+  const found: { advisor?: AiRunner; reason: string } = opts.cacheOnly ? { reason: 'cached answers only (no AI calls here)' } : findAdvisor(opts);
+  log(found.advisor ? `AI: on ${found.reason} (only operation names, summaries, field names and types are sent; no data, no examples).` : `AI: ${found.reason}: generating without the AI step.`);
+  const dependencies = found.advisor ? await aiProposals(doc, ops, outDir, found.advisor, deps) : [];
+  // Read-only sources: the AI answers are cached in the suite, so a regeneration (even without AI) gives the same tests.
+  const cacheFile = join(testsDir, '_support', 'ai-sources.json');
+  let cache: Record<string, any> = {};
+  try {
+    cache = JSON.parse(await readFile(cacheFile, 'utf8')).answers ?? {};
+  } catch {
+    /* no cache yet */
+  }
+  const { chains } = findChains(doc, ops, deps);
+  const covered = (op: Operation) => reviewed.sources.some((x) => x.op === op) || chains.some((c) => c.read === op && !!c.delete);
+  const targets = sourceTargets(ops, covered);
+  const r = await proposeSources(doc, ops, targets, found.advisor, cache, log);
+  await mkdir(outDir, { recursive: true });
+  if (r.deps.length) {
+    const file = join(outDir, 'ai-sources.proposed.json');
+    await writeFile(file, JSON.stringify({ sources: r.deps }, null, 2) + '\n');
+    log(`  ${r.deps.length} AI source(s) used for read-only tests (marked AI-proposed). To review and keep them, copy "sources" from ${file.replace(/\\/g, '/')} into the deps file.`);
+  }
+  if (found.advisor) log(`  ${found.advisor.summary()}`);
+  return {
+    sources: [...reviewed.sources, ...r.sources],
+    sourceErrors: reviewed.errors,
+    cache: r.cache,
+    report: { enabled: true, runner: found.advisor?.kind ?? null, reason: found.reason, usage: found.advisor?.usage ?? null, sources: r.proposals, dependencies },
+  };
+}
+
+async function aiProposals(doc: any, ops: Operation[], outDir: string, advisor: AiRunner, deps?: any): Promise<unknown[]> {
   const { proposals, depsFile } = await proposeDependencies(doc, ops, advisor, log, deps);
   await mkdir(outDir, { recursive: true });
   await writeFile(join(outDir, 'ai-proposals.json'), JSON.stringify({ runner: advisor.kind, model: advisor.model ?? null, usage: advisor.usage, proposals }, null, 2) + '\n');
@@ -580,7 +636,7 @@ async function aiProposals(doc: any, ops: Operation[], outDir: string, opts: { m
     log(`  ${depsFile.scenarios.length} proposal(s) passed the spec check: ${file}`);
     log(`  Review it, then use it: generate --deps ${file.replace(/\\/g, '/')}`);
   }
-  log(`  ${advisor.summary()}`);
+  return proposals;
 }
 
 /** Approved fixtures of a directory; invalid ones are logged and become INVALID_REVIEWED_CONFIG gaps. */
@@ -622,9 +678,11 @@ program
     if (!location) throw new Error('No spec found: pass it as an argument or set API_SPEC_URL.');
     const { spec, ops } = await load(location);
     const inputs = await reviewedInputs(o, spec, ops);
+    // No new AI calls in maintenance (deterministic, unattended): reviewed sources and the AI answers cached in the suite.
+    const ai = await aiStep(spec.doc, ops, o.out, o.testsDir, { enabled: true, cacheOnly: true, maxCalls: 0 }, inputs.deps);
     const r = await maintain({
       location, spec, ops, testsDir: o.testsDir, base: o.base, out: o.out, draftPr: o.draftPr, allowNetwork: o.allowNetwork, log,
-      generate: { version: VERSION, lang: o.lang ?? cfg.testsLang, maxCases: Number(o.maxCases), ...inputs },
+      generate: { version: VERSION, lang: o.lang ?? cfg.testsLang, maxCases: Number(o.maxCases), ...inputs, sources: ai.sources, sourceErrors: ai.sourceErrors, aiCache: ai.cache },
     });
     log(`Summary: ${r.summaryFile}`);
     if (!r.valid) process.exitCode = 1;

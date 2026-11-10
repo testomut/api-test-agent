@@ -34,6 +34,8 @@ export interface AuditReport {
     scenarios: { name: string; status: Status; reason: string; operations: string[] }[];
     /** Test data cleanup could not remove during the run: it stays on the target. */
     cleanupFailures?: { operation: string; id: string; status: number | string }[];
+    /** The AI step: whether it ran, through which tool, and what it proposed (dependencies) or contributed (sources). */
+    ai?: { enabled: boolean; runner: string | null; reason: string; usage: unknown; sources: unknown[]; dependencies: unknown[] };
     /** Exploratory probe outcomes: observations for a human, never confirmed defects. */
     exploratory?: { operation: string; parameter: string; probe: string; value: string | null; status: number; documented: boolean; contract: string; serverError: boolean }[];
     /** After a run: every physical test has its own case ID registered in cases.json. */
@@ -131,6 +133,18 @@ export function toMarkdown(r: AuditReport): string {
   if (left.length) {
     L.push('## ⚠️ Test data left on the target', '', `Cleanup could not remove ${left.length} record(s) created by the run. Remove them by hand, or fix the cleanup (e.g. an account allowed to delete) before running again.`, '');
     L.push('| Cleanup operation | Status | Id |', '|---|---|---|', ...left.map((f) => `| \`${f.operation}\` | ${f.status} | \`${f.id}\` |`), '');
+  }
+  const ai = r.generated?.ai;
+  if (ai) {
+    const rows = ai.sources as { operation: string; param: string; status: string; reason: string; answer?: { from: string | null; pointer: string | null } }[];
+    const used = rows.filter((x) => x.status === 'used' || x.status === 'cached');
+    L.push('## AI participation', '', !ai.enabled ? 'Off (`--no-ai`): generated without the AI step.' : ai.runner ? `On, via ${ai.runner}. Only operation names, summaries, field names and types were sent; no data, no examples.` : `On, but ${ai.reason}: generated without the AI step${used.length ? ' (cached answers of an earlier run were reused)' : ''}.`, '');
+    if (used.length) {
+      L.push(`${used.length} read-only test(s) take a path value from existing data where the AI found it (marked \`ai-proposed\`, unreviewed). To keep one, copy it into the deps file \`sources\`.`, '');
+      L.push('| Operation | Parameter | From | Pointer | |', '|---|---|---|---|---|', ...used.map((x) => `| \`${x.operation}\` | \`${x.param}\` | \`${x.answer?.from}\` | \`${x.answer?.pointer}\` | ${x.status} |`), '');
+    }
+    const rejected = rows.filter((x) => x.status === 'rejected');
+    if (rejected.length) L.push(`Rejected (not used): ${rejected.map((x) => `\`${x.operation}\` (${x.reason})`).join('; ')}.`, '');
   }
   const probes = r.generated?.exploratory ?? [];
   if (probes.length) {

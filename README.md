@@ -14,7 +14,7 @@ OpenAPI spec ──► lint + catalogue ──► safe probe ──► Schemathe
 
 ## Principles
 
-- **Deterministic first, no AI in this version.** Parsing, lint, catalogue, payloads, templates, CI: all rule-based. AI is planned only for ambiguous dependencies, with a token budget.
+- **Deterministic first, AI where rules cannot decide.** Parsing, lint, catalogue, payloads, templates, CI: rule-based. When a console AI tool is found, `generate` also asks it where an existing id can be read (read-only tests, marked AI-proposed, cached for reproducibility) and proposes unconfirmed dependencies for review; without a tool it runs exactly as before.
 - **The spec is the requirement.** An observed response that differs from the spec is a `CONTRACT_MISMATCH` for a human to decide on. The tool never treats the implementation as the source of truth.
 - **Stop with a precise blocker instead of inventing.** No example for a required parameter, a pattern it cannot satisfy, a dependency that is only implied by path names: each becomes `BLOCKED` with the exact question to answer.
 - **Never make a test green by editing it.** Generated tests run once; assertions are not touched.
@@ -49,7 +49,7 @@ npx @testomut/api-test-agent diff --head openapi.yaml   # what changed in the sp
 
 **Test language:** TypeScript (Playwright Test) or Python (pytest + requests), chosen in `init` or with `API_TESTS_LANG` / `generate --lang`. Same layout, cases and safety rules in both.
 
-**Optional AI (`--ai`):** runs through a console tool you are logged in to (Claude Code `claude -p`, Codex `codex exec`, or your own orchestrator command): no API keys. It proposes answers for unconfirmed dependencies from a minimal spec excerpt; every answer is schema-validated, checked against the spec and written as a proposal you review, never applied automatically. Without `--ai` the tool is fully deterministic.
+**AI step (on by default, `--no-ai` to switch off):** runs through a console tool you are logged in to (Claude Code `claude -p`, Codex `codex exec`, or your own orchestrator command), no API keys; none found → generated without it. From a minimal spec excerpt it finds where existing ids can be read, which unblocks read-only tests of `GET /x/{id}` (marked `ai-proposed`; copy them into the deps file `sources` to keep them reviewed), and proposes unconfirmed dependencies, which are never applied without your review. Every answer is schema-validated and checked against the spec.
 
 **Full guide: [docs/GUIDE.md](docs/GUIDE.md)** (configuration, every check, what each command changes). Legacy projects to try it on: [Playwright](examples/legacy-project), [pytest](examples/legacy-pytest-project).
 

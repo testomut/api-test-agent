@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **AI step on by default** (docs/GUIDE.md §5b): `generate` uses a console AI tool when one is found (`API_AI` / `--ai-runner`, else `claude`, else `codex`); none found, a failing tool or `--no-ai` → generated without it.
+  - new: read-only sources of path values: the AI says which list operation and field hold existing ids (`brandId ← GET /brands #/0/id`); after the spec check (safe list operation, a pointer through a list element, a fitting identifier type) a positive test reads the list and then the record, skipped with the reason when there is no record or the list is refused; marked `ai-proposed` (pytest `ai_proposed`), listed in the report section "AI participation";
+  - answers cached in the suite (`_support/ai-sources.json`): regeneration, `maintain` (which never calls the AI) and runs without AI reproduce the same tests; a reviewed form in the deps file: `"sources": [...]`;
+  - unconfirmed write dependencies stay proposals (`ai-deps.proposed.json`); `--ai-max-calls` default 25.
+  - On Toolshop: 8 sources found (brands, category tree, related / specs of a product, invoices, users): 8 more tests passed, 8 skipped with the reason (no invoices on a fresh account, `GET /users` needs an admin), `MISSING_RESOURCE_SOURCE` 22 → 15.
 - **Query parameters and GET collections** (docs/SUPPORT_MATRIX.md):
   - confirmed: a decimal case for integer parameters (inside the documented bounds, so only the type is broken); every query case checks that the value really went over HTTP; accepted values also check the response contract; values over the limits are `CASE_LIMIT_REACHED` gaps instead of being dropped silently; Python sends query booleans as `true` / `false`;
   - exploratory probes for scalar query parameters of GET / HEAD operations (empty, text, decimal, zero, negative, large, special characters, another spelling of a boolean or enum value, a missing required parameter): deduplicated against confirmed cases and the documented range, never failing on the API's behavior, recorded in the report (`exploratory.jsonl`, "Exploratory query probes");
