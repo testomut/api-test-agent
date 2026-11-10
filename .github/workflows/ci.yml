@@ -129,12 +129,12 @@ jobs:
           npx tsx src/cli.ts manifest validate --tests-dir tests/api-python
 
       - name: Fault injection - the generated tests must catch every injected defect (TS and Python)
-        # The demo API runs once per DEMO_FAULT (ignored filter, wrong sort, hidden record, duplicates, wrong field,
-        # overlapping pages, a required optional field, an accepted expired token, an ignored suspension) on its own
-        # port: clean without a fault, at least one failure with each.
+        # The demo API runs once per DEMO_FAULT (17 defects: collection, body variants, auth, parameter validation,
+        # total, persistence, search, decimal truncation) on its own port: clean without a fault, at least one failure
+        # with each. Exploratory probes record and never fail, so they cannot hide a clean run.
         run: |
-          npx tsx scripts/mutation-check.ts --lang typescript --port 3200 tests/api/items tests/api/me
-          npx tsx scripts/mutation-check.ts --lang python --port 3300 tests/api-python/items tests/api-python/me
+          npx tsx scripts/mutation-check.ts --lang typescript --port 3200 --show tests/api/items tests/api/items-search tests/api/me
+          npx tsx scripts/mutation-check.ts --lang python --port 3300 --show tests/api-python/items tests/api-python/items_search tests/api-python/me
           node -e '
             for (const l of ["typescript", "python"]) { const r = require("./reports/mutation-" + l + ".json"); console.log(l, r.detected + "/" + r.injected); if (r.detected !== r.injected) process.exit(1); }
           '

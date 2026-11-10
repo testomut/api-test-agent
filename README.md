@@ -138,7 +138,8 @@ Coverage is reported, never implied. The full keyword-by-keyword table is in [do
 
 **Derived from the spec alone (deterministic):**
 - request bodies, recursively (`request.body#/items/*/sku`): required, type, null, enum, const, lengths, pattern, format, bounds, multipleOf, array and object size, uniqueItems, additionalProperties; one broken rule per case;
-- query, header, cookie and path parameters, arrays in their documented style;
+- query, header, cookie and path parameters, arrays in their documented style; each case checks that the value really went over HTTP; integers also get a decimal;
+- exploratory query probes (empty, non-numeric, decimal, zero, negative, huge, special characters): what the API answers is recorded in the report, never treated as a confirmed defect;
 - documented successes, documented enum values and valid limits of query parameters (one test and one case ID each);
 - responses: status, Content-Type, headers, JSON / text schema, no body where none is documented, writeOnly;
 - documented errors with a safe trigger: 400 / 422, 401 (missing and invalid credentials), 404, 405 (GET only), 412, 415.

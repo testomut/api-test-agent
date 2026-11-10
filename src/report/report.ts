@@ -34,6 +34,8 @@ export interface AuditReport {
     scenarios: { name: string; status: Status; reason: string; operations: string[] }[];
     /** Test data cleanup could not remove during the run: it stays on the target. */
     cleanupFailures?: { operation: string; id: string; status: number | string }[];
+    /** Exploratory probe outcomes: observations for a human, never confirmed defects. */
+    exploratory?: { operation: string; parameter: string; probe: string; value: string | null; status: number; documented: boolean; contract: string; serverError: boolean }[];
     /** After a run: every physical test has its own case ID registered in cases.json. */
     caseIdCheck?: { tests: number; missing: string[]; duplicates: string[]; unregistered: string[] };
   };
@@ -129,6 +131,17 @@ export function toMarkdown(r: AuditReport): string {
   if (left.length) {
     L.push('## ⚠️ Test data left on the target', '', `Cleanup could not remove ${left.length} record(s) created by the run. Remove them by hand, or fix the cleanup (e.g. an account allowed to delete) before running again.`, '');
     L.push('| Cleanup operation | Status | Id |', '|---|---|---|', ...left.map((f) => `| \`${f.operation}\` | ${f.status} | \`${f.id}\` |`), '');
+  }
+  const probes = r.generated?.exploratory ?? [];
+  if (probes.length) {
+    const notable = probes.filter((p) => p.serverError || !p.documented || p.contract !== 'matches');
+    L.push(
+      '## Exploratory query probes (observations, not confirmed defects)',
+      '',
+      `${probes.length} probe(s) sent inputs the spec does not specify an answer for; ${notable.length} answered with a server error, an undocumented status or a response that does not match the contract. Review them: a 5xx on malformed input usually deserves a bug report, but the spec does not make it one.`,
+      '',
+    );
+    if (notable.length) L.push('| Operation | Parameter | Probe | Value | Status | Note |', '|---|---|---|---|---|---|', ...notable.map((p) => `| \`${p.operation}\` | \`${p.parameter}\` | ${p.probe} | ${p.value === null ? '(not sent)' : `\`${String(p.value).slice(0, 24)}\``} | ${p.status} | ${p.serverError ? 'server error' : !p.documented ? 'undocumented status' : p.contract.slice(0, 80)} |`), '');
   }
   if (r.generated) {
     L.push('## Generated functional scenarios', '');

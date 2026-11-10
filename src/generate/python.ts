@@ -255,6 +255,7 @@ def pytest_configure(config):
         "scenario": "multi-request flows",
         "positive": "the request is expected to succeed / the response to conform",
         "negative": "the request is expected to be rejected",
+        "exploratory": "a probe that records the API's answer and never fails on it",
     }.items():
         config.addinivalue_line("markers", f"{name}: {text}")
     config.addinivalue_line("markers", "api_case_id(id): stable case ID from _support/cases.json")
@@ -283,6 +284,9 @@ class ApiClient(requests.Session):
 
     def request(self, method, url, *args, **kwargs):
         kwargs.setdefault("timeout", 30)
+        # Query booleans as JSON text (true / false), like the TypeScript suite; requests would send True / False.
+        if isinstance(kwargs.get("params"), dict):
+            kwargs["params"] = {k: ("true" if v is True else "false" if v is False else v) for k, v in kwargs["params"].items()}
         return super().request(method, self.base_url + url.lstrip("/"), *args, **kwargs)
 
 
@@ -509,8 +513,8 @@ export function renderPyFunctional(s: SuiteInput, meta: Meta): string {
     const base = requiredRequest(op).params;
     L.push('QUERY_VALUES = [');
     variants.forEach((v, n) => L.push(`    pytest.param(${pyLit({ ...base, [v.name]: v.value }, 4)}, id=${str(`${v.name}=${String(v.value)}`)}${paramMarks(s.ids?.functional.variants[n])}),`));
-    L.push(']', '', '', POS, '@pytest.mark.parametrize("params", QUERY_VALUES)', 'def test_accepts_documented_query_value(api, params):');
-    L.push(`    res = api.${op.method}(${pathExpr(op)}, params=params${pyRequired(op, ['params'])})`, `    ${assertSuccess(op)}`, '', '');
+    L.push(']', '', '', POS, '@pytest.mark.parametrize("params", QUERY_VALUES)', 'def test_accepts_documented_query_value(api, contract, params):');
+    L.push(`    res = api.${op.method}(${pathExpr(op)}, params=params${pyRequired(op, ['params'])})`, `    ${assertSuccess(op)}`, `    contract.expect(res, ${str(op.method)}, ${str(op.path)})  # an accepted value must still give a documented response`, '', '');
   }
   if (s.notFound) L.push(...pyNotFound(s, 'test_returns_documented_404_for_unknown_id', withId(NEG, s.ids?.functional.notFound), statusIs(op, '404')));
   if (s.unauthorized) L.push(...pyAnonymous(s, 'test_returns_documented_401_without_credentials', withId(NEG, s.ids?.functional.unauthorized), statusIs(op, '401')));
@@ -679,12 +683,46 @@ export function renderPyContract(s: SuiteInput, meta: Meta): string {
     L.push('INVALID_PARAMETERS = [');
     s.paramCases.forEach((c, n) => {
       const r = c.request ?? (c.query ? { params: c.query as Record<string, string | number | boolean> } : {});
-      const parts = Object.fromEntries(Object.entries({ params: r.params, headers: r.headers, path: r.path }).filter(([, v]) => v !== undefined));
+      const parts = Object.fromEntries(Object.entries({ params: r.params, headers: r.headers, path: r.path, sent: c.sent }).filter(([, v]) => v !== undefined));
       L.push(`    pytest.param(${pyLit(parts, 4)}, id=${str(c.title)}${paramMarks(s.ids?.contract.params[n])}),  # ${c.source}`);
     });
-    L.push(']', '', '', NEG, '@pytest.mark.parametrize("parts", INVALID_PARAMETERS)', 'def test_rejects_invalid_parameter(api, contract, parts):');
+    L.push(']', '', '', 'from contract import expect_sent_query  # noqa: E402', '', '', NEG, '@pytest.mark.parametrize("parts", INVALID_PARAMETERS)', 'def test_rejects_invalid_parameter(api, contract, parts):');
     L.push('    path = parts.get("path", {})');
-    L.push(`    res = api.${op.method}(${pathFromParts(op)}, params=parts.get("params"), headers=parts.get("headers"))`, `    contract.expect_rejected(res, REJECTION, ${str(op.method)}, ${str(op.path)})`, '', '');
+    L.push(
+      `    res = api.${op.method}(${pathFromParts(op)}, params=parts.get("params"), headers=parts.get("headers"))`,
+      '    # The request carried the value under test (a local schema violation proves nothing about the API).',
+      '    if parts.get("sent"):',
+      '        expect_sent_query(res, parts["sent"]["name"], parts["sent"]["value"])',
+      `    contract.expect_rejected(res, REJECTION, ${str(op.method)}, ${str(op.path)})`,
+      '',
+      '',
+    );
+  }
+  if (s.probes?.length) {
+    // Exploratory: what the API must answer is not specified, so these never fail on its behavior; they record it.
+    const fx = 'api';
+    L.push('PROBES = [');
+    s.probes.forEach((p, n) => {
+      const id = s.ids?.contract.probes?.[n];
+      L.push(`    pytest.param(${pyLit({ param: p.param, kind: p.kind, params: p.params, value: p.value }, 4)}, id=${str(p.title)}${id ? `, marks=pytest.mark.api_case_id(${str(id)})` : ''}),`);
+    });
+    L.push(
+      ']',
+      '',
+      '',
+      'from contract import expect_sent_query  # noqa: E402,F811',
+      '',
+      '',
+      NEG,
+      '@pytest.mark.exploratory',
+      '@pytest.mark.parametrize("probe", PROBES)',
+      `def test_exploratory_probe_records_never_fails(${fx}, contract, probe):`,
+      `    res = ${fx}.${op.method}(${pathExpr(op)}, params=probe["params"])`,
+      '    expect_sent_query(res, probe["param"], probe["value"])',
+      `    contract.record_probe(res, {"operation": ${str(op.key)}, "parameter": probe["param"], "probe": probe["kind"], "value": probe["value"]}, ${str(op.method)}, ${str(op.path)})`,
+      '',
+      '',
+    );
   }
   if (s.errors?.unsupportedMediaType && chain) {
     // 415: the documented body, but declared as text/plain. Anything the API wrongly creates is removed.

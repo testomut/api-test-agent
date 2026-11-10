@@ -114,6 +114,8 @@ def expect_fields(item: Any, expected: Any, policies: dict) -> None:
 def expect_all_match(items: list, ptr: str, match: str, value: Any) -> None:
     def ok(i: Any) -> bool:
         v = read_pointer(i, ptr)
+        if match == "search":  # the text contains the value, ignoring case
+            return str(value).lower() in ("" if v is None else str(v)).lower()
         if match == "contains":
             return isinstance(v, list) and str(value) in [str(x) for x in v]
         return str(v) == str(value)
@@ -201,6 +203,17 @@ def poll(fn, done, timeout_ms: int, interval_ms: int):
         time.sleep(interval_ms / 1000)
         v = fn()
     return v
+
+
+def expect_sent_query(res: Any, name: str, value: Any) -> None:
+    """The query parameter went over HTTP as intended: its text, or absent (value None)."""
+    from urllib.parse import parse_qs, urlsplit
+
+    sent = parse_qs(urlsplit(res.request.url).query, keep_blank_values=True).get(name, [])
+    if value is None:
+        assert sent == [], f"{name} is not sent, got {sent}"
+    else:
+        assert sent == [value], f"{name} is sent as {value!r}, got {sent}"
 
 
 def without_fields(payload: Any, ptrs: list) -> Any:
@@ -432,6 +445,20 @@ class ContractValidator:
             warnings.warn(f"contract note: {note}", stacklevel=2)
         assert ok, f"CONTRACT_MISMATCH {method.upper()} {path} ({kind}): {'; '.join(errors)}"
         return None if body is _UNPARSEABLE else body
+
+    def record_probe(self, res: Any, info: dict, method: str, path: str) -> dict:
+        """Exploratory probe (never fails on the API's behavior): records the outcome; a 5xx is flagged, not asserted."""
+        content_type, body, raw = _body(res)
+        self.notes = []
+        ok, kind, errors = self.validate(method, path, res.status_code, content_type, body, raw, dict(res.headers))
+        observation = {**info, "status": res.status_code, "documented": kind != "undocumented-status", "contract": "matches" if ok else "; ".join(errors), "serverError": res.status_code >= 500}
+        out = os.environ.get("API_AGENT_EXPLORATORY_LOG")
+        if out:
+            with open(out, "a", encoding="utf-8") as f:
+                f.write(json.dumps(observation) + "\n")
+        elif observation["serverError"]:
+            warnings.warn(f"exploratory probe {info} answered {res.status_code} (an observation, not a confirmed defect)", stacklevel=2)
+        return observation
 
     def expect_rejected(self, res: Any, documented: list[str], method: str, path: str) -> Any:
         """The request must be rejected with a documented status ("400", "422", "4XX"...), then match the contract."""

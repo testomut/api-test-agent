@@ -50,7 +50,7 @@ Every case is a valid request (each required query / header / cookie parameter w
 | Target | State | Limits / gap | Stage |
 |---|---|---|---|
 | required (missing) | ✅ | query, header, cookie; needs the documented value of every required parameter, else `MISSING_VALID_SAMPLE` and no cases | 4 ✔ |
-| `type` | ✅ | number, integer, boolean (a string parameter cannot have a wrong type on the wire) | 4 ✔ |
+| `type` | ✅ | number, integer, boolean (a string parameter cannot have a wrong type on the wire); an integer also gets a decimal inside its bounds (`request.<in>#/<name>/decimal`), which a lenient parser would round; with `multipleOf` > 1 or an `enum` → `CANNOT_ISOLATE_RULE` | 4 ✔, Q ✔ |
 | `enum`, `const` | ✅ | | 4 ✔ |
 | `pattern`, `format` | ✅ | as for bodies | 4 ✔ |
 | `minimum` / `maximum` / exclusive / `multipleOf` | ✅ | | 4 ✔ |
@@ -62,7 +62,26 @@ Every case is a valid request (each required query / header / cookie parameter w
 | cookie parameters | ✅ | sent in the `Cookie` header | 4 ✔ |
 | path parameters | ✅ | type, format, pattern, enum, length; on write operations numeric bounds → `UNSAFE_LIVE_CHECK` (an out-of-range id could address a real record); other path parameters need documented values (`MISSING_RESOURCE_SOURCE`); not on operations whose body is required | 4 ✔ |
 | required header / cookie in every generated call | ✅ | positive, 404, 401, body and parameter cases; a required one without a documented value blocks the operation with its reason | 4 ✔ |
-| boundary-valid values | ❌ | | 7 |
+| boundary-valid values | ✅ | documented enum values, else the valid limits (min / max inside exclusive bounds and `multipleOf`, shortest / longest string), one `accepted-value` test each, status and response contract checked; more than 5 per parameter / 15 per operation → `CASE_LIMIT_REACHED` | 7 ✔, Q ✔ |
+| the value is really sent | ✅ | every query case checks the request URL: the value under test as text, or absent for a missing one (a local schema violation proves nothing about the API); Python sends booleans as `true` / `false` like TypeScript | Q ✔ |
+
+### Exploratory probes (`src/generate/probes.ts`)
+
+Inputs a real client sends by mistake, for scalar query parameters of GET / HEAD operations. What the API must answer is not specified (or no rejection is documented), so a probe **never fails on the API's behavior**: it checks that the value went over HTTP and records the answer (status, documented or not, server error, contract match) as a test annotation and, during `--run`, in the report section "Exploratory query probes". A 5xx is flagged for a human, not reported as a defect. Rule `probe`, location `request.query#/<name>/<probe>`.
+
+| Probe | For | Not generated when |
+|---|---|---|
+| `missing` | required parameters | the confirmed `required` case sends it |
+| `empty` (`name=`) | all | a confirmed `minLength` ≥ 1 case covers it |
+| `text` (`abc`, `maybe`) | integer / number / boolean | the confirmed `type` case covers it |
+| `decimal` (`1.5`) | integer | the confirmed decimal case covers it |
+| `zero`, `negative` | integer / number | a documented range makes it valid, or a confirmed minimum case covers it |
+| `large` | integer / number (20 digits), string without `maxLength` (1000 characters) | a confirmed maximum / maxLength case covers it |
+| `special` (`'"<>%;&`) | free-text strings | |
+| `numeric` (`1`) | boolean | |
+| `case` (another letter case of an enum value) | string enums | |
+
+Write operations are never probed (`UNSAFE_LIVE_CHECK`); an operation with an unknown path value is not probed (`MISSING_RESOURCE_SOURCE`); more than 24 probes per operation → `CASE_LIMIT_REACHED`.
 
 ## Functional (`functional.spec.ts`)
 
@@ -171,6 +190,10 @@ Strategy per list operation (recorded in `coverage-gaps.json` → `collection.st
 |---|---|---|
 | created resource is listed (`collection-contains`) with its persisted fields | ✅ | strategy A; field policies |
 | filter returns the match and leaves out the non-match, all results match (`filter`) | ✅ | `equals` / `contains`; enum filters with an isolating marker |
+| search (`"match": "search"`: the string field contains the value, ignoring case) | ✅ | controlled: the query in upper case, the data in lower case; read-only: prefixes of existing values; no subset check when the search parameter is required (there is no unfiltered list) |
+| descending is the ascending order reversed (`sort-reverse`) | ✅ | for every asc / desc pair on one field; controlled: the test's records; read-only: the values (ties keep their place), read once more on a mismatch |
+| total and metadata (`total`: a JSON pointer in the response) | ✅ | the same total on every page and equal to the number of resources listed; read-only skipped when there are more than `maxPages` pages; without `total` → `UNCONFIRMED_BUSINESS_RULE` |
+| several list operations of one resource (`"collections": [...]`) | ✅ | each with its own mapping; an operation mapped twice → `INVALID_REVIEWED_CONFIG`; a lifecycle that cannot find the updated resource (required parameter, update changes the isolating field) → `CANNOT_ISOLATE_RULE` |
 | a filter only narrows: no resource the unfiltered list does not show (`filter`, read-only) | ✅ | values that occur in the list only: a value that only hidden resources have cannot be reached read-only |
 | range filters (`between=price,10,30`), boolean flags with a default scope (`is_rental`) | ❌ | not mapped yet |
 | sort order (`sort`) | ✅ | one case per documented sort value; plain comparison (code points / numbers): the API must document that order |
@@ -183,7 +206,7 @@ Strategy per list operation (recorded in `coverage-gaps.json` → `collection.st
 
 Defect detection on a real API: Toolshop's deliberately defective build (`api-with-bugs.practicesoftwaretesting.com`) returns rental products for `by_brand=1` that its product list never shows. The read-only `by_brand` test fails on it (`by_brand=1 returns resources the unfiltered collection does not show: 27, 28, 29`) and passes on the regular build, in TypeScript and Python. `by_category=12` has the same defect but only rentals carry that category, so a read-only test cannot reach it.
 
-Defect detection on the demo API (`scripts/mutation-check.ts`, TypeScript and Python identical). Beyond the list defects below, the suite must also catch `require-optional` (an optional field is required), `accept-expired` (an expired token is accepted) and `ignore-suspension` (a refused account gets 200): 9/9 in CI; the generator of the previous release caught 7/9 on the same spec (both auth defects missed, `require-optional` only by chance, through a reviewed business scenario).
+Defect detection on the demo API (`scripts/mutation-check.ts --show` lists which tests caught each defect; TypeScript and Python identical). 17 faults in CI: the list defects below, `require-optional`, `accept-expired`, `ignore-suspension`, and the parameter / collection faults `ignore-max`, `loose-types`, `ignore-enum`, `ignore-required`, `truncate-decimal` (limit=20.5 becomes 20), `wrong-total`, `drop-update` (the update is not stored), `broken-search`. The previous release caught 14/17 on the same spec (missed `wrong-total`, `broken-search`, `truncate-decimal`). Beyond the list defects below, the suite must also catch `require-optional` (an optional field is required), `accept-expired` (an expired token is accepted) and `ignore-suspension` (a refused account gets 200): 9/9 in CI; the generator of the previous release caught 7/9 on the same spec (both auth defects missed, `require-optional` only by chance, through a reviewed business scenario).
 
 
 
@@ -236,6 +259,7 @@ Defect detection on the demo API (`scripts/mutation-check.ts`, TypeScript and Py
 | CI: the synthetic fixture compiles | ✅ | `tests/fixtures/coverage/kitchen-sink.yaml` generated in both languages: `tsc`, `py_compile`, valid registry | 6 ✔ |
 | CI: expected coverage gaps | ✅ | demo API (`demo-api/expected-gaps.json`) in CI; the synthetic fixture in unit tests | 10 ✔ |
 | CI: coverage baseline | ✅ | `ci/coverage-baseline.{demo,kitchen-sink}.json`: every active case ID and every gap (code + operation + location); a lost case or a gap the baseline does not list fails until the PR updates the baseline (`scripts/coverage-summary.ts --write-baseline`) | D ✔ |
+| CI: Python fixtures are never reassigned | ✅ | a test that assigns to its own fixture (e.g. `items, totals = ...` with the `items` resource fixture) fails the gate: its cleanup would hit the wrong object | Q ✔ |
 | CI: cleanup of write tests | ✅ | every generated test that creates data removes it in `finally`, a fixture teardown, or `removeIfCreated` right after the request and before any assertion (`src/report/quality-gates.ts`), TypeScript and Python | D ✔ |
 | CI: coverage summary | ✅ | per operation: suites, active case IDs, documented statuses checked, gaps with code and location; Markdown + JSON artifact `coverage-summary`, also in the job summary | D ✔ |
 | unchecked-status codes | ✅ | the actual reason: a status of an operation no request is sent to has the success call's reason (e.g. `MISSING_CLEANUP`), an unchecked success status the reason the success call is blocked (e.g. `MISSING_RESOURCE_SOURCE`) | D ✔ |

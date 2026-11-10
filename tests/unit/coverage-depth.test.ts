@@ -173,3 +173,30 @@ describe('CI quality gates', () => {
     expect(d).toEqual({ lostCases: ['a'], newCases: ['c'], newGaps: ['G2'], closedGaps: ['G1'] });
   });
 });
+
+describe('CI quality gates: Python fixtures', () => {
+  it('a test that reassigns its resource fixture fails the gate (its cleanup would hit the wrong object)', () => {
+    const py = [
+      '@pytest.mark.positive',
+      'def test_shadow(api, items):',
+      '    ids = []',
+      '    try:',
+      '        ids.append(items.create({})[0])',
+      '        items, totals, _ = (1, 2, 3)',
+      '    finally:',
+      '        for rid in ids:',
+      '            items.remove(rid)',
+      '@pytest.mark.positive',
+      'def test_fine(api, items):',
+      '    ids = []',
+      '    try:',
+      '        ids.append(items.create({})[0])',
+      '        listed, totals, _ = (1, 2, 3)',
+      '        assert listed == 1',
+      '    finally:',
+      '        for rid in ids:',
+      '            items.remove(rid)',
+    ].join('\n');
+    expect(cleanupProblems(py, 'python').map((p) => p.problem)).toEqual(['the fixture "items" is reassigned in the test, so its cleanup no longer applies']);
+  });
+});

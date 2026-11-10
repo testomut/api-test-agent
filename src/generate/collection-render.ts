@@ -34,6 +34,25 @@ function pageEntries(plan: CollectionPlan, i: string, size: string, q: (s: strin
   return undefined;
 }
 
+/** A query parameter of the list operation that is required (no unfiltered list without it). */
+const requiredParam = (s: SuiteInput, name: string) => s.op.params.some((p) => p.in === 'query' && p.name === name && p.required);
+
+/** Read-only filter: candidate values from existing resources (search: a prefix of the text, in upper case). */
+function searchLength(s: SuiteInput, f: { param: string }): number {
+  const schema: any = s.op.params.find((p) => p.name === f.param)?.schema ?? {};
+  return Math.max(typeof schema.minLength === 'number' ? schema.minLength : 1, Math.min(typeof schema.maxLength === 'number' ? schema.maxLength : 8, 8));
+}
+function tsCandidates(f: { param: string; match: string }, s: SuiteInput): string {
+  if (f.match === 'contains') return 'Array.isArray(v) ? v : []';
+  if (f.match === 'search') return `typeof v === 'string' && v.length >= ${searchLength(s, f)} ? [v.slice(0, ${searchLength(s, f)}).toUpperCase()] : []`;
+  return 'v === undefined || v === null ? [] : [v]';
+}
+function pyCandidates(f: { param: string; match: string }, s: SuiteInput): string {
+  if (f.match === 'contains') return 'v if isinstance(v, list) else []';
+  if (f.match === 'search') return `[v[:${searchLength(s, f)}].upper()] if isinstance(v, str) and len(v) >= ${searchLength(s, f)} else []`;
+  return '[] if v is None else [v]';
+}
+
 const sortValue = (v: string | number, lang: 'ts' | 'py') => (typeof v === 'string' ? (lang === 'ts' ? `${js(v)} + marker` : `${py(v)} + marker`) : String(v));
 const filterValue = (t: CollectionTest, which: 'a' | 'b', lang: 'ts' | 'py') => {
   const fv = t.filterValues!;
@@ -83,11 +102,13 @@ export function tsCollectionPrelude(s: SuiteInput, ci: CollectionInput): string[
   }
   L.push(
     '',
-    `async function listPage(api: Apis, params: Record<string, unknown>): Promise<unknown[]> {`,
+    `async function listBody(api: Apis, params: Record<string, unknown>): Promise<unknown> {`,
     `  const res = await ${apiCall(ref, 'api', pathArgs(op, ref), `{ params: { ...${js(req)}, ...params } as Record<string, string | number | boolean> }`)};`,
     `  ${expectSuccess(op)}`,
-    `  return itemsOf(await res.json(), ITEMS);`,
+    `  return res.json();`,
     `}`,
+    '',
+    `const listPage = async (api: Apis, params: Record<string, unknown>): Promise<unknown[]> => itemsOf(await listBody(api, params), ITEMS);`,
     '',
     `/** Every page (at most MAX_PAGES) with these parameters${page ? '' : ': the API has no reviewed paging, so the one response'}. */`,
     `async function listPages(api: Apis, params: Record<string, unknown>, size = WALK): Promise<unknown[][]> {`,
@@ -109,6 +130,35 @@ export function tsCollectionPrelude(s: SuiteInput, ci: CollectionInput): string[
     `const listUntil = (api: Apis, params: Record<string, unknown>, done: (items: unknown[]) => boolean) => poll(() => listAll(api, params), done, POLL.timeoutMs, POLL.intervalMs);`,
     '',
   );
+  if (c.total) {
+    L.push(
+      `const TOTAL = ${js(c.total)};`,
+      `/** Every page with the total it reports (at most MAX_PAGES); complete: the last page was reached. */`,
+      `async function listWithTotals(api: Apis, params: Record<string, unknown>): Promise<{ items: unknown[]; totals: unknown[]; complete: boolean }> {`,
+      `  const items: unknown[] = [];`,
+      `  const totals: unknown[] = [];`,
+      ...(page
+        ? [
+            `  for (let i = 0; i < MAX_PAGES; i++) {`,
+            `    const size = WALK;`,
+            `    const body = await listBody(api, { ...params, ${page} });`,
+            `    const one = itemsOf(body, ITEMS);`,
+            `    items.push(...one);`,
+            `    totals.push(readPointer(body, TOTAL));`,
+            `    if (one.length < size) return { items, totals, complete: true };`,
+            `  }`,
+            `  return { items, totals, complete: false };`,
+          ]
+        : [`  const body = await listBody(api, params);`, `  items.push(...itemsOf(body, ITEMS));`, `  totals.push(readPointer(body, TOTAL));`, `  return { items, totals, complete: true };`]),
+      `}`,
+      `/** One total on every page, and it is the number of resources listed. */`,
+      `function expectTotal(r: { items: unknown[]; totals: unknown[] }): void {`,
+      `  expect(new Set(r.totals.map(String)).size, 'the same total on every page: ' + r.totals.join(', ')).toBe(1);`,
+      `  expect(Number(r.totals[0]), TOTAL + ' is the number of resources listed').toBe(r.items.length);`,
+      `}`,
+      '',
+    );
+  }
   return L;
 }
 
@@ -151,7 +201,9 @@ export function tsCollectionTests(s: SuiteInput, ci: CollectionInput): string[] 
         const p = `withValue(await fresh(api), ${js(f.field)}, ${f.match === 'contains' ? `[${v}]` : v})`;
         return t.filterValues!.kind === 'enum' ? iso(p) : p;
       };
-      const params = t.filterValues!.kind === 'enum' ? `{ ...ISO(marker), ${js(f.param)}: ${filterValue(t, 'a', 'ts')} }` : `{ ${js(f.param)}: ${filterValue(t, 'a', 'ts')} }`;
+      // search: the query in upper case, the data in lower case: matching must ignore case.
+      const query = f.match === 'search' ? `(${filterValue(t, 'a', 'ts')}).toUpperCase()` : filterValue(t, 'a', 'ts');
+      const params = t.filterValues!.kind === 'enum' ? `{ ...ISO(marker), ${js(f.param)}: ${query} }` : `{ ${js(f.param)}: ${query} }`;
       L.push(...tsSeeded(t.title, opts, [set('a'), set('b')], [
         `const items = await listUntil(api, ${params}, has(ids[0]));`,
         `expectContains(items, ID, ids[0], 'resource matching ${f.param}');`,
@@ -164,15 +216,19 @@ export function tsCollectionTests(s: SuiteInput, ci: CollectionInput): string[] 
         `  test(${js(t.title)}, ${opts}, async ({ ${roFixture(s.op)} }) => {`,
         `    let all = await listAll(api, {});`,
         `    // Up to 5 different values that existing resources have: each must find them, and only within the list.`,
-        `    const values = [...new Map(all.flatMap((i) => { const v = readPointer(i, ${js(f.field)}); return ${f.match === 'contains' ? 'Array.isArray(v) ? v : []' : 'v === undefined || v === null ? [] : [v]'}; }).map((v) => [String(v), v])).values()].slice(0, 5);`,
+        `    const values = [...new Map(all.flatMap((i) => { const v = readPointer(i, ${js(f.field)}); return ${tsCandidates(f, s)}; }).map((v) => [String(v), v])).values()].slice(0, 5);`,
         `    test.skip(!values.length, ${js(`no existing resource has a value in ${f.field} to filter by (read-only check)`)});`,
         `    for (const value of values) {`,
         `      const items = await listAll(api, { ${js(f.param)}: value as string });`,
         `      expect(items.length, 'the filter finds the resources the value ' + String(value) + ' came from').toBeGreaterThan(0);`,
         `      expectAllMatch(items, ${js(f.field)}, ${js(f.match)}, value);`,
-        `      // A filter narrows the list: a resource the unfiltered list does not show must not appear (re-read once: shared data moves).`,
-        `      if (items.some((i) => !all.some((a) => String(readPointer(a, ID)) === String(readPointer(i, ID))))) all = await listAll(api, {});`,
-        `      expectSubsetOf(items, all, ID, ${js(`${f.param}=`)} + String(value));`,
+        ...(requiredParam(s, f.param)
+          ? [`      // ${f.param} is required: there is no unfiltered list to compare with.`]
+          : [
+              `      // A filter narrows the list: a resource the unfiltered list does not show must not appear (re-read once: shared data moves).`,
+              `      if (items.some((i) => !all.some((a) => String(readPointer(a, ID)) === String(readPointer(i, ID))))) all = await listAll(api, {});`,
+              `      expectSubsetOf(items, all, ID, ${js(`${f.param}=`)} + String(value));`,
+            ]),
         `    }`,
         `  });`,
         '',
@@ -191,6 +247,45 @@ export function tsCollectionTests(s: SuiteInput, ci: CollectionInput): string[] 
         `    const items = await listAll(api, { ${js(so.param)}: ${js(so.value)} });`,
         `    test.skip(items.length < 2, 'fewer than 2 resources: the order cannot be checked (read-only check)');`,
         `    expectSortedBy(items, ${js(so.field)}, ${js(so.order)});`,
+        `  });`,
+        '',
+      );
+    } else if (t.kind === 'sort-reverse' && t.mode === 'controlled') {
+      const [a, d] = [t.sort!, t.sortDesc!];
+      L.push(...tsSeeded(t.title, opts, t.sortValues!.map((v) => `withValue(isolate(await fresh(api), marker), ${js(a.field)}, ${sortValue(v, 'ts')})`), [
+        `const order = (xs: unknown[]) => xs.map((i) => String(readPointer(i, ID))).filter((id) => ids.includes(id));`,
+        `const asc = order(await listUntil(api, { ...ISO(marker), ${js(a.param)}: ${js(a.value)} }, has(...ids)));`,
+        `const desc = order(await listUntil(api, { ...ISO(marker), ${js(d.param)}: ${js(d.value)} }, has(...ids)));`,
+        `expect(desc, ${js(`${d.param}=${d.value} is ${a.param}=${a.value} reversed`)}).toEqual([...asc].reverse());`,
+      ]));
+    } else if (t.kind === 'sort-reverse') {
+      const [a, d] = [t.sort!, t.sortDesc!];
+      L.push(
+        `  test(${js(t.title)}, ${opts}, async ({ ${roFixture(s.op)} }) => {`,
+        `    const values = (xs: unknown[]) => xs.map((i) => readPointer(i, ${js(a.field)}));`,
+        `    const read = async () => [values(await listAll(api, { ${js(a.param)}: ${js(a.value)} })), values(await listAll(api, { ${js(d.param)}: ${js(d.value)} }))];`,
+        `    let [asc, desc] = await read();`,
+        `    test.skip(asc.length < 2, 'fewer than 2 resources: the orders cannot be compared (read-only check)');`,
+        `    // Ties keep equal values in place, so the values (not the ids) must mirror; shared data moves: read once more.`,
+        `    if (JSON.stringify(desc) !== JSON.stringify([...asc].reverse())) [asc, desc] = await read();`,
+        `    expect(desc, ${js(`${d.param}=${d.value} is ${a.param}=${a.value} reversed`)}).toEqual([...asc].reverse());`,
+        `  });`,
+        '',
+      );
+    } else if (t.kind === 'total' && t.mode === 'controlled') {
+      L.push(...tsSeeded(t.title, opts, [iso('await fresh(api)'), iso('await fresh(api)')], [
+        `const r = await poll(() => listWithTotals(api, ISO(marker)), (x) => has(...ids)(x.items), POLL.timeoutMs, POLL.intervalMs);`,
+        `expectTotal(r);`,
+        `expect(r.items.length, 'only the resources the test created').toBe(ids.length);`,
+      ]));
+    } else if (t.kind === 'total') {
+      L.push(
+        `  test(${js(t.title)}, ${opts}, async ({ ${roFixture(s.op)} }) => {`,
+        `    let r = await listWithTotals(api, {});`,
+        `    test.skip(!r.complete, 'more than MAX_PAGES pages: the total cannot be compared with every resource (read-only check)');`,
+        `    // Shared data moves between pages: read once more before failing.`,
+        `    if (new Set(r.totals.map(String)).size !== 1 || Number(r.totals[0]) !== r.items.length) r = await listWithTotals(api, {});`,
+        `    expectTotal(r);`,
         `  });`,
         '',
       );
@@ -220,7 +315,7 @@ export function tsCollectionTests(s: SuiteInput, ci: CollectionInput): string[] 
         `const items = await listUntil(api, ISO(marker), has(...ids));`,
         `expectUniqueBy(items, ${js(t.unique)});`,
       ]));
-    } else {
+    } else if (t.kind === 'unique') {
       L.push(`  test(${js(t.title)}, ${opts}, async ({ ${roFixture(s.op)} }) => {`, `    expectUniqueBy(await listAll(api, {}), ${js(t.unique)});`, `  });`, '');
     }
   });
@@ -322,10 +417,14 @@ export function pyCollectionPrelude(s: SuiteInput, ci: CollectionInput): string[
     );
   }
   L.push(
-    'def _list_page(api, params):',
+    'def _list_body(api, params):',
     `    res = api.${op.method}(${pathExpr(op)}, params={**${py(req)}, **params}${pyRequired(op, ['params'])})`,
     `    ${assertSuccess(op)}`,
-    '    return items_of(res.json(), ITEMS)',
+    '    return res.json()',
+    '',
+    '',
+    'def _list_page(api, params):',
+    '    return items_of(_list_body(api, params), ITEMS)',
     '',
     '',
     'def _list_pages(api, params, size=WALK):',
@@ -355,6 +454,40 @@ export function pyCollectionPrelude(s: SuiteInput, ci: CollectionInput): string[
     '',
     '',
   );
+  if (c.total) {
+    L.push(
+      `TOTAL = ${py(c.total)}`,
+      '',
+      '',
+      'def _list_with_totals(api, params):',
+      '    # Every page with the total it reports (at most MAX_PAGES); complete: the last page was reached.',
+      '    items, totals = [], []',
+      ...(page
+        ? [
+            '    size = WALK',
+            '    for i in range(MAX_PAGES):',
+            `        body = _list_body(api, {**params, ${page}})`,
+            '        one = items_of(body, ITEMS)',
+            '        items.extend(one)',
+            '        totals.append(read_pointer(body, TOTAL))',
+            '        if len(one) < size:',
+            '            return items, totals, True',
+            '    return items, totals, False',
+          ]
+        : ['    body = _list_body(api, params)', '    items.extend(items_of(body, ITEMS))', '    totals.append(read_pointer(body, TOTAL))', '    return items, totals, True']),
+      '',
+      '',
+      'def _total_ok(items, totals):',
+      '    return len({str(t) for t in totals}) == 1 and totals[0] == len(items)',
+      '',
+      '',
+      'def _expect_total(items, totals):',
+      '    assert len({str(t) for t in totals}) == 1, f"the same total on every page: {totals}"',
+      '    assert totals[0] == len(items), f"{TOTAL} is the number of resources listed: {totals[0]} != {len(items)}"',
+      '',
+      '',
+    );
+  }
   return L;
 }
 
@@ -407,7 +540,8 @@ export function pyCollectionTests(s: SuiteInput, ci: CollectionInput): string[] 
         const p = `with_value(${fresh}, ${py(f.field)}, ${f.match === 'contains' ? `[${v}]` : v})`;
         return t.filterValues!.kind === 'enum' ? iso(p) : p;
       };
-      const params = t.filterValues!.kind === 'enum' ? `{**_iso(marker), ${py(f.param)}: ${filterValue(t, 'a', 'py')}}` : `{${py(f.param)}: ${filterValue(t, 'a', 'py')}}`;
+      const query = f.match === 'search' ? `(${filterValue(t, 'a', 'py')}).upper()` : filterValue(t, 'a', 'py');
+      const params = t.filterValues!.kind === 'enum' ? `{**_iso(marker), ${py(f.param)}: ${query}}` : `{${py(f.param)}: ${query}}`;
       L.push(...pySeeded(nameOf(`test_filter_${f.param}_returns_matching_and_leaves_out_other`), mark, fx, [set('a'), set('b')], [
         `found = _list_until(api, ${params}, _has(ids[0]))`,
         `expect_contains(found, ID, ids[0], ${py(`resource matching ${f.param}`)})`,
@@ -416,7 +550,7 @@ export function pyCollectionTests(s: SuiteInput, ci: CollectionInput): string[] 
       ]));
     } else if (t.kind === 'filter') {
       const f = t.filter!;
-      const values = f.match === 'contains' ? 'v if isinstance(v, list) else []' : '[] if v is None else [v]';
+      const values = pyCandidates(f, s);
       L.push(
         mark,
         `def ${nameOf(`test_filter_${f.param}_returns_only_matching`)}(${pyRoFixture(s.op)}):`,
@@ -433,11 +567,15 @@ export function pyCollectionTests(s: SuiteInput, ci: CollectionInput): string[] 
         `        found = _list_all(api, {${py(f.param)}: value})`,
         '        assert found, f"the filter finds the resources the value {value} came from"',
         `        expect_all_match(found, ${py(f.field)}, ${py(f.match)}, value)`,
-        '        # A filter narrows the list: a resource the unfiltered list does not show must not appear (re-read once).',
-        '        known = {str(read_pointer(i, ID)) for i in base}',
-        '        if any(str(read_pointer(i, ID)) not in known for i in found):',
-        '            base = _list_all(api, {})',
-        `        expect_subset_of(found, base, ID, ${py(`${f.param}=`)} + str(value))`,
+        ...(requiredParam(s, f.param)
+          ? [`        # ${f.param} is required: there is no unfiltered list to compare with.`]
+          : [
+              '        # A filter narrows the list: a resource the unfiltered list does not show must not appear (re-read once).',
+              '        known = {str(read_pointer(i, ID)) for i in base}',
+              '        if any(str(read_pointer(i, ID)) not in known for i in found):',
+              '            base = _list_all(api, {})',
+              `        expect_subset_of(found, base, ID, ${py(`${f.param}=`)} + str(value))`,
+            ]),
         '',
         '',
       );
@@ -459,6 +597,57 @@ export function pyCollectionTests(s: SuiteInput, ci: CollectionInput): string[] 
         '    if len(found) < 2:',
         '        pytest.skip("fewer than 2 resources: the order cannot be checked (read-only check)")',
         `    expect_sorted_by(found, ${py(so.field)}, ${py(so.order)})`,
+        '',
+        '',
+      );
+    } else if (t.kind === 'sort-reverse' && t.mode === 'controlled') {
+      const [a, d] = [t.sort!, t.sortDesc!];
+      L.push(...pySeeded(nameOf(`test_sort_${a.param}_${d.value.replace(/^-/, 'desc_')}_reverses_${a.value}`), mark, fx, t.sortValues!.map((v) => `with_value(_isolate(${fresh}, marker), ${py(a.field)}, ${sortValue(v, 'py')})`), [
+        'def order(xs):',
+        '    return [str(read_pointer(i, ID)) for i in xs if str(read_pointer(i, ID)) in ids]',
+        '',
+        `asc = order(_list_until(api, {**_iso(marker), ${py(a.param)}: ${py(a.value)}}, _has(*ids)))`,
+        `desc = order(_list_until(api, {**_iso(marker), ${py(d.param)}: ${py(d.value)}}, _has(*ids)))`,
+        `assert desc == list(reversed(asc)), ${py(`${d.param}=${d.value} is ${a.param}=${a.value} reversed`)}`,
+      ]));
+    } else if (t.kind === 'sort-reverse') {
+      const [a, d] = [t.sort!, t.sortDesc!];
+      L.push(
+        mark,
+        `def ${nameOf(`test_sort_${a.param}_${d.value.replace(/^-/, 'desc_')}_reverses_${a.value}`)}(${pyRoFixture(s.op)}):`,
+        ...pyRoAlias(s.op),
+        '    def read():',
+        `        asc = [read_pointer(i, ${py(a.field)}) for i in _list_all(api, {${py(a.param)}: ${py(a.value)}})]`,
+        `        desc = [read_pointer(i, ${py(a.field)}) for i in _list_all(api, {${py(d.param)}: ${py(d.value)}})]`,
+        '        return asc, desc',
+        '',
+        '    asc, desc = read()',
+        '    if len(asc) < 2:',
+        '        pytest.skip("fewer than 2 resources: the orders cannot be compared (read-only check)")',
+        '    # Ties keep equal values in place, so the values (not the ids) must mirror; shared data moves: read once more.',
+        '    if desc != list(reversed(asc)):',
+        '        asc, desc = read()',
+        `    assert desc == list(reversed(asc)), ${py(`${d.param}=${d.value} is ${a.param}=${a.value} reversed`)}`,
+        '',
+        '',
+      );
+    } else if (t.kind === 'total' && t.mode === 'controlled') {
+      L.push(...pySeeded(nameOf('test_total_equals_the_number_of_resources'), mark, fx, [iso(fresh), iso(fresh)], [
+        'listed, totals, _ = poll(lambda: _list_with_totals(api, _iso(marker)), lambda r: _has(*ids)(r[0]), POLL_TIMEOUT_MS, POLL_INTERVAL_MS)',
+        '_expect_total(listed, totals)',
+        'assert len(listed) == len(ids), f"only the resources the test created: {len(listed)} != {len(ids)}"',
+      ]));
+    } else if (t.kind === 'total') {
+      L.push(
+        mark,
+        `def ${nameOf('test_total_equals_the_number_of_resources')}(${pyRoFixture(s.op)}):`,
+        ...pyRoAlias(s.op),
+        '    listed, totals, complete = _list_with_totals(api, {})',
+        '    if not complete:',
+        '        pytest.skip("more than MAX_PAGES pages: the total cannot be compared with every resource (read-only check)")',
+        '    if not _total_ok(listed, totals):  # shared data moves between pages: read once more',
+        '        listed, totals, _ = _list_with_totals(api, {})',
+        '    _expect_total(listed, totals)',
         '',
         '',
       );
@@ -494,7 +683,7 @@ export function pyCollectionTests(s: SuiteInput, ci: CollectionInput): string[] 
         `found = _list_until(api, _iso(marker), _has(*ids))`,
         `expect_unique_by(found, ${py(t.unique)})`,
       ]));
-    } else {
+    } else if (t.kind === 'unique') {
       L.push(mark, `def ${nameOf(`test_unique_by_${leaf(t.unique!)}`)}(${pyRoFixture(s.op)}):`, ...pyRoAlias(s.op), `    expect_unique_by(_list_all(api, {}), ${py(t.unique)})`, '', '');
     }
   });

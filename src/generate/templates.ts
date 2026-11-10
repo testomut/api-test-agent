@@ -10,6 +10,7 @@ import { boundaryValues } from './boundaries.js';
 import { tsCollectionImports, tsCollectionPrelude, tsCollectionTests, tsFixtureImport, tsFixtureTest, tsLifecycle, type CollectionInput } from './collection-render.js';
 import type { LoadedFixture } from '../fixtures/fixtures.js';
 import type { BodyVariant } from './variants.js';
+import type { Probe } from './probes.js';
 import { tsVariantImports, tsVariantTests } from './variant-render.js';
 
 /** Payloads and assumptions for one confirmed resource chain. */
@@ -81,8 +82,17 @@ export function optionsWith(op: Operation, inner?: string): string | undefined {
 
 /** Safe query variations: only values explicitly allowed by the schema (enum values, else the valid limits). */
 export function queryVariants(op: Operation): Array<{ name: string; value: string | number | boolean }> {
-  if (op.method !== 'get') return [];
-  return op.params.filter((p) => p.in === 'query' && !p.required).flatMap((p) => {
+  return queryVariantsDetailed(op).kept;
+}
+
+export const MAX_VALUES_PER_PARAM = 5;
+export const MAX_VALUES_PER_OPERATION = 15;
+
+/** Accepted values and those left out by the limits (reported as CASE_LIMIT_REACHED, never dropped silently). */
+export function queryVariantsDetailed(op: Operation): { kept: Array<{ name: string; value: string | number | boolean }>; dropped: Array<{ name: string; value: string | number | boolean }> } {
+  if (op.method !== 'get') return { kept: [], dropped: [] };
+  const dropped: Array<{ name: string; value: string | number | boolean }> = [];
+  const all = op.params.filter((p) => p.in === 'query' && !p.required).flatMap((p) => {
     const schema: any = p.schema ?? {};
     const values: unknown[] = Array.isArray(schema.enum) ? [...schema.enum] : [];
     // Boundary-valid values: the documented limits themselves must be accepted.
@@ -90,8 +100,11 @@ export function queryVariants(op: Operation): Array<{ name: string; value: strin
     const kept = values.filter((v): v is string | number | boolean => typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean');
     // One physical test per value, each with its own case ID: values equal as strings would share an ID.
     const unique = kept.filter((v, i) => kept.findIndex((x) => String(x) === String(v)) === i);
-    return unique.slice(0, 5).map((value) => ({ name: p.name, value }));
-  }).slice(0, 15);
+    dropped.push(...unique.slice(MAX_VALUES_PER_PARAM).map((value) => ({ name: p.name, value })));
+    return unique.slice(0, MAX_VALUES_PER_PARAM).map((value) => ({ name: p.name, value }));
+  });
+  dropped.push(...all.slice(MAX_VALUES_PER_OPERATION));
+  return { kept: all.slice(0, MAX_VALUES_PER_OPERATION), dropped };
 }
 
 function header(kind: string, op: Operation, meta: Meta, extra: string[]): string[] {
@@ -238,6 +251,8 @@ export interface SuiteInput {
   fixture?: LoadedFixture;
   /** Positive request-body variants of a create / update (only required fields, other oneOf / anyOf branches). */
   bodyVariants?: BodyVariant[];
+  /** Exploratory query probes (record the API's answer, never fail on it). */
+  probes?: Probe[];
 }
 
 export type Role = 'create' | 'read' | 'update' | 'delete';
@@ -268,7 +283,7 @@ export function suiteCounts(s: SuiteInput): Record<SuiteType, number> {
   const e = s.errors;
   const base = {
     functional: (s.positive ? 1 : 0) + extra + (s.positive && !s.plan ? queryVariants(s.op).length : 0) + (e?.invalidCredentials ? 1 : 0) + (e?.envCredentials?.length ?? 0) + (e?.methodNotAllowed ? 1 : 0) + (e?.preconditionFailed && s.plan ? 1 : 0),
-    contract: (s.positive ? 1 : 0) + extra + s.bodyCases.length + s.paramCases.length + (e?.unsupportedMediaType && s.plan ? 1 : 0),
+    contract: (s.positive ? 1 : 0) + extra + s.bodyCases.length + s.paramCases.length + (e?.unsupportedMediaType && s.plan ? 1 : 0) + (s.probes?.length ?? 0),
   };
   return {
     contract: base.contract,
@@ -373,7 +388,7 @@ export function renderFunctional(s: SuiteInput, meta: Meta): string {
   const usesHelpers = (s.positive && !!role) || notFoundNeedsHelpers(s) || !!(s.errors?.preconditionFailed && plan) || !!s.collection?.plan.tests.length || !!s.bodyVariants?.length;
   const errorStatus = !!(s.errors?.invalidCredentials || s.errors?.envCredentials?.length || s.errors?.methodNotAllowed || s.errors?.preconditionFailed);
   const coll = s.collection?.plan.tests.length ? s.collection : undefined;
-  const names = [...new Set(['expect', ...(s.positive && (role === 'create' || role === 'read') ? ['readPointer'] : []), ...(s.notFound || s.unauthorized || errorStatus ? ['expectStatus'] : []), ...(coll ? tsCollectionImports('functional') : []), ...(s.fixture ? ['itemsOf', 'expectMatchesFixture'] : []), ...tsVariantImports(s)])];
+  const names = [...new Set(['expect', ...(s.positive && (role === 'create' || role === 'read') ? ['readPointer'] : []), ...(s.notFound || s.unauthorized || errorStatus ? ['expectStatus'] : []), ...(coll ? tsCollectionImports('functional') : []), ...(s.fixture ? ['itemsOf', 'expectMatchesFixture'] : []), ...tsVariantImports(s), ...(s.positive && !plan && op.method === 'get' && queryVariants(op).length ? ['expectContract'] : [])])];
   const L = suiteHeader('functional', s, meta, ['Checks the behavior of the endpoint: status and result. The response schema is checked in contract.spec.ts.', ...(coll ? ['Collection checks run on records the tests create (controlled datasets) or, where marked read-only, on existing data.'] : [])]);
   L.push(...imports(s, names, usesHelpers), ...(s.fixture ? [tsFixtureImport(s.fixture)] : []), ...(coll ? ['', ...tsCollectionPrelude(s, coll)] : ['']), `test.describe('${op.key} · functional', { tag: '@functional' }, () => {`);
 
@@ -408,6 +423,7 @@ export function renderFunctional(s: SuiteInput, meta: Meta): string {
         `  test(${q(`accepts documented ${variant.name}=${String(variant.value)}`)}, ${testOptions('positive', s.ids?.functional.variants[n])}, async ({ ${fx} }) => {`,
         `    const res = await ${apiCall(ref, fx, pathArgs(op, ref), optionsWith(op, `{ params: ${JSON.stringify(params)} }`))};`,
         `    ${expectSuccess(op)}`,
+        `    await expectContract(res, '${op.method}', ${q(op.path)}); // an accepted value must still give a documented response`,
         `  });`,
         '',
       );
@@ -564,7 +580,7 @@ export function renderContract(s: SuiteInput, meta: Meta): string {
   const usesHelpers = (s.positive && !!role) || notFoundNeedsHelpers(s) || (s.bodyCases.length > 0 && !!chain && (isCreate || needsExisting)) || wrongMedia;
   // Validation cases go through the same fixture as the positive test (anonymous for public operations).
   const fx = chain ? 'api' : apiFixture(op);
-  const names = [...(s.positive || s.notFound || s.unauthorized ? ['expectContract'] : []), ...(invalid ? ['expectRejected'] : [])];
+  const names = [...(s.positive || s.notFound || s.unauthorized ? ['expectContract'] : []), ...(invalid ? ['expectRejected'] : []), ...(s.paramCases.some((c) => c.sent) || s.probes?.length ? ['expectSentQuery'] : []), ...(s.probes?.length ? ['recordProbe'] : [])];
   const L = suiteHeader('contract', s, meta, ['Checks conformance to the OpenAPI document: the status actually returned is documented and the body matches its schema.', 'Invalid requests break one documented constraint each and must get a documented rejection.']);
   L.push(...imports(s, names, usesHelpers));
   if (s.bodyCases.length + s.paramCases.length > 0) L.push('', `const rejection = ${JSON.stringify(s.validation)}; // documented in the spec`);
@@ -592,10 +608,10 @@ export function renderContract(s: SuiteInput, meta: Meta): string {
   }
   if (s.paramCases.length) {
     // Each row is a whole request: the valid required parameters plus the one parameter under test.
-    L.push(`  const invalidParameters: { title: string; source: string; caseId?: string; params?: Record<string, string | number | boolean> | string; headers?: Record<string, string>; path?: Record<string, string> }[] = [`);
+    L.push(`  const invalidParameters: { title: string; source: string; caseId?: string; params?: Record<string, string | number | boolean> | string; headers?: Record<string, string>; path?: Record<string, string>; sent?: { name: string; value: string | null } }[] = [`);
     s.paramCases.forEach((c, n) => {
       const r: ParamRequest = c.request ?? (c.query ? { params: c.query as ParamRequest['params'] } : {});
-      const fields = [r.params !== undefined ? `params: ${JSON.stringify(r.params)}` : '', r.headers ? `headers: ${JSON.stringify(r.headers)}` : '', r.path ? `path: ${JSON.stringify(r.path)}` : ''].filter(Boolean).join(', ');
+      const fields = [r.params !== undefined ? `params: ${JSON.stringify(r.params)}` : '', r.headers ? `headers: ${JSON.stringify(r.headers)}` : '', r.path ? `path: ${JSON.stringify(r.path)}` : '', c.sent ? `sent: ${JSON.stringify(c.sent)}` : ''].filter(Boolean).join(', ');
       L.push(`    { title: ${q(c.title)}, source: ${q(c.source)}, ${caseField(s.ids?.contract.params[n])}${fields} },`);
     });
     const args = ref.pathParams.map((name) => {
@@ -603,7 +619,34 @@ export function renderContract(s: SuiteInput, meta: Meta): string {
       return `c.path?.[${q(name)}] ?? ${known === undefined ? "'unused'" : q(String(known))}`;
     });
     L.push(`  ];`, '', `  for (const c of invalidParameters) {`, `    test(\`rejects invalid parameter: \${c.title}\`, ${loopOptions(s.ids?.contract.params)}, async ({ ${fx} }) => {`);
-    L.push(`      const res = await ${apiCall(ref, fx, args, '{ params: c.params, headers: c.headers }')};`, `      await expectRejected(res, rejection, '${op.method}', ${q(op.path)});`, `    });`, `  }`, '');
+    L.push(
+      `      const res = await ${apiCall(ref, fx, args, '{ params: c.params, headers: c.headers }')};`,
+      ...(s.paramCases.some((c) => c.sent)
+        ? [`      // The request carried the value under test (a local schema violation proves nothing about the API).`, `      if (c.sent) expectSentQuery(res, c.sent.name, c.sent.value);`]
+        : []),
+      `      await expectRejected(res, rejection, '${op.method}', ${q(op.path)});`,
+      `    });`,
+      `  }`,
+      '',
+    );
+  }
+  if (s.probes?.length) {
+    // Exploratory: what the API must answer is not specified, so these never fail on its behavior; they record it.
+    const pfx = isPublic(op) && !chain ? 'publicApi' : 'api';
+    L.push(`  const probes: { title: string; caseId: string; param: string; kind: string; params: Record<string, string | number | boolean>; value: string | null }[] = [`);
+    s.probes.forEach((p, n) => L.push(`    { title: ${q(p.title)}, caseId: ${q(s.ids?.contract.probes?.[n] ?? '')}, param: ${q(p.param)}, kind: ${q(p.kind)}, params: ${JSON.stringify(p.params)}, value: ${JSON.stringify(p.value)} },`));
+    L.push(
+      `  ];`,
+      '',
+      `  for (const p of probes) {`,
+      `    test(\`exploratory probe (records, never fails): \${p.title}\`, { tag: ['@negative', '@exploratory'], annotation: { type: 'caseId', description: p.caseId } }, async ({ ${pfx} }) => {`,
+      `      const res = await ${apiCall(ref, pfx, pathArgs(op, ref), '{ params: p.params }')};`,
+      `      expectSentQuery(res, p.param, p.value);`,
+      `      await recordProbe(res, { caseId: p.caseId, operation: ${q(op.key)}, parameter: p.param, probe: p.kind, value: p.value }, '${op.method}', ${q(op.path)});`,
+      `    });`,
+      `  }`,
+      '',
+    );
   }
   if (wrongMedia) {
     // 415: the documented body, but declared as text/plain. Anything the API wrongly creates is removed.
@@ -835,9 +878,10 @@ export function expectFields(item: unknown, expected: unknown, policies: Record<
 }
 
 /** Every element matches a filter: equals (the field is the value) or contains (the array field holds it). */
-export function expectAllMatch(items: unknown[], ptr: string, match: 'equals' | 'contains', value: unknown): void {
+export function expectAllMatch(items: unknown[], ptr: string, match: 'equals' | 'contains' | 'search', value: unknown): void {
   const bad = items.filter((i) => {
     const v = readPointer(i, ptr);
+    if (match === 'search') return !String(v ?? '').toLowerCase().includes(String(value).toLowerCase());
     return match === 'contains' ? !(Array.isArray(v) && v.map(String).includes(String(value))) : String(v) !== String(value);
   });
   expect(bad.length, bad.length + ' element(s) do not match ' + ptr + ' ' + match + ' ' + String(value)).toBe(0);
@@ -916,6 +960,27 @@ export async function poll<T>(fn: () => Promise<T>, done: (v: T) => boolean, tim
     v = await fn();
   }
   return v;
+}
+
+/**
+ * Exploratory probe (never fails on the API's behavior): records what came back, as a test annotation and, when the
+ * agent runs the suite, a line in API_AGENT_EXPLORATORY_LOG. A 5xx is flagged for a human, not reported as a defect.
+ */
+export async function recordProbe(res: APIResponse, info: Record<string, unknown>, method: string, path: string): Promise<void> {
+  const { contentType, body, rawText } = await readBody(res);
+  const r = validator.validateResponse({ method, path, status: res.status(), contentType, body, rawText, headers: res.headers() });
+  const observation = { ...info, status: res.status(), documented: r.kind !== 'undocumented-status', contract: r.ok ? 'matches' : r.errors.join('; '), serverError: res.status() >= 500 };
+  test.info().annotations.push({ type: 'exploratory', description: JSON.stringify(observation) });
+  const file = process.env.API_AGENT_EXPLORATORY_LOG;
+  if (file) appendFileSync(file, JSON.stringify(observation) + '\\n');
+  else if (observation.serverError) console.warn('exploratory probe ' + JSON.stringify(info) + ' answered ' + res.status() + ' (an observation, not a confirmed defect)');
+}
+
+/** The query parameter went over HTTP as intended: its text, or absent (value null). */
+export function expectSentQuery(res: APIResponse, name: string, value: string | null): void {
+  const sent = new URL(res.url()).searchParams.getAll(name);
+  if (value === null) expect(sent, name + ' is not sent').toEqual([]);
+  else expect(sent, name + ' is sent as ' + JSON.stringify(value)).toEqual([value]);
 }
 
 /** A copy of a payload without the fields at these JSON pointers (array elements by index). */

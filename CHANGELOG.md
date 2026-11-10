@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **Query parameters and GET collections** (docs/SUPPORT_MATRIX.md):
+  - confirmed: a decimal case for integer parameters (inside the documented bounds, so only the type is broken); every query case checks that the value really went over HTTP; accepted values also check the response contract; values over the limits are `CASE_LIMIT_REACHED` gaps instead of being dropped silently; Python sends query booleans as `true` / `false`;
+  - exploratory probes for scalar query parameters of GET / HEAD operations (empty, text, decimal, zero, negative, large, special characters, another spelling of a boolean or enum value, a missing required parameter): deduplicated against confirmed cases and the documented range, never failing on the API's behavior, recorded in the report (`exploratory.jsonl`, "Exploratory query probes");
+  - collections: `"match": "search"` (case-insensitive substring), `total` (the same on every page and equal to the number listed), `sort-reverse` (descending is ascending reversed), several mappings per resource (`"collections": [...]`);
+  - case ID vocabulary v5: `sort-reverse`, `total`, `probe`, the decimal `type` case;
+  - CI gate: a Python test that reassigns its own fixture fails (found here: a generated test shadowed the `items` resource fixture, so its cleanup would not have run);
+  - demo API: `GET /items/search` (required `q`), and the faults `ignore-max`, `loose-types`, `ignore-enum`, `ignore-required`, `truncate-decimal`, `wrong-total`, `drop-update`, `broken-search`; fault injection 17/17 in TypeScript and Python (the previous generator: 14/17 on the same spec).
 - **Coverage depth** (docs/SUPPORT_MATRIX.md):
   - positive request-body variants for create / update of a confirmed chain: only the required fields, and every other `oneOf` / `anyOf` branch with a valid sample; each checked with ajv before a test is written, cleanup in `finally`; closes `UNCOVERED_VARIANT` where a branch can be sent;
   - reviewed auth cases from a deps `auth` section (environment variable names only): 403 for the operations named (`auth.forbidden`), 401 with an expired credential (`auth.expired`); skipped with the reason when the variable is unset; mismatches with the spec are `INVALID_REVIEWED_CONFIG`;

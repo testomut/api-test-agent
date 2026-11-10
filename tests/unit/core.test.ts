@@ -13,7 +13,7 @@ const op = (key: string) => ops.find((o) => o.key === key)!;
 
 describe('catalog', () => {
   it('lists every operation with path-level params merged in', () => {
-    expect(ops).toHaveLength(11);
+    expect(ops).toHaveLength(12);
     expect(op('GET /items/{itemId}').params.map((p) => p.name)).toEqual(['itemId']);
   });
 
@@ -152,7 +152,7 @@ describe('negative cases', () => {
 
   it('derives query cases from parameter bounds', () => {
     const r = paramCasesDetailed(demo.doc, op('GET /items'), { allowPath: true, allowOthers: true });
-    expect(r.cases.map((c) => c.request?.params)).toEqual([{ limit: 'not-a-number' }, { limit: 0 }, { limit: 101 }, { offset: 'not-a-number' }, { offset: -1 }, { tag: '' }, { tag: 'x'.repeat(31) }, { sort: '__not_in_enum__' }]);
+    expect(r.cases.map((c) => c.request?.params)).toEqual([{ limit: 'not-a-number' }, { limit: 0 }, { limit: 101 }, { limit: '20.5' }, { offset: 'not-a-number' }, { offset: -1 }, { offset: '0.5' }, { tag: '' }, { tag: 'x'.repeat(31) }, { sort: '__not_in_enum__' }]);
   });
 
   it('breaks exclusive bounds, minItems and query minLength, one rule per case', () => {

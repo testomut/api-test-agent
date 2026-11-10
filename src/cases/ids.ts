@@ -18,9 +18,13 @@ export type Polarity = 'positive' | 'negative';
  * v4 adds functional/positive request-body variants: `optional-omitted` (on "request.body#": only the required
  * fields are sent) and `variant` (request.body#<pointer>/@<n>: branch n of the oneOf / anyOf at that pointer), and
  * functional/negative `expired-credentials` (request.security; `forbidden` exists since v1).
+ * v5 adds functional/positive collection rules `sort-reverse` (request.query#/<param>/<ascending value>: the
+ * descending value gives the reverse order) and `total` (response.body#<total pointer>), and contract/negative
+ * `probe` (request.<in>#/<name>/<probe>: an exploratory request whose outcome is recorded, never asserted) and a
+ * second `type` case of an integer parameter (request.<in>#/<name>/decimal).
  * Registries of older versions stay readable.
  */
-export const CASE_RULE_VOCABULARY_VERSION = 4;
+export const CASE_RULE_VOCABULARY_VERSION = 5;
 
 const CONSTRAINT_RULES = [
   'required', 'nullable', 'type', 'format', 'pattern', 'minimum', 'maximum', 'exclusiveMinimum', 'exclusiveMaximum', 'multipleOf',
@@ -29,10 +33,10 @@ const CONSTRAINT_RULES = [
 
 /** Built-in vocabulary v1, by suiteType/polarity. */
 export const VOCABULARY_V1: Record<string, readonly string[]> = {
-  'functional/positive': ['documented-success', 'accepted-value', 'collection-contains', 'filter', 'sort', 'pagination', 'unique', 'fixture', 'optional-omitted', 'variant'],
+  'functional/positive': ['documented-success', 'accepted-value', 'collection-contains', 'filter', 'sort', 'pagination', 'unique', 'fixture', 'optional-omitted', 'variant', 'sort-reverse', 'total'],
   'functional/negative': ['not-found', 'unauthorized', 'forbidden', 'invalid-credentials', 'expired-credentials', 'method-not-allowed', 'precondition-failed'],
   'contract/positive': ['documented', 'schema'],
-  'contract/negative': [...CONSTRAINT_RULES, 'content-type'],
+  'contract/negative': [...CONSTRAINT_RULES, 'content-type', 'probe'],
   'scenario/positive': ['crud', 'business-rule'],
   'scenario/negative': ['business-rule'],
 };
@@ -130,7 +134,8 @@ export function checkCombination(p: CaseParts): CaseIdError | undefined {
       if (p.rule === 'collection-contains' || p.rule === 'fixture') return loc === 'operation' ? undefined : bad(`${p.rule} is checked on "operation"`);
       if (p.rule === 'unique') return loc.startsWith('response.body#') ? undefined : bad('unique names a response body field');
       if (p.rule === 'filter' || p.rule === 'pagination') return /^request\.query#\/[^/]*$/.test(loc) ? undefined : bad(`${p.rule} names a query parameter`);
-      if (p.rule === 'sort') return /^request\.query#\/[^/]*\/[^/]*$/.test(loc) ? undefined : bad('sort names a query parameter and its value');
+      if (p.rule === 'sort' || p.rule === 'sort-reverse') return /^request\.query#\/[^/]*\/[^/]*$/.test(loc) ? undefined : bad(`${p.rule} names a query parameter and its value`);
+      if (p.rule === 'total') return loc.startsWith('response.body#/') ? undefined : bad('total names the total-count field of the response body');
       if (p.rule === 'accepted-value') return /^request\.(query|path|header|cookie)#\/[^/]*\/[^/]*$/.test(loc) ? undefined : bad('accepted-value names a parameter and its value: request.<in>#/<name>/<value>');
       return loc === 'operation' ? undefined : bad(`documented-success is checked on "operation", not "${loc}"`);
     case 'functional/negative':
@@ -143,6 +148,8 @@ export function checkCombination(p: CaseParts): CaseIdError | undefined {
       return loc.startsWith('response.status#/') || loc.startsWith('response.content-type#/') ? undefined : bad('documented is checked on a response status or content type');
     case 'contract/negative':
       if (p.rule === 'content-type') return loc === 'request.content-type' ? undefined : bad('content-type is checked on "request.content-type"');
+      if (p.rule === 'probe') return /^request\.(query|header|cookie)#\/[^/]*\/[a-z-]+$/.test(loc) ? undefined : bad('probe names a parameter and a probe kind: request.<in>#/<name>/<probe>');
+      if (p.rule === 'type' && /^request\.(query|header|cookie)#\/[^/]*\/decimal$/.test(loc)) return undefined;
       return /^request\.body#/.test(loc) || /^request\.(query|path|header|cookie)#\/[^/]*$/.test(loc) ? undefined : bad('a constraint rule is checked on a request field or one parameter');
     default: // scenario
       if (loc === 'lifecycle') return p.subjectUid.startsWith('scn_') ? undefined : subject('a lifecycle scenario needs a scn_ subject');

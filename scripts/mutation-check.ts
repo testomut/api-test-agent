@@ -13,7 +13,7 @@ import { existsSync, rmSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { findPython } from '../src/generate/generate.js';
 
-export const FAULTS = ['ignore-filter', 'wrong-sort', 'hide-created', 'duplicate', 'wrong-field', 'bad-pagination', 'require-optional', 'accept-expired', 'ignore-suspension'] as const;
+export const FAULTS = ['ignore-filter', 'wrong-sort', 'hide-created', 'duplicate', 'wrong-field', 'bad-pagination', 'require-optional', 'accept-expired', 'ignore-suspension', 'ignore-max', 'loose-types', 'ignore-enum', 'wrong-total', 'drop-update', 'ignore-required', 'broken-search', 'truncate-decimal'] as const;
 
 const args = process.argv.slice(2);
 const lang = args.includes('--lang') ? args[args.indexOf('--lang') + 1] : 'typescript';
@@ -38,13 +38,14 @@ async function waitHealthy(url: string): Promise<void> {
   throw new Error(`demo API at ${url} did not start`);
 }
 
-function runTests(baseUrl: string): { passed: number; failed: number; skipped: number; output: string } {
+function runTests(baseUrl: string): { passed: number; failed: number; skipped: number; output: string; failedTests: string[] } {
   const env = { ...process.env, API_BASE_URL: baseUrl };
   if (lang === 'python') {
     const r = spawnSync(findPython(), ['-m', 'pytest', '-q', '-p', 'no:cacheprovider', ...targets], { env, encoding: 'utf8' });
     const out = (r.stdout ?? '') + (r.stderr ?? '');
     const n = (word: string) => Number(out.match(new RegExp(`(\\d+) ${word}`))?.[1] ?? 0);
-    return { passed: n('passed'), failed: n('failed') + n('error'), skipped: n('skipped'), output: out };
+    const failedTests = [...out.matchAll(/^(?:FAILED|ERROR) (\S+)/gm)].map((m) => m[1].split('::').slice(-1)[0]);
+    return { passed: n('passed'), failed: n('failed') + n('error'), skipped: n('skipped'), output: out, failedTests };
   }
   const config = resolve('.mutation.playwright.config.mjs');
   writeFileSync(config, `export default { testDir: '.', testMatch: ${JSON.stringify(targets.map((t) => resolve(t).replace(/\\/g, '/') + (t.endsWith('.ts') ? '' : '/**/*.spec.ts')))}, retries: 0, workers: 4, use: { baseURL: ${JSON.stringify(baseUrl + '/')}, extraHTTPHeaders: { accept: 'application/json' } } };\n`);
@@ -52,7 +53,13 @@ function runTests(baseUrl: string): { passed: number; failed: number; skipped: n
     const r = spawnSync(process.platform === 'win32' ? 'npx.cmd' : 'npx', ['playwright', 'test', '--config', config, '--reporter=json'], { env, encoding: 'utf8', shell: process.platform === 'win32', maxBuffer: 64 * 1024 * 1024 });
     const report = JSON.parse(r.stdout.slice(r.stdout.indexOf('{')));
     const s = report.stats ?? {};
-    return { passed: s.expected ?? 0, failed: (s.unexpected ?? 0) + (s.flaky ?? 0), skipped: s.skipped ?? 0, output: r.stderr };
+    const failedTests: string[] = [];
+    const walk = (suite: any) => {
+      for (const sp of suite.specs ?? []) for (const t of sp.tests ?? []) if (t.status === 'unexpected' || t.status === 'flaky') failedTests.push(`${(suite.file ?? '').split('\\').join('/').split('/').slice(-3, -1).join('/')}: ${sp.title}`);
+      for (const c of suite.suites ?? []) walk(c);
+    };
+    for (const suite of report.suites ?? []) walk(suite);
+    return { passed: s.expected ?? 0, failed: (s.unexpected ?? 0) + (s.flaky ?? 0), skipped: s.skipped ?? 0, output: r.stderr, failedTests };
   } finally {
     rmSync(config, { force: true });
   }
@@ -71,18 +78,19 @@ async function withServer<T>(fault: string, port: number, fn: (url: string) => T
   }
 }
 
-const rows: { fault: string; passed: number; failed: number; skipped: number; ok: boolean }[] = [];
+const rows: { fault: string; passed: number; failed: number; skipped: number; ok: boolean; caughtBy: string[] }[] = [];
 const faults = only ? FAULTS.filter((f) => only.includes(f)) : FAULTS;
 if (only && faults.length !== only.length) throw new Error(`unknown fault in --faults ${only.join(',')}: known ${FAULTS.join(', ')}`);
 for (const [i, fault] of ['', ...faults].entries()) {
   const r = await withServer(fault, basePort + i, runTests);
   const ok = fault ? r.failed > 0 : r.failed === 0 && r.passed > 0;
-  rows.push({ fault: fault || '(none)', passed: r.passed, failed: r.failed, skipped: r.skipped, ok });
+  rows.push({ fault: fault || '(none)', passed: r.passed, failed: r.failed, skipped: r.skipped, ok, caughtBy: r.failedTests });
   if (!fault && !ok) console.error(r.output.slice(-4000));
 }
 console.log(`\nFault injection (${lang}): ${targets.join(', ')}`);
 console.log('fault            passed  failed  skipped  verdict');
 for (const r of rows) console.log(`${r.fault.padEnd(16)} ${String(r.passed).padStart(6)}  ${String(r.failed).padStart(6)}  ${String(r.skipped).padStart(7)}  ${r.fault === '(none)' ? (r.ok ? 'clean' : 'FAILS WITHOUT A FAULT') : r.ok ? 'detected' : 'MISSED'}`);
+if (args.includes('--show')) for (const r of rows.filter((x) => x.fault !== '(none)')) console.log(`  ${r.fault}: ${r.caughtBy.slice(0, 4).join(' | ') || '-'}`);
 const detected = rows.filter((r) => r.fault !== '(none)' && r.ok).length;
 console.log(`detected ${detected}/${faults.length} injected defects`);
 const label = args.includes('--label') ? args[args.indexOf('--label') + 1] : lang;

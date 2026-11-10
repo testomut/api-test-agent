@@ -83,18 +83,24 @@ route('/health', { GET: (_q, res) => send(res, 200, { status: 'ok' }) });
 
 route('/items', {
   GET: (_q, res, _p, url) => {
+    // DEMO_FAULT simulates one defect at a time (mutation tests: the generated suite must catch each).
+    const fault = process.env.DEMO_FAULT;
     const raw = url.searchParams.get('limit');
-    const limit = raw === null ? 20 : Number(raw);
+    let limit = raw === null ? 20 : Number(raw);
+    if (fault === 'loose-types' && !Number.isFinite(limit)) limit = 20; // a non-numeric limit silently becomes the default
+    if (fault === 'ignore-max' && limit > 100) limit = 100; // the maximum is clamped instead of rejected
+    if (fault === 'truncate-decimal' && Number.isFinite(limit)) limit = Math.trunc(limit); // 20.5 silently becomes 20
     if (!Number.isInteger(limit) || limit < 1 || limit > 100) return error(res, 400, 'limit must be an integer 1-100');
     const rawOffset = url.searchParams.get('offset');
     const offset = rawOffset === null ? 0 : Number(rawOffset);
     if (!Number.isInteger(offset) || offset < 0) return error(res, 400, 'offset must be an integer >= 0');
-    const sort = url.searchParams.get('sort');
-    if (sort !== null && !['name', '-name', 'price', '-price'].includes(sort)) return error(res, 400, 'sort must be name, -name, price or -price');
+    let sort = url.searchParams.get('sort');
+    if (sort !== null && !['name', '-name', 'price', '-price'].includes(sort)) {
+      if (fault !== 'ignore-enum') return error(res, 400, 'sort must be name, -name, price or -price');
+      sort = null; // an undocumented value is silently ignored
+    }
     const tag = url.searchParams.get('tag');
     if (tag !== null && (tag.length < 1 || tag.length > 30)) return error(res, 400, 'tag must be 1-30 characters');
-    // DEMO_FAULT simulates one collection defect at a time (mutation tests: the generated suite must catch each).
-    const fault = process.env.DEMO_FAULT;
     let all = [...items.values()];
     if (tag !== null && fault !== 'ignore-filter') all = all.filter((i) => i.tags.includes(tag));
     if (fault === 'hide-created') all = all.filter((i) => i.id !== lastCreated);
@@ -107,7 +113,7 @@ route('/items', {
     const start = fault === 'bad-pagination' ? Math.max(0, offset - 1) : offset;
     let page = all.slice(start, start + limit);
     if (fault === 'wrong-field') page = page.map((i) => ({ ...i, price: i.price + 1 }));
-    send(res, 200, { items: page, total: all.length });
+    send(res, 200, { items: page, total: all.length + (fault === 'wrong-total' ? 1 : 0) });
   },
   POST: async (req, res) => {
     const body = await readJson(req);
@@ -129,6 +135,25 @@ const findItem = (res: ServerResponse, id: string) => {
   return item;
 };
 
+route('/items/search', {
+  GET: (_q, res, _p, url) => {
+    const fault = process.env.DEMO_FAULT;
+    const q = url.searchParams.get('q');
+    if (q === null && fault !== 'ignore-required') return error(res, 400, 'q is required');
+    if (q !== null && (q.length < 1 || q.length > 30)) return error(res, 400, 'q must be 1-30 characters');
+    const raw = url.searchParams.get('limit');
+    const limit = raw === null ? 20 : Number(raw);
+    if (!Number.isInteger(limit) || limit < 1 || limit > 50) return error(res, 400, 'limit must be an integer 1-50');
+    const rawOffset = url.searchParams.get('offset');
+    const offset = rawOffset === null ? 0 : Number(rawOffset);
+    if (!Number.isInteger(offset) || offset < 0) return error(res, 400, 'offset must be an integer >= 0');
+    const needle = (q ?? '').toLowerCase();
+    // Case-insensitive substring of the name; DEMO_FAULT=broken-search ignores the query.
+    const all = [...items.values()].filter((i) => fault === 'broken-search' || i.name.toLowerCase().includes(needle));
+    send(res, 200, { items: all.slice(offset, offset + limit), total: all.length });
+  },
+});
+
 route('/items/{itemId}', {
   GET: (_q, res, p) => {
     const item = findItem(res, p.itemId);
@@ -141,6 +166,8 @@ route('/items/{itemId}', {
     if (!body.ok) return error(res, 400, 'Invalid JSON');
     const v = validateItem(body.value, true);
     if (typeof v === 'string') return error(res, 400, v);
+    // DEMO_FAULT=drop-update: the response shows the change, but it is never stored.
+    if (process.env.DEMO_FAULT === 'drop-update') return send(res, 200, { ...item, ...v });
     Object.assign(item, v);
     send(res, 200, item);
   },

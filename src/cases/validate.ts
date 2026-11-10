@@ -199,7 +199,13 @@ function checkLocation(o: NormOp, loc: string, rule: string): Finding | undefine
       // accepted-value: the value must be one the spec documents for this parameter.
       const value = String(decodeSegment(rawValue));
       // sort: the value comes from the reviewed collection mapping; the spec can only rule it out with an enum.
-      if (rule === 'sort' && !Array.isArray(p.schema?.enum) && p.schema?.const === undefined) return undefined;
+      if ((rule === 'sort' || rule === 'sort-reverse') && !Array.isArray(p.schema?.enum) && p.schema?.const === undefined) return undefined;
+      // probe kinds and the decimal type case name a technique, not a documented value.
+      if (rule === 'probe') return undefined;
+      if (rule === 'type' && rawValue === 'decimal') {
+        const t = Array.isArray(p.schema?.type) ? p.schema.type : [p.schema?.type];
+        return t.includes('integer') ? undefined : bad(`the decimal case needs an integer ${m[1]} "${name}"`);
+      }
       const allowed = Array.isArray(p.schema?.enum) ? p.schema.enum.map(String) : p.schema?.const !== undefined ? [String(p.schema.const)] : boundaryValues(p.schema).map(String);
       return allowed.includes(value) ? undefined : bad(`"${value}" is not a documented value or valid limit of ${m[1]} "${name}"`);
     }
@@ -246,7 +252,7 @@ function checkLocation(o: NormOp, loc: string, rule: string): Finding | undefine
         last = r.error.code === 'CASE_LOCATION_UNRESOLVED' ? r.error : { ...r.error, reason: `${o.key}: ${r.error.reason}` };
         continue;
       }
-      if (!['schema', 'type', 'required', 'nullable', 'enum', 'const', 'unique', 'optional-omitted'].includes(rule) && !ruleFits(r.node, rule)) {
+      if (!['schema', 'type', 'required', 'nullable', 'enum', 'const', 'unique', 'optional-omitted', 'total'].includes(rule) && !ruleFits(r.node, rule)) {
         last = { code: 'INVALID_CASE_RULE_FOR_SCHEMA', pointer: '', reason: `${o.key}: "${rule}" does not apply to ${body[1]} body ${body[2] || '(root)'}` };
         continue;
       }
